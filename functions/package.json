@@ -1,0 +1,21 @@
+{
+  "name": "bacarguard-functions",
+  "description": "API Libro de Guardia Bacar - Firebase Cloud Functions + Firestore",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "create-admin": "node create-admin.js",
+    "test": "node --test test/accessValidation.test.js test/accessControl.test.js test/fleetGps.test.js test/nomina.test.js test/centroCostoGroups.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.3.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "private": true
+}

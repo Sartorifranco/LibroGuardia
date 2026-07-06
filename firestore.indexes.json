@@ -1,0 +1,156 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "citaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "appointmentDate", "order": "ASCENDING" },
+        { "fieldPath": "name", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "citaciones",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "idNumberNormalized", "order": "ASCENDING" },
+        { "fieldPath": "appointmentDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "idNumberNormalized", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "legajoNormalized", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "nameKey", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "personId", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "personId", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "personId", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "appointmentDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "personId", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "appointmentDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "personId", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "startDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "appointmentDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "authorizations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "importBatchId", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "people",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dniNormalized", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "people",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "nameKey", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "people",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "legajoNormalized", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "personId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "entries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "authorized", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importBatches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sourceFile", "order": "ASCENDING" },
+        { "fieldPath": "sourceHash", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

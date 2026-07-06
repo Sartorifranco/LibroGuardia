@@ -1,0 +1,29 @@
+# Dependencias
+node_modules/
+
+# Entornos (secretos — no subir)
+.env
+.env.local
+.env.*.local
+
+# Builds
+frontend-libro-guardia/build/
+
+# Backups duplicados
+backend-libro-guardia/Bak/
+frontend-libro-guardia/src/BAK/
+
+# Logs y caché
+*.log
+npm-debug.log*
+.DS_Store
+
+# Auditoría local
+AUDITORIA_UNIVERSAL.txt
+
+# Config local de deploy (copiar desde config.example.ps1)
+scripts/config.ps1
+scripts/citaciones-bridge.config.json
+functions/node_modules/
+functions/serviceAccountKey.json
+functions/.env

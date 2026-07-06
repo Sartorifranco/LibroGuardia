@@ -1,0 +1,17 @@
+{
+  "watchFolder": "C:\\usr",
+  "apiBaseUrl": "https://bacarguard.web.app/api",
+  "bridgeSecret": "CAMBIAR-POR-SECRETO-DEL-ADMIN",
+  "fileNamePrefix": "Citaciones_",
+  "fileExtensions": [".xlsx", ".xls", ".csv"],
+  "defaults": {
+    "type": "citacion",
+    "company": "Transporte"
+  },
+  "stableMs": 2500,
+  "pauseBetweenFilesMs": 3000,
+  "pollIntervalMs": 5000,
+  "statusPort": 5023,
+  "moveProcessedTo": "",
+  "logFile": "citaciones-bridge.log"
+}
