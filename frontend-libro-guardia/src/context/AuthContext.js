@@ -6,33 +6,52 @@ import React, {
   useMemo,
   useState
 } from 'react';
-import { apiFetch } from '../services/api';
+import {
+  apiFetch,
+  resetSessionExpiryFlag,
+  setSessionExpiredHandler
+} from '../services/api';
+import { useToast } from './ToastContext';
 
 const AuthContext = createContext(null);
 
-export function AuthProvider({ children, onSessionInvalid }) {
+export function AuthProvider({ children }) {
+  const { showError } = useToast();
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('authToken') || null);
   const [currentUser, setCurrentUser] = useState(null);
   const [systemRoles, setSystemRoles] = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
 
-  const logout = useCallback((options = {}) => {
-    const { clearStorage = true } = options;
+  const logout = useCallback(() => {
     setAuthToken(null);
-    if (clearStorage) localStorage.removeItem('authToken');
+    try {
+      localStorage.removeItem('authToken');
+    } catch {
+      // ignore
+    }
     setCurrentUser(null);
     setSystemRoles([]);
-    onSessionInvalid?.();
-  }, [onSessionInvalid]);
+  }, []);
+
+  useEffect(() => {
+    setSessionExpiredHandler((message) => {
+      logout();
+      if (message) showError(message);
+    });
+    return () => setSessionExpiredHandler(null);
+  }, [logout, showError]);
 
   const login = useCallback(async (username, password) => {
     const data = await apiFetch('/auth/login', {
       method: 'POST',
+      token: null,
+      skipSessionExpiry: true,
       body: {
         username: String(username || '').trim().toLowerCase(),
         password
       }
     });
+    resetSessionExpiryFlag();
     setAuthToken(data.token);
     localStorage.setItem('authToken', data.token);
     setCurrentUser(data.user);
@@ -58,7 +77,8 @@ export function AuthProvider({ children, onSessionInvalid }) {
         setCurrentUser(data.user);
       } catch (err) {
         console.error('Error al obtener usuario actual:', err);
-        if (!cancelled) {
+        // 401/403 ya disparan logout vía apiFetch; otros errores también cierran sesión local
+        if (!cancelled && !err.isSessionExpired) {
           logout();
         }
       } finally {
@@ -81,10 +101,12 @@ export function AuthProvider({ children, onSessionInvalid }) {
     let cancelled = false;
     const loadRoles = async () => {
       try {
-        const data = await apiFetch('/admin/roles', { token: authToken });
+        const data = await apiFetch('/admin/roles', {
+          token: authToken,
+          allowForbidden: true
+        });
         if (!cancelled) setSystemRoles(data.roles || []);
       } catch {
-        // Sin permiso roles.view es normal en algunos perfiles
         if (!cancelled) setSystemRoles([]);
       }
     };

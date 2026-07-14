@@ -31,7 +31,7 @@ export function EntriesProvider({ children }) {
       return next;
     } catch (err) {
       console.error('Error al cargar registros:', err);
-      if (!silent) {
+      if (!silent && !err.isSessionExpired) {
         showError(err.message || 'Error al cargar registros');
       }
       return [];
@@ -79,7 +79,9 @@ export function EntriesProvider({ children }) {
       return result;
     } catch (e) {
       console.error('Error al añadir documento: ', e);
-      showError(e.message || 'Error al guardar el registro. Por favor, inténtelo de nuevo.');
+      if (!e.isSessionExpired) {
+        showError(e.message || 'Error al guardar el registro. Por favor, inténtelo de nuevo.');
+      }
       return null;
     } finally {
       setEntriesLoading(false);
