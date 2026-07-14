@@ -75,6 +75,13 @@ const {
   registerExceptionalEntry
 } = require('./guard');
 const {
+  checkLoginRateLimit,
+  recordFailedLogin,
+  clearLoginFailures,
+  getClientIp,
+  LOCKOUT_MESSAGE
+} = require('./lib/loginRateLimit');
+const {
   getFleetGpsConfig,
   publicFleetGpsConfig,
   saveFleetGpsConfig,
@@ -90,6 +97,8 @@ const {
 } = require('./attendanceAlerts');
 const { seedInitialUsers, isBootstrapCompleted, INITIAL_USERS } = require('./seedUsers');
 const { getCitadosToday } = require('./citadosToday');
+const { logActivity } = require('./lib/activityLog');
+const { getArgentinaDateString } = require('./lib/normalize');
 
 const app = express();
 
@@ -318,10 +327,26 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ message: 'Usuario y contraseña son obligatorios' });
     }
 
+    const clientIp = getClientIp(req);
+    const rate = await checkLoginRateLimit(db, { username, ip: clientIp });
+    if (rate.blocked) {
+      return res.status(429).json({
+        message: rate.message || LOCKOUT_MESSAGE,
+        retryAfterSeconds: rate.retryAfterSeconds
+      });
+    }
+
     const userRef = db.collection('users').doc(username);
     const snap = await userRef.get();
 
     if (!snap.exists) {
+      const afterFail = await recordFailedLogin(db, FieldValue, { username, ip: clientIp });
+      if (afterFail.blocked) {
+        return res.status(429).json({
+          message: afterFail.message || LOCKOUT_MESSAGE,
+          retryAfterSeconds: afterFail.retryAfterSeconds
+        });
+      }
       return res.status(400).json({ message: 'Credenciales inválidas' });
     }
 
@@ -332,8 +357,17 @@ app.post('/api/auth/login', async (req, res) => {
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
+      const afterFail = await recordFailedLogin(db, FieldValue, { username, ip: clientIp });
+      if (afterFail.blocked) {
+        return res.status(429).json({
+          message: afterFail.message || LOCKOUT_MESSAGE,
+          retryAfterSeconds: afterFail.retryAfterSeconds
+        });
+      }
       return res.status(400).json({ message: 'Credenciales inválidas' });
     }
+
+    await clearLoginFailures(db, { username });
 
     const permissions = await getUserPermissions(user);
     const roleMeta = await getRoleById(user.role);
@@ -441,7 +475,15 @@ app.put('/api/admin/roles/:id', auth, requirePermission('roles.manage'), async (
 
 app.delete('/api/admin/roles/:id', auth, requirePermission('roles.manage'), async (req, res) => {
   try {
+    const roleBefore = await getRoleById(req.params.id);
     const result = await deleteRole(req.params.id);
+    logActivity(db, FieldValue, {
+      actorUsername: req.user.username || req.user.id,
+      actorId: req.user.id,
+      action: 'role.delete',
+      summary: `Eliminó el rol “${roleBefore?.label || result?.id || req.params.id}”`,
+      meta: { roleId: req.params.id }
+    }).catch((err) => console.error('activityLog role.delete:', err.message));
     res.json({ message: 'Rol eliminado', role: result });
   } catch (err) {
     res.status(400).json({ message: err.message || 'Error al eliminar rol' });
@@ -580,6 +622,13 @@ app.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), asyn
     }
 
     await userRef.delete();
+    logActivity(db, FieldValue, {
+      actorUsername: req.user.username || req.user.id,
+      actorId: req.user.id,
+      action: 'user.delete',
+      summary: `Eliminó el usuario “${userToDelete.username || id}”`,
+      meta: { userId: id, role: userToDelete.role }
+    }).catch((err) => console.error('activityLog user.delete:', err.message));
     res.json({ message: 'Usuario eliminado exitosamente' });
   } catch (err) {
     res.status(500).json({ message: 'Error al eliminar usuario', error: err.message });
@@ -889,7 +938,15 @@ app.delete('/api/admin/authorizations/:id', auth, requirePermission('master.cita
     if (!snap.exists) {
       return res.status(404).json({ message: 'Autorización no encontrada' });
     }
+    const data = snap.data() || {};
     await ref.update({ active: false, updatedAt: FieldValue.serverTimestamp() });
+    logActivity(db, FieldValue, {
+      actorUsername: req.user.username || req.user.id,
+      actorId: req.user.id,
+      action: 'authorization.delete',
+      summary: `Desactivó la autorización de “${data.name || data.idNumber || req.params.id}”`,
+      meta: { authorizationId: req.params.id, type: data.type }
+    }).catch((err) => console.error('activityLog authorization.delete:', err.message));
     res.json({ message: 'Autorización desactivada' });
   } catch (err) {
     res.status(500).json({ message: 'Error al desactivar autorización', error: err.message });
@@ -1118,7 +1175,10 @@ app.post('/api/access/test-relay', auth, requireAnyPermission(['access.control',
     });
     res.json({ message: 'Pulso de prueba enviado', ...result });
   } catch (err) {
-    res.status(500).json({ message: 'Error al probar relevador SR201', error: err.message });
+    res.status(err.status || 500).json({
+      message: err.message || 'Error al probar relevador SR201',
+      error: err.message
+    });
   }
 });
 
@@ -1826,7 +1886,15 @@ app.delete('/api/master-data/vehicles/:id', auth, requirePermission('master.vehi
     if (!snap.exists) {
       return res.status(404).json({ message: 'Vehículo no encontrado' });
     }
+    const data = snap.data() || {};
     await ref.delete();
+    logActivity(db, FieldValue, {
+      actorUsername: req.user.username || req.user.id,
+      actorId: req.user.id,
+      action: 'vehicle.delete',
+      summary: `Eliminó el vehículo autorizado “${data.plate || req.params.id}”`,
+      meta: { vehicleId: req.params.id, plate: data.plate }
+    }).catch((err) => console.error('activityLog vehicle.delete:', err.message));
     res.json({ message: 'Vehículo eliminado de la base autorizada' });
   } catch (err) {
     res.status(500).json({ message: 'Error al eliminar vehículo', error: err.message });
@@ -2019,6 +2087,205 @@ app.get('/api/entries', auth, async (req, res) => {
     });
   }
 });
+
+const daysBetweenYmd = (fromYmd, toYmd) => {
+  if (!fromYmd || !toYmd) return null;
+  const a = new Date(`${fromYmd}T12:00:00-03:00`);
+  const b = new Date(`${toYmd}T12:00:00-03:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+  return Math.round((b.getTime() - a.getTime()) / (24 * 60 * 60 * 1000));
+};
+
+const addDaysToYmd = (ymd, days) => {
+  const d = new Date(`${ymd}T12:00:00-03:00`);
+  d.setDate(d.getDate() + days);
+  return getArgentinaDateString(d);
+};
+
+app.get('/api/search', auth, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) {
+      return res.json({ results: [] });
+    }
+    const needle = q.toLowerCase();
+    const idNeedle = normalizeIdNumber(q) || needle;
+    const plateNeedle = normalizePlate(q) || needle.replace(/\s+/g, '');
+    const results = [];
+
+    const personalSnap = await db.collection('personalMaster').orderBy('name').limit(200).get();
+    personalSnap.docs.forEach((doc) => {
+      if (results.filter((r) => r.kind === 'personal').length >= 8) return;
+      const data = doc.data() || {};
+      const name = String(data.name || '');
+      const idNumber = String(data.idNumber || data.idNumberNormalized || '');
+      const hay = `${name} ${idNumber} ${data.nameLower || ''} ${data.idNumberNormalized || ''}`.toLowerCase();
+      if (!hay.includes(needle) && !String(data.idNumberNormalized || '').includes(idNeedle)) return;
+      results.push({
+        kind: 'personal',
+        id: doc.id,
+        title: name || idNumber || doc.id,
+        subtitle: idNumber ? `DNI ${idNumber}` : 'Personal',
+        tab: 'personal'
+      });
+    });
+
+    const vehiclesSnap = await db.collection('vehiclesMaster').orderBy('plate').limit(200).get();
+    vehiclesSnap.docs.forEach((doc) => {
+      if (results.filter((r) => r.kind === 'vehicle').length >= 8) return;
+      const data = doc.data() || {};
+      const plate = String(data.plate || '');
+      const driver = String(data.driver || '');
+      const company = String(data.company || '');
+      const hay = `${plate} ${driver} ${company} ${data.plateNormalized || ''}`.toLowerCase();
+      const plateNorm = String(data.plateNormalized || '');
+      if (!hay.includes(needle) && !plateNorm.includes(plateNeedle)) return;
+      results.push({
+        kind: 'vehicle',
+        id: doc.id,
+        title: plate || doc.id,
+        subtitle: [driver, company].filter(Boolean).join(' · ') || 'Vehículo autorizado',
+        tab: 'vehiculo'
+      });
+    });
+
+    const { queryEntriesPage, matchesSearch } = require('./lib/entriesQuery');
+    const endDate = getArgentinaDateString();
+    const startDate = addDaysToYmd(endDate, -30);
+    const page = await queryEntriesPage(db, {
+      startDate,
+      endDate,
+      limit: 80,
+      type: 'todos',
+      q
+    });
+    let entryCount = 0;
+    for (const doc of page.docs) {
+      if (entryCount >= 8) break;
+      const data = doc.data() || {};
+      if (!matchesSearch(data, q)) continue;
+      const title = data.name || data.plate || data.mobile || data.description || 'Registro';
+      const subtitleParts = [
+        data.type,
+        data.movementType,
+        data.idNumber,
+        data.company
+      ].filter(Boolean);
+      results.push({
+        kind: 'entry',
+        id: doc.id,
+        title: String(title),
+        subtitle: subtitleParts.join(' · ') || 'Historial (30 días)',
+        tab: 'historial'
+      });
+      entryCount += 1;
+    }
+
+    res.json({ results });
+  } catch (err) {
+    res.status(500).json({ message: 'Error en la búsqueda', error: err.message });
+  }
+});
+
+app.get(
+  '/api/admin/activity',
+  auth,
+  requireAnyPermission(['users.view', 'roles.view', 'settings.permissions']),
+  async (req, res) => {
+    try {
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw)
+        ? Math.min(Math.max(Math.floor(limitRaw), 1), 100)
+        : 50;
+      const snap = await db.collection('activityLog')
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get();
+      const activity = snap.docs.map((doc) => {
+        const data = doc.data() || {};
+        let createdAt = data.createdAt || null;
+        if (createdAt && typeof createdAt.toDate === 'function') {
+          createdAt = createdAt.toDate().toISOString();
+        }
+        return {
+          id: doc.id,
+          actorUsername: data.actorUsername || '',
+          actorId: data.actorId || '',
+          action: data.action || '',
+          summary: data.summary || '',
+          meta: data.meta || null,
+          createdAt
+        };
+      });
+      res.json({ activity });
+    } catch (err) {
+      res.status(500).json({ message: 'Error al obtener actividad', error: err.message });
+    }
+  }
+);
+
+app.get(
+  '/api/guard/expiration-alerts',
+  auth,
+  requireAnyPermission(['entries.view', 'master.citaciones.read']),
+  async (_req, res) => {
+    try {
+      const today = getArgentinaDateString();
+      const snap = await db.collection('authorizations').where('active', '==', true).get();
+      const expired = [];
+      const endingIn7 = [];
+      const endingIn15 = [];
+      const endingIn30 = [];
+
+      snap.docs.forEach((doc) => {
+        const data = doc.data() || {};
+        if (data.type === 'permanent') return;
+        const endDate = data.endDate || data.startDate || data.appointmentDate;
+        if (!endDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate))) return;
+
+        const daysLeft = daysBetweenYmd(today, String(endDate));
+        if (daysLeft === null) return;
+
+        const item = {
+          id: doc.id,
+          name: data.name || '',
+          idNumber: data.idNumber || '',
+          company: data.company || '',
+          type: data.type || '',
+          typeLabel: getAuthorizationLabel(data.type) || data.type || '',
+          endDate: String(endDate),
+          daysLeft
+        };
+
+        if (daysLeft < 0) {
+          if (expired.length < 20) expired.push(item);
+        } else if (daysLeft <= 7) {
+          if (endingIn7.length < 20) endingIn7.push(item);
+        } else if (daysLeft <= 15) {
+          if (endingIn15.length < 15) endingIn15.push(item);
+        } else if (daysLeft <= 30) {
+          if (endingIn30.length < 15) endingIn30.push(item);
+        }
+      });
+
+      const byEnd = (a, b) => String(a.endDate).localeCompare(String(b.endDate));
+      expired.sort(byEnd);
+      endingIn7.sort(byEnd);
+      endingIn15.sort(byEnd);
+      endingIn30.sort(byEnd);
+
+      res.json({
+        today,
+        expired,
+        endingIn7,
+        endingIn15,
+        endingIn30
+      });
+    } catch (err) {
+      res.status(500).json({ message: 'Error al obtener alertas de vencimiento', error: err.message });
+    }
+  }
+);
 
 app.use((req, res, next) => {
   if (req.path.startsWith('/api')) {

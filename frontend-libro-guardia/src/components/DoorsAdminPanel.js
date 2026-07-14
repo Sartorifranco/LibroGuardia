@@ -295,7 +295,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
           />
           <input
             className="input-field md:col-span-2"
-            placeholder="URL puente local (ej. http://192.168.0.9:5022)"
+            placeholder="URL pública del túnel (ej. https://sr201.tudominio.com)"
             value={globalAccess.bridgeUrl || ''}
             onChange={(e) => setGlobalAccess((prev) => ({ ...prev, bridgeUrl: e.target.value }))}
           />

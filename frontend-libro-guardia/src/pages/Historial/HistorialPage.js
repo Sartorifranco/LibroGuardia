@@ -275,6 +275,12 @@ function HistorialPage() {
         Se consultan solo los movimientos del rango elegido (por defecto <strong>hoy</strong>), no todo el histórico.
       </p>
 
+      {!canView && canExport && (
+        <div className="historial-export-only-note" role="status">
+          No tenés permiso para ver el detalle de los registros, pero podés exportar el reporte.
+        </div>
+      )}
+
       <div className="historial-presets" role="group" aria-label="Rango de fechas">
         {HISTORIAL_DATE_PRESETS.map((preset) => (
           <button

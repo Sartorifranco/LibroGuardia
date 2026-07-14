@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import ExecutiveDashboard from '../../components/dashboards/ExecutiveDashboard';
 import GuardiaDashboard from '../../components/dashboards/GuardiaDashboard';
 import MonitoreoDashboard from '../../components/dashboards/MonitoreoDashboard';
+import ExpirationAlertsBanner from '../../components/ExpirationAlertsBanner';
 import { useAuth } from '../../context/AuthContext';
 import { useEntries } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
@@ -30,18 +31,46 @@ function HomePage({ onNavigate, onEnterAdmin }) {
   }, [reloadEntries, showSuccess]);
 
   const dashboardProfile = getDashboardProfile(currentUser);
+  const showExpirationAlerts = ['guardia', 'supervisor', 'admin'].includes(dashboardProfile)
+    || ['guardia', 'supervisor', 'admin'].includes(currentUser?.role);
 
+  let dashboard = null;
   if (dashboardProfile === 'monitoreo') {
-    return (
+    dashboard = (
       <MonitoreoDashboard
         currentUser={currentUser}
         entries={entries}
         onNavigate={onNavigate}
       />
     );
-  }
-  if (dashboardProfile === 'guardia') {
-    return (
+  } else if (dashboardProfile === 'guardia') {
+    dashboard = (
+      <GuardiaDashboard
+        currentUser={currentUser}
+        entries={entries}
+        onNavigate={onNavigate}
+        authToken={authToken}
+        showFleetGps={hasPermission(currentUser, 'fleet.gps.read')}
+        showAttendanceAlerts={hasPermission(currentUser, 'attendance.alerts.read')}
+        showCitados={hasPermission(currentUser, 'attendance.alerts.read')}
+        onGpsMovementRegistered={handleGpsMovementsRegistered}
+        onAttendanceRegistered={handleAttendanceRegistered}
+      />
+    );
+  } else if (dashboardProfile === 'supervisor' || dashboardProfile === 'admin') {
+    dashboard = (
+      <ExecutiveDashboard
+        currentUser={currentUser}
+        entries={entries}
+        isAdmin={dashboardProfile === 'admin'}
+        onNavigate={(tab) => {
+          if (tab === 'adminPanel') onEnterAdmin();
+          else onNavigate(tab);
+        }}
+      />
+    );
+  } else {
+    dashboard = (
       <GuardiaDashboard
         currentUser={currentUser}
         entries={entries}
@@ -55,31 +84,12 @@ function HomePage({ onNavigate, onEnterAdmin }) {
       />
     );
   }
-  if (dashboardProfile === 'supervisor' || dashboardProfile === 'admin') {
-    return (
-      <ExecutiveDashboard
-        currentUser={currentUser}
-        entries={entries}
-        isAdmin={dashboardProfile === 'admin'}
-        onNavigate={(tab) => {
-          if (tab === 'adminPanel') onEnterAdmin();
-          else onNavigate(tab);
-        }}
-      />
-    );
-  }
+
   return (
-    <GuardiaDashboard
-      currentUser={currentUser}
-      entries={entries}
-      onNavigate={onNavigate}
-      authToken={authToken}
-      showFleetGps={hasPermission(currentUser, 'fleet.gps.read')}
-      showAttendanceAlerts={hasPermission(currentUser, 'attendance.alerts.read')}
-      showCitados={hasPermission(currentUser, 'attendance.alerts.read')}
-      onGpsMovementRegistered={handleGpsMovementsRegistered}
-      onAttendanceRegistered={handleAttendanceRegistered}
-    />
+    <>
+      {showExpirationAlerts && <ExpirationAlertsBanner />}
+      {dashboard}
+    </>
   );
 }
 

@@ -50,17 +50,35 @@ const sendTcpCommand = (host, port, command, timeoutMs = DEFAULT_TIMEOUT_MS) =>
   });
 
 const sendViaBridge = async (bridgeUrl, payload, bridgeSecret = '') => {
-  const response = await fetch(String(bridgeUrl).replace(/\/$/, '') + '/pulse', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(bridgeSecret ? { Authorization: `Bearer ${bridgeSecret}` } : {})
-    },
-    body: JSON.stringify(payload)
-  });
+  const url = String(bridgeUrl || '').replace(/\/$/, '');
+  if (!url) {
+    throw new Error('Falta la URL del puente SR201 (bridgeUrl). Configurala en Admin → Puertas.');
+  }
+
+  let response;
+  try {
+    response = await fetch(`${url}/pulse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(bridgeSecret ? { Authorization: `Bearer ${bridgeSecret}` } : {})
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch (err) {
+    const hint = /cloudflare|trycloud|\.cfargotunnel\.|https:\/\//i.test(url)
+      ? 'Revisá que el túnel (Cloudflare) y el puente local estén activos.'
+      : 'Revisá que el puente local esté encendido y alcanzable.';
+    throw new Error(
+      `No se pudo contactar el puente SR201 (${url}). ${hint} Detalle: ${err.message || 'error de red'}`
+    );
+  }
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error('Puente SR201 rechazó el secreto (BRIDGE_SECRET). Verificá el valor en Admin y en el PC de planta.');
+    }
     throw new Error(data.message || `Puente SR201 respondió ${response.status}`);
   }
   return data;

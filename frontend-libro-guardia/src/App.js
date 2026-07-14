@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Settings, LogOut, Sun, Moon, ArrowLeft, Loader2 } from 'lucide-react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { Settings, LogOut, Sun, Moon, ArrowLeft, Loader2, CloudOff, CircleHelp } from 'lucide-react';
 import AccessKiosk from './components/AccessKiosk';
 import ToastStack from './components/ToastStack';
 import AppSidebar from './components/AppSidebar';
@@ -10,14 +10,17 @@ import CitadosPanel from './components/CitadosPanel';
 import ManualDoorButton from './components/ManualDoorButton';
 import MonitoringVehiclesPanel from './components/MonitoringVehiclesPanel';
 import DigitalDoorPanel from './components/DigitalDoorPanel';
+import GlobalSearch from './components/GlobalSearch';
+import OnboardingTour, { isOnboardingDone } from './components/OnboardingTour';
 import { hasPermission, canAccessAdmin } from './utils/permissions';
 import { buildSidebarItems } from './utils/navigation';
 import { useTheme } from './hooks/useTheme';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider, useToast } from './context/ToastContext';
+import { ConfirmProvider } from './context/ConfirmContext';
+import { OfflineQueueProvider, useOfflineQueue } from './context/OfflineQueueContext';
 import { EntriesProvider, useEntries } from './context/EntriesContext';
 import { ClockPrefillProvider, useClockPrefill } from './context/ClockPrefillContext';
-import { apiFetch } from './services/api';
 import LoginPage from './pages/Login/LoginPage';
 import HomePage from './pages/Home/HomePage';
 import PersonalPage from './pages/Personal/PersonalPage';
@@ -35,38 +38,21 @@ import './App.css';
 
 /**
  * Shell de la aplicación: layout, navegación y routing por activeTab.
- * Sin formularios ni fetches de dominio (salvo kioskResetSeconds).
+ * Sin formularios ni fetches de dominio.
  */
 function AppShell() {
   const { authToken, currentUser, authLoading, logout } = useAuth();
   const { error, successMessage, showSuccess, showError, setError, setSuccessMessage } = useToast();
   const { reloadEntries } = useEntries();
+  const { pendingCount } = useOfflineQueue();
   const { setClockPrefill } = useClockPrefill();
   const { toggleTheme, isDark } = useTheme();
 
   const [activeTab, setActiveTab] = useState('inicio');
   const [lastOperationalTab, setLastOperationalTab] = useState('inicio');
   const [adminSection, setAdminSection] = useState('users');
-  const [kioskResetSeconds, setKioskResetSeconds] = useState(4);
-
-  useEffect(() => {
-    if (!currentUser || !authToken) return undefined;
-    let cancelled = false;
-    (async () => {
-      try {
-        const data = await apiFetch('/admin/access-control', {
-          token: authToken,
-          allowForbidden: true
-        });
-        if (!cancelled && data.config?.kioskResetSeconds != null) {
-          setKioskResetSeconds(data.config.kioskResetSeconds || 4);
-        }
-      } catch {
-        // Sin permiso: default 4
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [currentUser, authToken]);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourAuto, setTourAuto] = useState(false);
 
   const handleLogout = useCallback(() => {
     logout();
@@ -139,6 +125,14 @@ function AppShell() {
     }
   }, [showSuccess, showError]);
 
+  useEffect(() => {
+    if (!currentUser || authLoading) return undefined;
+    if (isOnboardingDone()) return undefined;
+    setTourAuto(true);
+    setTourOpen(true);
+    return undefined;
+  }, [currentUser, authLoading]);
+
   if (authLoading) {
     return (
       <div className="loading-screen">
@@ -160,7 +154,6 @@ function AppShell() {
         authToken={authToken}
         currentUser={currentUser}
         onExit={() => setActiveTab('inicio')}
-        resetSeconds={kioskResetSeconds || 4}
         canExceptionalEntry={hasPermission(currentUser, 'access.exceptional_entry')}
       />
     );
@@ -173,6 +166,14 @@ function AppShell() {
         successMessage={successMessage}
         onDismissError={() => setError(null)}
         onDismissSuccess={() => setSuccessMessage(null)}
+      />
+      <OnboardingTour
+        open={tourOpen}
+        auto={tourAuto}
+        onClose={() => {
+          setTourOpen(false);
+          setTourAuto(false);
+        }}
       />
       <div className="main-card app-main-card">
         <header className="app-header app-header-modern">
@@ -189,6 +190,18 @@ function AppShell() {
               </div>
             </div>
             <div className="app-header-actions">
+              {!isAdminMode && (
+                <GlobalSearch onNavigate={navigateToTab} />
+              )}
+              {pendingCount > 0 && (
+                <span
+                  className="offline-badge"
+                  title="Registros pendientes de envío (sin conexión)"
+                >
+                  <CloudOff size={16} aria-hidden />
+                  <span className="offline-badge__count">{pendingCount}</span>
+                </span>
+              )}
               <ManualDoorButton
                 authToken={authToken}
                 currentUser={currentUser}
@@ -203,6 +216,19 @@ function AppShell() {
                 title={isDark ? 'Modo claro' : 'Modo oscuro'}
               >
                 {isDark ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <button
+                type="button"
+                className="btn-onboarding-link"
+                onClick={() => {
+                  setTourAuto(false);
+                  setTourOpen(true);
+                }}
+                title="Ver tutorial"
+                aria-label="Ver tutorial"
+              >
+                <CircleHelp size={16} />
+                <span className="btn-onboarding-link__label">Ver tutorial</span>
               </button>
               <span className="user-info-tag">
                 {currentUser.username} · {currentUser.roleLabel || currentUser.role}
@@ -340,11 +366,6 @@ function AppShell() {
                   adminSection={adminSection}
                   onSectionChange={setAdminSection}
                   onExit={exitAdminPanel}
-                  onAccessConfigSaved={(cfg) => {
-                    if (cfg?.kioskResetSeconds != null) {
-                      setKioskResetSeconds(cfg.kioskResetSeconds || 4);
-                    }
-                  }}
                 />
               )}
             </main>
@@ -358,13 +379,17 @@ function AppShell() {
 function App() {
   return (
     <ToastProvider>
-      <AuthProvider>
-        <EntriesProvider>
-          <ClockPrefillProvider>
-            <AppShell />
-          </ClockPrefillProvider>
-        </EntriesProvider>
-      </AuthProvider>
+      <ConfirmProvider>
+        <AuthProvider>
+          <OfflineQueueProvider>
+            <EntriesProvider>
+              <ClockPrefillProvider>
+                <AppShell />
+              </ClockPrefillProvider>
+            </EntriesProvider>
+          </OfflineQueueProvider>
+        </AuthProvider>
+      </ConfirmProvider>
     </ToastProvider>
   );
 }

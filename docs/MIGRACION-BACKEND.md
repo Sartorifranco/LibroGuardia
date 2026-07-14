@@ -107,12 +107,10 @@ No hay feature flag: solo `REACT_APP_API_BASE_URL`.
 
 | Entorno | Archivo | Valor | Destino |
 |---------|---------|-------|---------|
-| Dev | `.env.development` | `http://localhost:5020/api` | **Node+Mongo local** (legado) |
+| Dev | `.env.development` | `https://bacarguard.web.app/api` (o emulador) | **Firebase Functions** |
 | Prod | `.env.production` | `/api` | Firebase Hosting rewrite → Function `api` |
 
-**Riesgo actual:** en desarrollo local el frontend apunta al Mongo, que **no tiene** las rutas nuevas (puertas, GPS, citaciones, etc.). En producción ya usa Functions.
-
-Plan mínimo en Fase 1+ respecto a esto: apuntar `.env.development` a emulador Firebase o a la Function desplegada / emulada, no a `:5020`.
+El frontend **ya no apunta** a `localhost:5020` ni al API Node.
 
 ---
 
@@ -237,3 +235,67 @@ Completado:
 - [x] Historial consulta el rango elegido + botón **Cargar más**
 - [x] Export carga páginas del rango (tope 1000)
 - [x] Índice Firestore `entries`: type + timestamp
+
+---
+
+## 13. Auditoría de datos históricos Mongo vs Firestore (2026-07-14)
+
+**Objetivo:** decidir con números reales si hace falta migrar, no migrar ni borrar todavía.
+
+### Firestore (conteo real — `scripts/audit-firestore-counts.js`)
+
+Ejecutado el 2026-07-14 contra proyecto `legajosonline-959f6`:
+
+| Colección Firestore | Cantidad | Más antiguo | Más reciente |
+|---------------------|----------|-------------|--------------|
+| users | 8 | 2025-12-09 | 2026-07-08 |
+| entries | 276 | 2025-12-05 | 2026-07-14 |
+| personalMaster | 1354 | 2026-07-03 | 2026-07-06 |
+| people | 1333 | 2026-07-03 | 2026-07-06 |
+| authorizations | 1994 | 2026-07-03 | 2026-07-13 |
+| vehiclesMaster | 0 | — | — |
+| mobiles / drivers | 0 | — | — |
+| citaciones (colección legacy) | 0 | — | — |
+| roles | 4 | 2026-07-08 | 2026-07-08 |
+| accessEvents | 15 | 2026-07-06 | 2026-07-06 |
+| citacionesImports | 51 | — | — |
+| nominaImports | 3 | — | — |
+
+### Mongo legacy (intento de conteo)
+
+Desde esta estación de trabajo **no se pudo conectar** a Mongo en planta:
+
+- `192.168.0.9:27017` → no alcanzable (TCP fail)
+- `127.0.0.1:27017` → no hay instancia local
+- `legacy/backend-libro-guardia/.env` → **no existe** (solo `.env.example` con `mongodb://localhost:27017/libro_guardia_db`)
+
+**Script listo para correr en el servidor de planta** (solo lectura):
+
+```powershell
+cd C:\LG\legacy\backend-libro-guardia   # o la ruta real del .env con MONGODB_URI
+# asegurar MONGODB_URI en .env
+node C:\LG\scripts\audit-mongo-legacy.js
+```
+
+Colecciones esperadas según el schema legacy (`users`, `entries`, `personalmasters`, `mobiles`, `drivers`).
+
+### Tabla de decisión (rellenar cantidades Mongo al ejecutar el script)
+
+| Colección Mongo (legacy) | Equivalente Firestore | Cant. Mongo | ¿Ya está en Firestore? | Recomendación |
+|--------------------------|----------------------|-------------|------------------------|---------------|
+| users | users | *pendiente script* | Parcialmente (8 users en FS desde dic-2025) | Comparar listas de username; migrar faltantes si los hay |
+| entries | entries | *pendiente script* | Parcialmente (276 en FS; hay desde dic-2025) | Si Mongo tiene mucho más volumen histórico → **migrar** rango faltante; si similar → **descartar** Mongo |
+| personalmasters | personalMaster / people | *pendiente script* | Sí parece poblado (1354 / 1333, jul-2026) | Si conteo Mongo ≈ FS → **descartar**; si Mongo >> FS → revisar huecos y **migrar** |
+| mobiles | mobiles / vehiclesMaster | *pendiente script* | FS en 0 | Si Mongo tiene flota → **migrar**; si vacío → **descartar** |
+| drivers | drivers | *pendiente script* | FS en 0 | Igual que mobiles |
+
+> Hasta no tener el JSON del script en planta, **no migrar ni apagar Mongo**. El apagado del proceso `bacarguard-api` puede hacerse cuando el checklist de hardware en `docs/INSTALACION-SR201.md` esté OK; el dump de datos es decisión aparte.
+
+### Pregunta abierta — citaciones-folder-bridge
+
+**¿Se sigue usando en planta `scripts/citaciones-folder-bridge.js` (watch de carpeta Excel → sync)?**
+
+- Si **no** se usa → marcar para descontinuar (dejar el script en repo como legado documentado).
+- Si **sí** se usa → documentarlo al mismo nivel que el bridge SR201 (PM2, secreto, URL de sync).
+
+Estado actual: **pregunta abierta al cliente/operación** (no asumir).

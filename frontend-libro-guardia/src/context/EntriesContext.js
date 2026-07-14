@@ -9,6 +9,7 @@ import React, {
 import { apiFetch } from '../services/api';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
+import { useOfflineQueue } from './OfflineQueueContext';
 import { toLocalYmd } from '../utils/historialFilters';
 
 const EntriesContext = createContext(null);
@@ -16,6 +17,7 @@ const EntriesContext = createContext(null);
 export function EntriesProvider({ children }) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
+  const { enqueueEntry } = useOfflineQueue();
   const [entries, setEntries] = useState([]);
   const [entriesLoading, setEntriesLoading] = useState(false);
 
@@ -87,6 +89,17 @@ export function EntriesProvider({ children }) {
       return result;
     } catch (e) {
       console.error('Error al añadir documento: ', e);
+      if (e.isNetworkError || e.status === 0) {
+        try {
+          await enqueueEntry(type, data);
+          showSuccess('Sin conexión — guardado localmente, se enviará solo cuando vuelva internet');
+          return { offlineQueued: true };
+        } catch (queueErr) {
+          console.error('Error al encolar offline:', queueErr);
+          showError('Sin conexión y no se pudo guardar localmente.');
+          return null;
+        }
+      }
       if (!e.isSessionExpired) {
         showError(e.message || 'Error al guardar el registro. Por favor, inténtelo de nuevo.');
       }
@@ -94,7 +107,7 @@ export function EntriesProvider({ children }) {
     } finally {
       setEntriesLoading(false);
     }
-  }, [authToken, currentUser, reloadEntries, showError, showSuccess]);
+  }, [authToken, currentUser, enqueueEntry, reloadEntries, showError, showSuccess]);
 
   const clearEntries = useCallback(() => setEntries([]), []);
 

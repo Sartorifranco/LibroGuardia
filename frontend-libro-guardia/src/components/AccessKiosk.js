@@ -5,6 +5,7 @@ import { ShieldCheck, ShieldX, User, LogOut, AlertTriangle } from 'lucide-react'
 import ContinuousScanner from './ContinuousScanner';
 import ManualDoorButton from './ManualDoorButton';
 import { apiFetch } from '../services/api';
+import { playKioskSound, stopKioskSound, unlockKioskAudio } from '../utils/kioskSounds';
 
 const REASON_LABELS = {
 
@@ -50,7 +51,7 @@ function AccessKiosk({
 
   onExit,
 
-  resetSeconds = 4,
+  resetSeconds: resetSecondsProp = 4,
 
   canExceptionalEntry = false,
 
@@ -72,7 +73,10 @@ function AccessKiosk({
 
   const [doorFeedback, setDoorFeedback] = useState('');
 
+  const [resetSeconds, setResetSeconds] = useState(resetSecondsProp || 4);
+
   const resetTimerRef = useRef(null);
+  const wakeLockRef = useRef(null);
 
 
 
@@ -108,9 +112,85 @@ function AccessKiosk({
 
 
 
-  useEffect(() => () => clearResetTimer(), []);
+  useEffect(() => () => {
+    clearResetTimer();
+    stopKioskSound();
+    if (wakeLockRef.current) {
+      wakeLockRef.current.release?.().catch(() => {});
+      wakeLockRef.current = null;
+    }
+  }, []);
 
+  // Wake Lock: evita que la pantalla se apague durante el turno de kiosco
+  useEffect(() => {
+    let cancelled = false;
+    const requestWakeLock = async () => {
+      if (!('wakeLock' in navigator) || typeof navigator.wakeLock?.request !== 'function') {
+        return;
+      }
+      try {
+        const lock = await navigator.wakeLock.request('screen');
+        if (cancelled) {
+          lock.release?.().catch(() => {});
+          return;
+        }
+        wakeLockRef.current = lock;
+        lock.addEventListener?.('release', () => {
+          if (wakeLockRef.current === lock) wakeLockRef.current = null;
+        });
+      } catch {
+        // Navegador sin permiso / API no disponible: degradación silenciosa
+      }
+    };
+    requestWakeLock();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') requestWakeLock();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release?.().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, []);
 
+  // Desbloquear Web Audio ante el primer gesto (tras inactividad / autoplay)
+  useEffect(() => {
+    const unlock = () => { unlockKioskAudio(); };
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authToken) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await apiFetch('/admin/access-control', {
+          token: authToken,
+          allowForbidden: true
+        });
+        if (!cancelled && data.config?.kioskResetSeconds != null) {
+          setResetSeconds(data.config.kioskResetSeconds || 4);
+        }
+      } catch {
+        // Sin permiso o error: se mantiene el default
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authToken]);
+
+  useEffect(() => {
+    if (status === 'authorized') playKioskSound('authorized');
+    else if (status === 'denied') playKioskSound('denied');
+  }, [status]);
 
   const scheduleReset = useCallback((seconds, denied = false) => {
 
@@ -132,7 +212,7 @@ function AccessKiosk({
 
     if (processing || status === 'processing') return;
 
-
+    await unlockKioskAudio();
 
     setProcessing(true);
 

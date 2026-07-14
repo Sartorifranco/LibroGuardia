@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Car, ClipboardList, PlusCircle, Save, Loader2, UserPlus, Settings, KeyRound, Truck, Edit, Trash2, XCircle, Upload, ToggleRight, ToggleLeft, ShieldCheck, QrCode, DoorOpen } from 'lucide-react';
+import { Car, ClipboardList, PlusCircle, Save, Loader2, UserPlus, Settings, KeyRound, Truck, Edit, Trash2, XCircle, Upload, ToggleRight, ToggleLeft, ShieldCheck, QrCode, DoorOpen, Activity } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import PendingButton from '../../components/PendingButton';
 import FleetGpsVehicleTable, { formatFleetTime } from '../../components/FleetGpsVehicleTable';
@@ -7,9 +7,11 @@ import FleetGpsLiveMap from '../../components/FleetGpsLiveMap';
 import { normalizeGatePolygonsForSave } from '../../utils/fleetGpsGeofence';
 import DoorsAdminPanel from '../../components/DoorsAdminPanel';
 import RolesAdminPanel from '../../components/RolesAdminPanel';
+import ActivityPanel from '../../components/ActivityPanel';
 import { hasPermission, canManageTargetUser, PERMISSION_LABELS } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { apiFetch } from '../../services/api';
 import { ADMIN_SECTION_META, AUTH_WEEKDAYS, AUTH_TYPE_LABELS, formatAuthSchedule } from './adminConstants';
 
@@ -21,6 +23,7 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   void onExit;
   const { authToken, currentUser, systemRoles, setSystemRoles } = useAuth();
   const { showSuccess, showError, setError } = useToast();
+  const { confirm } = useConfirm();
   const activeTab = 'adminPanel';
 
 
@@ -380,7 +383,13 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   };
 
   const handleDeleteCitacion = async (id) => {
-    if (!window.confirm('¿Desactivar esta autorización?')) return;
+    const ok = await confirm({
+      title: 'Desactivar autorización',
+      message: 'La autorización quedará inactiva y dejará de permitir el ingreso.',
+      confirmLabel: 'Desactivar',
+      tone: 'danger'
+    });
+    if (!ok) return;
     try {
       await apiFetch(`/admin/authorizations/${id}`, {
         method: 'DELETE',
@@ -424,7 +433,13 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   };
 
   const handleDeletePreloadedVehicle = async (id) => {
-    if (!window.confirm('¿Eliminar este vehículo de la base autorizada?')) return;
+    const ok = await confirm({
+      title: 'Eliminar vehículo',
+      message: 'Se quitará de la base autorizada. Esta acción no se puede deshacer.',
+      confirmLabel: 'Eliminar',
+      tone: 'danger'
+    });
+    if (!ok) return;
     try {
       await apiFetch(`/master-data/vehicles/${id}`, {
         method: 'DELETE',
@@ -704,10 +719,13 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   };
 
   const handleDeleteUser = async (userId) => {
-    // Reemplazado window.confirm por un modal o mensaje en la UI si fuera una app de producción
-    if (!window.confirm('¿Estás seguro de que quieres eliminar este usuario? Esta acción es irreversible.')) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Eliminar usuario',
+      message: 'Esta acción es irreversible. El usuario perderá el acceso al sistema.',
+      confirmLabel: 'Eliminar',
+      tone: 'danger'
+    });
+    if (!ok) return;
     setError(null);
     setLoading(true);
     try {
@@ -951,6 +969,13 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     if (hasPermission(currentUser, 'users.view')) items.push({ id: 'users', label: 'Usuarios', icon: KeyRound });
     if (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) {
       items.push({ id: 'roles', label: 'Roles', icon: ShieldCheck });
+    }
+    if (
+      hasPermission(currentUser, 'users.view') ||
+      hasPermission(currentUser, 'roles.view') ||
+      hasPermission(currentUser, 'settings.permissions')
+    ) {
+      items.push({ id: 'activity', label: 'Actividad', icon: Activity });
     }
     if (hasPermission(currentUser, 'access.doors.manage') || hasPermission(currentUser, 'access.control')) {
       items.push({ id: 'doors', label: 'Puertas y acceso', icon: DoorOpen });
@@ -1899,6 +1924,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
                   onSuccess={showSuccess}
                   onError={showError}
                 />
+              )}
+
+              {adminSection === 'activity' && (
+                hasPermission(currentUser, 'users.view') ||
+                hasPermission(currentUser, 'roles.view') ||
+                hasPermission(currentUser, 'settings.permissions')
+              ) && (
+                <ActivityPanel />
               )}
 
               {adminSection === 'permissions' && hasPermission(currentUser, 'settings.permissions') && (

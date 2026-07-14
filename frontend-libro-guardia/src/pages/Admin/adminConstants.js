@@ -8,6 +8,7 @@ export const ADMIN_SECTION_META = {
   fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
+  activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },
 };
 
 export const AUTH_WEEKDAYS = [

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { DoorOpen } from 'lucide-react';
 import { hasPermission } from '../utils/permissions';
+import { useConfirm } from '../context/ConfirmContext';
 import { apiFetch } from '../services/api';
 
 function ManualDoorButton({
@@ -11,6 +12,7 @@ function ManualDoorButton({
   onSuccess,
   onError
 }) {
+  const { confirm } = useConfirm();
   const [opening, setOpening] = useState(false);
   const [doors, setDoors] = useState([]);
   const [selectedDoorId, setSelectedDoorId] = useState(doorId || '');
@@ -36,7 +38,13 @@ function ManualDoorButton({
     if (opening) return;
     const targetDoor = doors.find((door) => door.id === selectedDoorId);
     const label = targetDoor?.name || 'la puerta';
-    if (!window.confirm(`¿Abrir ${label} manualmente?`)) return;
+    const ok = await confirm({
+      title: 'Apertura manual',
+      message: `¿Abrir ${label} manualmente? La puerta se accionará de inmediato.`,
+      confirmLabel: 'Abrir puerta',
+      tone: 'default'
+    });
+    if (!ok) return;
 
     setOpening(true);
     try {
