@@ -133,13 +133,19 @@ npm start
 ## Apagar el API Node+Mongo viejo (192.168.0.9)
 
 Ya **no** se necesita Mongo ni `bacarguard-api` para Libro de Guardia.
+**Fase 15:** confirmado en planta — sin datos relevantes; no se migra nada.
 El código histórico quedó en `legacy/backend-libro-guardia/`.
 
 ```powershell
+pm2 status
 pm2 stop bacarguard-api
 pm2 delete bacarguard-api
 pm2 save
+pm2 status
+netstat -ano | findstr ":5020"
 ```
 
-Sí hace falta (si usan molinete) el puente SR201 — ver [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md)
-y `.\scripts\setup-servidor.ps1`.
+Guía completa: [docs/MIGRACION-BACKEND.md](./docs/MIGRACION-BACKEND.md) §13.
+
+Sí hacen falta los puentes locales (SR201 / citaciones) — ver [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md),
+[docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md) y `.\scripts\setup-servidor.ps1`.

@@ -151,7 +151,7 @@ Pendientes de producto (no bloquean migrar Mongo):
 
 | Ítem | Acción |
 |------|--------|
-| Proceso PM2 `bacarguard-api` en `192.168.0.9` | Detener cuando checklist OK (`FIREBASE-SETUP.md`) |
+| Proceso PM2 `bacarguard-api` en `192.168.0.9` | **Descartado** — apagar en planta (§13); datos Mongo sin migración |
 | `backend-libro-guardia/` como dependencia de runtime | Dejar de usarlo; archivar o marcar `LEGACY` en README |
 | `.env.development` → `localhost:5020` | Cambiar a Functions/emulador |
 | Referencias a Mongo en docs/scripts viejas | Actualizar |
@@ -238,72 +238,128 @@ Completado:
 
 ---
 
-## 13. Auditoría de datos históricos Mongo vs Firestore (2026-07-14)
+## 13. Auditoría Mongo vs Firestore — **cerrada (Fase 15)**
 
-**Objetivo:** decidir con números reales si hace falta migrar, no migrar ni borrar todavía.
+### Decisión (2026-07-14, confirmado en planta)
 
-### Firestore (conteo real — `scripts/audit-firestore-counts.js`)
+> **Confirmado en planta — sin datos relevantes en MongoDB. No se migra nada. Colección descartada.**
 
-Ejecutado el 2026-07-14 contra proyecto `legajosonline-959f6`:
+No hay datos reales/importantes que preservar. Firestore es la única fuente de verdad operativa.
 
-| Colección Firestore | Cantidad | Más antiguo | Más reciente |
-|---------------------|----------|-------------|--------------|
-| users | 8 | 2025-12-09 | 2026-07-08 |
-| entries | 276 | 2025-12-05 | 2026-07-14 |
-| personalMaster | 1354 | 2026-07-03 | 2026-07-06 |
-| people | 1333 | 2026-07-03 | 2026-07-06 |
-| authorizations | 1994 | 2026-07-03 | 2026-07-13 |
-| vehiclesMaster | 0 | — | — |
-| mobiles / drivers | 0 | — | — |
-| citaciones (colección legacy) | 0 | — | — |
-| roles | 4 | 2026-07-08 | 2026-07-08 |
-| accessEvents | 15 | 2026-07-06 | 2026-07-06 |
-| citacionesImports | 51 | — | — |
-| nominaImports | 3 | — | — |
+### Firestore (referencia, conteo 2026-07-14)
 
-### Mongo legacy (intento de conteo)
+| Colección Firestore | Cantidad (aprox.) |
+|---------------------|-------------------|
+| users | 8 |
+| entries | 276 |
+| personalMaster / people | 1354 / 1333 |
+| authorizations | 1994 |
+| roles | 4 |
 
-Desde esta estación de trabajo **no se pudo conectar** a Mongo en planta:
+Detalle histórico del conteo: ver commit de auditoría / `scripts/audit-firestore-counts.js`.
 
-- `192.168.0.9:27017` → no alcanzable (TCP fail)
-- `127.0.0.1:27017` → no hay instancia local
-- `legacy/backend-libro-guardia/.env` → **no existe** (solo `.env.example` con `mongodb://localhost:27017/libro_guardia_db`)
-
-**Script listo para correr en el servidor de planta** (solo lectura):
-
-```powershell
-cd C:\LG\legacy\backend-libro-guardia   # o la ruta real del .env con MONGODB_URI
-# asegurar MONGODB_URI en .env
-node C:\LG\scripts\audit-mongo-legacy.js
-```
-
-Colecciones esperadas según el schema legacy (`users`, `entries`, `personalmasters`, `mobiles`, `drivers`).
-
-### Tabla de decisión (rellenar cantidades Mongo al ejecutar el script)
+### Tabla de decisión Mongo (cerrada)
 
 | Colección Mongo (legacy) | Equivalente Firestore | Cant. Mongo | ¿Ya está en Firestore? | Recomendación |
 |--------------------------|----------------------|-------------|------------------------|---------------|
-| users | users | *pendiente script* | Parcialmente (8 users en FS desde dic-2025) | Comparar listas de username; migrar faltantes si los hay |
-| entries | entries | *pendiente script* | Parcialmente (276 en FS; hay desde dic-2025) | Si Mongo tiene mucho más volumen histórico → **migrar** rango faltante; si similar → **descartar** Mongo |
-| personalmasters | personalMaster / people | *pendiente script* | Sí parece poblado (1354 / 1333, jul-2026) | Si conteo Mongo ≈ FS → **descartar**; si Mongo >> FS → revisar huecos y **migrar** |
-| mobiles | mobiles / vehiclesMaster | *pendiente script* | FS en 0 | Si Mongo tiene flota → **migrar**; si vacío → **descartar** |
-| drivers | drivers | *pendiente script* | FS en 0 | Igual que mobiles |
+| users | users | N/D (sin datos relevantes) | Operativo en FS | **Descartar** — no migrar |
+| entries | entries | N/D (sin datos relevantes) | Operativo en FS | **Descartar** — no migrar |
+| personalmasters | personalMaster / people | N/D (sin datos relevantes) | Operativo en FS | **Descartar** — no migrar |
+| mobiles | mobiles / vehiclesMaster | N/D (sin datos relevantes) | N/A | **Descartar** — no migrar |
+| drivers | drivers | N/D (sin datos relevantes) | N/A | **Descartar** — no migrar |
+| *(cualquier otra)* | — | — | — | **Confirmado en planta — sin datos relevantes en MongoDB. No se migra nada. Colección descartada.** |
 
-> Hasta no tener el JSON del script en planta, **no migrar ni apagar Mongo**. El apagado del proceso `bacarguard-api` puede hacerse cuando el checklist de hardware en `docs/INSTALACION-SR201.md` esté OK; el dump de datos es decisión aparte.
+### Scripts de arranque del repo
+
+Ningún script activo de producción inicia `legacy/backend-libro-guardia`:
+
+| Script | ¿Levanta Node+Mongo? |
+|--------|----------------------|
+| `scripts/setup-servidor.ps1` | **No** — solo bridges; incluye sección para apagar `bacarguard-api` |
+| `scripts/deploy-sr201-bridge.ps1` | **No** |
+| `scripts/deploy-firebase.ps1` | **No** (Firebase) |
+| `scripts/deploy-backend.ps1` | **Obsoleto** — sale con error y mensaje de no usar |
+| `scripts/citaciones-folder-bridge.js` / install | **No** — solo citaciones |
+
+El código queda en `legacy/backend-libro-guardia/` solo como archivo histórico.
+
+### Apagado en planta (ejecutar en el servidor cuando el operador lo decida)
+
+No requiere acceso remoto desde desarrollo: correr **en la PC de planta** (ej. `192.168.0.9`):
+
+```powershell
+# 1) Ver qué está corriendo
+pm2 status
+
+# 2) Detener y sacar del arranque automático el API Node+Mongo
+pm2 stop bacarguard-api
+pm2 delete bacarguard-api
+pm2 save
+
+# 3) Verificar que NO quede el proceso
+pm2 status
+# Esperado: no aparece bacarguard-api
+# Sí pueden seguir: bacarguard-sr201-bridge y bacarguard-citaciones-bridge (o bacarguard-citaciones)
+```
+
+Si el nombre del proceso fuera distinto:
+
+```powershell
+pm2 list
+# Identificar el que apunta a backend-libro-guardia / server.js / puerto 5020
+pm2 stop <nombre>
+pm2 delete <nombre>
+pm2 save
+```
+
+Comprobar que nada escuche el puerto viejo del API:
+
+```powershell
+netstat -ano | findstr ":5020"
+# Si hay PID, revisar con: tasklist /FI "PID eq <pid>"
+# No matar los bridges (:5022 SR201, :5023 status citaciones)
+```
+
+**MongoDB del servidor:** no es obligatorio desinstalarlo si otras apps lo usan. Alcanza con que `bacarguard-api` no arranque ni reciba tráfico de Libro de Guardia.
+
+Tarea programada / servicio Windows (si existiera algo aparte de PM2):
+
+```powershell
+Get-ScheduledTask | Where-Object { $_.TaskName -match 'bacar|libro|guardia|mongo' }
+Get-Service | Where-Object { $_.Name -match 'bacar|mongo' }
+# Deshabilitar solo lo que corresponda al API viejo, no al bridge SR201/citaciones
+```
 
 ### Citaciones folder bridge — en uso, mantener
 
-Confirmado en operación (2026-07-14): **sí se usa** en planta.  
-Documentación completa: [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md).
+Confirmado en operación: **sí se usa** en planta.  
+Docs: [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md).
 
-No forma parte de lo que se retira al apagar Node+Mongo. Debe seguir en PM2 junto al bridge SR201.
+No se retira con Node+Mongo. Debe seguir en PM2 junto al bridge SR201.
 
 ---
 
-## 14. Servicios locales que deben seguir en el servidor de planta
+## 14. Servicios locales en el servidor de planta
 
 | Servicio | Script | Estado |
 |----------|--------|--------|
 | Puente SR201 | `scripts/sr201-bridge.js` | **Mantener** — [INSTALACION-SR201.md](./INSTALACION-SR201.md) |
 | Puente citaciones Excel | `scripts/citaciones-folder-bridge.js` | **Mantener (en uso)** — [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md) |
-| API Node+Mongo `bacarguard-api` | `legacy/backend-libro-guardia` | **Retirar** cuando checklist hardware OK |
+| API Node+Mongo `bacarguard-api` | `legacy/backend-libro-guardia` | **Descartado** — apagar con comandos de §13 (pendiente ejecución física en planta) |
+
+---
+
+## 15. Checklist general de aceptación (cierre migración)
+
+| Criterio | Estado |
+|----------|--------|
+| Sin `window.confirm` / `window.alert` | Resuelto |
+| Historial unificado + paginado | Resuelto |
+| Roles por categorías + plantillas | Resuelto |
+| Rate limit login por usuario (no por IP compartida) | Resuelto |
+| App.js shell sin lógica de dominio | Resuelto |
+| Citaciones-folder-bridge documentado y en uso | Resuelto |
+| Vencimientos ART/seguro/licencia/VTV + filtro por permiso en API | Resuelto |
+| **Sin Node+Mongo en prod (código/flujo)** | **Resuelto** — datos Mongo descartados; API no forma parte del runtime Firebase |
+| Apagar proceso `bacarguard-api` en el servidor físico | **Pendiente en planta** — comandos listos en §13 (el usuario lo ejecuta cuando confirme) |
+| Probar pulso SR201 / túnel en sitio | Pendiente hardware — [INSTALACION-SR201.md](./INSTALACION-SR201.md) |

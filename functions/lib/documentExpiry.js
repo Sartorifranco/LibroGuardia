@@ -71,11 +71,48 @@ const buildExpiryMessage = ({ kind, subject, endDate, daysLeft }) => {
   return `El ${kindLabel} de ${subject} vence en ${daysLeft} día${daysLeft === 1 ? '' : 's'} (${endDate})`;
 };
 
+/**
+ * Alcances de alerta por dominio (mismo criterio que la UI de permisos).
+ * Admin ve todos los dominios.
+ */
+const resolveExpirationAlertScopes = ({ role, permissions = [] } = {}) => {
+  const perms = Array.isArray(permissions) ? permissions : [];
+  const isAdmin = role === 'admin';
+  const has = (permission) => isAdmin || perms.includes(permission);
+  return {
+    authorizations: has('entries.view') || has('master.citaciones.read'),
+    personal: has('master.personal.read'),
+    vehicles: has('master.vehicles.read')
+  };
+};
+
+const kindsAllowedByScopes = (scopes = {}) => {
+  const kinds = new Set();
+  if (scopes.authorizations) kinds.add('authorization');
+  if (scopes.personal) {
+    kinds.add('art');
+    kinds.add('license');
+  }
+  if (scopes.vehicles) {
+    kinds.add('insurance');
+    kinds.add('vtv');
+  }
+  return kinds;
+};
+
+const filterAlertsByScopes = (alerts = [], scopes = {}) => {
+  const allowed = kindsAllowedByScopes(scopes);
+  return (Array.isArray(alerts) ? alerts : []).filter((item) => allowed.has(item?.kind));
+};
+
 module.exports = {
   normalizeExpiryYmd,
   daysBetweenYmd,
   evaluateExpiry,
   bucketForDaysLeft,
   buildExpiryMessage,
-  KIND_LABELS
+  KIND_LABELS,
+  resolveExpirationAlertScopes,
+  kindsAllowedByScopes,
+  filterAlertsByScopes
 };

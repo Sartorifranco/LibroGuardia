@@ -102,7 +102,8 @@ const { getArgentinaDateString } = require('./lib/normalize');
 const {
   normalizeExpiryYmd,
   evaluateExpiry,
-  buildExpiryMessage
+  buildExpiryMessage,
+  resolveExpirationAlertScopes
 } = require('./lib/documentExpiry');
 
 const app = express();
@@ -216,7 +217,11 @@ const requireAnyPermission = (permissionList = []) => async (req, res, next) => 
     if (!req.user) {
       return res.status(401).json({ message: 'No token, autorización denegada' });
     }
-    if (req.user.role === 'admin') return next();
+    if (req.user.role === 'admin') {
+      // Admin: scopes se resuelven por role; no usamos permisos del JWT.
+      req.userPermissions = Array.isArray(req.user.permissions) ? req.user.permissions : [];
+      return next();
+    }
 
     const snap = await db.collection('users').doc(req.user.id).get();
     if (!snap.exists) {
@@ -228,6 +233,7 @@ const requireAnyPermission = (permissionList = []) => async (req, res, next) => 
     if (!allowed) {
       return res.status(403).json({ message: 'Acceso denegado: permiso insuficiente' });
     }
+    // Permisos resueltos desde Firestore (no confiar en el claim del JWT).
     req.userPermissions = permissions;
     next();
   } catch (err) {
@@ -2263,9 +2269,30 @@ app.get(
   '/api/guard/expiration-alerts',
   auth,
   requireAnyPermission(['entries.view', 'master.citaciones.read', 'master.personal.read', 'master.vehicles.read']),
-  async (_req, res) => {
+  async (req, res) => {
     try {
       const today = getArgentinaDateString();
+
+      // Scopes solo desde permisos resueltos en middleware (Firestore), nunca desde el JWT crudo.
+      // Así DevTools solo ve lo que el servidor armó para ese usuario.
+      let resolvedPermissions = req.userPermissions;
+      if (!Array.isArray(resolvedPermissions) && req.user.role !== 'admin') {
+        const snap = await db.collection('users').doc(req.user.id).get();
+        if (!snap.exists) {
+          return res.status(404).json({ message: 'Usuario no encontrado' });
+        }
+        resolvedPermissions = await getUserPermissions(snap.data());
+      }
+
+      const scopes = resolveExpirationAlertScopes({
+        role: req.user.role,
+        permissions: Array.isArray(resolvedPermissions) ? resolvedPermissions : []
+      });
+
+      if (!scopes.authorizations && !scopes.personal && !scopes.vehicles) {
+        return res.status(403).json({ message: 'Acceso denegado: permiso insuficiente' });
+      }
+
       const buckets = {
         expired: [],
         endingIn7: [],
@@ -2279,13 +2306,31 @@ app.get(
         list.push(item);
       };
 
-      const [authSnap, personalSnap, vehiclesSnap] = await Promise.all([
-        db.collection('authorizations').where('active', '==', true).get(),
-        db.collection('personalMaster').get(),
-        db.collection('vehiclesMaster').get()
-      ]);
+      // Solo se leen colecciones del dominio autorizado: nada de ART/vehículos si no hay permiso.
+      const fetches = [];
+      if (scopes.authorizations) {
+        fetches.push(
+          db.collection('authorizations').where('active', '==', true).get()
+            .then((snap) => ({ key: 'authorizations', snap }))
+        );
+      }
+      if (scopes.personal) {
+        fetches.push(
+          db.collection('personalMaster').get()
+            .then((snap) => ({ key: 'personal', snap }))
+        );
+      }
+      if (scopes.vehicles) {
+        fetches.push(
+          db.collection('vehiclesMaster').get()
+            .then((snap) => ({ key: 'vehicles', snap }))
+        );
+      }
 
-      authSnap.docs.forEach((doc) => {
+      const results = await Promise.all(fetches);
+      const byKey = Object.fromEntries(results.map((row) => [row.key, row.snap]));
+
+      (byKey.authorizations?.docs || []).forEach((doc) => {
         const data = doc.data() || {};
         if (data.type === 'permanent') return;
         const evaluated = evaluateExpiry(
@@ -2314,7 +2359,7 @@ app.get(
         });
       });
 
-      personalSnap.docs.forEach((doc) => {
+      (byKey.personal?.docs || []).forEach((doc) => {
         const data = doc.data() || {};
         const subject = data.name || data.idNumberNormalized || data.idNumber || 'persona';
         [
@@ -2343,7 +2388,7 @@ app.get(
         });
       });
 
-      vehiclesSnap.docs.forEach((doc) => {
+      (byKey.vehicles?.docs || []).forEach((doc) => {
         const data = doc.data() || {};
         const plate = data.plate || data.plateNormalized || 'vehículo';
         const subject = `la patente ${plate}`;
@@ -2381,6 +2426,7 @@ app.get(
 
       res.json({
         today,
+        scopes,
         expired: buckets.expired,
         endingIn7: buckets.endingIn7,
         endingIn15: buckets.endingIn15,

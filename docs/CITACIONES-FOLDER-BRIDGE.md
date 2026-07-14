@@ -14,7 +14,7 @@ Este puente es del mismo tipo que el SR201: proceso mínimo en una PC de planta,
 |----------|--------|---------------------------|
 | Puente SR201 (molinete/puertas) | `scripts/sr201-bridge.js` | **No** — mantener |
 | Puente citaciones Excel | `scripts/citaciones-folder-bridge.js` | **No** — mantener (en uso) |
-| API Node+Mongo (`bacarguard-api`) | `legacy/backend-libro-guardia` | **Sí** — retirar cuando checklist hardware OK |
+| API Node+Mongo (`bacarguard-api`) | `legacy/backend-libro-guardia` | **Sí** — descartado (sin migración); apagar en planta con comandos en `MIGRACION-BACKEND.md` §13 |
 
 Ver también: [INSTALACION-SR201.md](./INSTALACION-SR201.md) · [MIGRACION-BACKEND.md](./MIGRACION-BACKEND.md)
 

@@ -13,7 +13,7 @@ App: https://bacarguard.web.app
 - [ ] Probar **"Probar relevador"** desde producción (Firebase) y confirmar que abre la puerta física.
 - [ ] Confirmar latencia aceptable del pulso a través del túnel.
 - [ ] Confirmar comportamiento si el túnel se cae (mensaje de error claro en el panel de puertas, no un error genérico).
-- [ ] Recién ahí, apagar definitivamente cualquier resto del backend Node/Mongo en el servidor de planta (`pm2 stop bacarguard-api`).
+- [ ] Apagar el backend Node/Mongo en planta si aún corre (`pm2 stop/delete bacarguard-api` — ver `docs/MIGRACION-BACKEND.md` §13). *Independiente del pulso SR201: los datos Mongo ya están descartados; el apagado del proceso es una confirmación operativa.*
 
 ### Servicios locales a mantener (no se retiran con Node/Mongo)
 

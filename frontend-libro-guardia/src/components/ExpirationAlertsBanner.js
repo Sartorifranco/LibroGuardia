@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CalendarClock, Loader2 } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -11,24 +11,50 @@ const BUCKET_LABELS = {
   d30: 'Vencen en 30 días'
 };
 
+/** Misma matriz de dominios que el backend (resolveExpirationAlertScopes). */
+export function resolveExpirationAlertScopes(user) {
+  if (!user) {
+    return { authorizations: false, personal: false, vehicles: false };
+  }
+  return {
+    authorizations:
+      hasPermission(user, 'entries.view') ||
+      hasPermission(user, 'master.citaciones.read'),
+    personal: hasPermission(user, 'master.personal.read'),
+    vehicles: hasPermission(user, 'master.vehicles.read')
+  };
+}
+
 function canSeeAlerts(user) {
   if (!user) return false;
   const profile = getDashboardProfile(user);
   const roleOk = ['guardia', 'supervisor', 'admin'].includes(profile)
     || ['guardia', 'supervisor', 'admin'].includes(user.role);
   if (!roleOk) return false;
-  return (
-    hasPermission(user, 'entries.view') ||
-    hasPermission(user, 'master.citaciones.read') ||
-    hasPermission(user, 'master.personal.read') ||
-    hasPermission(user, 'master.vehicles.read')
-  );
+  const scopes = resolveExpirationAlertScopes(user);
+  return scopes.authorizations || scopes.personal || scopes.vehicles;
+}
+
+function kindAllowed(kind, scopes) {
+  if (kind === 'authorization') return Boolean(scopes.authorizations);
+  if (kind === 'art' || kind === 'license') return Boolean(scopes.personal);
+  if (kind === 'insurance' || kind === 'vtv') return Boolean(scopes.vehicles);
+  return false;
+}
+
+function filterBucketItems(items, scopes) {
+  return (items || []).filter((item) => kindAllowed(item?.kind, scopes));
 }
 
 function ExpirationAlertsBanner() {
   const { authToken, currentUser } = useAuth();
   const [alerts, setAlerts] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  const scopes = useMemo(
+    () => resolveExpirationAlertScopes(currentUser),
+    [currentUser]
+  );
 
   const load = useCallback(async () => {
     if (!authToken || !canSeeAlerts(currentUser)) return;
@@ -54,17 +80,23 @@ function ExpirationAlertsBanner() {
   if (!canSeeAlerts(currentUser)) return null;
 
   const buckets = [
-    { key: 'expired', items: alerts?.expired || [] },
-    { key: 'd7', items: alerts?.endingIn7 || alerts?.d7 || [] },
-    { key: 'd15', items: alerts?.endingIn15 || alerts?.d15 || [] },
-    { key: 'd30', items: alerts?.endingIn30 || alerts?.d30 || [] }
+    { key: 'expired', items: filterBucketItems(alerts?.expired, scopes) },
+    { key: 'd7', items: filterBucketItems(alerts?.endingIn7 || alerts?.d7, scopes) },
+    { key: 'd15', items: filterBucketItems(alerts?.endingIn15 || alerts?.d15, scopes) },
+    { key: 'd30', items: filterBucketItems(alerts?.endingIn30 || alerts?.d30, scopes) }
   ].filter((b) => b.items.length > 0);
+
+  const loadingHint = [
+    scopes.authorizations && 'autorizaciones',
+    scopes.personal && 'ART/licencia',
+    scopes.vehicles && 'seguro/VTV'
+  ].filter(Boolean).join(', ');
 
   if (loading && !alerts) {
     return (
       <div className="expiration-alerts expiration-alerts--loading">
         <Loader2 size={16} className="animate-spin" aria-hidden />
-        <span>Revisando vencimientos (autorizaciones, ART, seguro, licencia)…</span>
+        <span>Revisando vencimientos ({loadingHint || 'documentos'})…</span>
       </div>
     );
   }

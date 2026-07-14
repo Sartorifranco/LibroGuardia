@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 const {
   normalizeExpiryYmd,
   evaluateExpiry,
-  buildExpiryMessage
+  buildExpiryMessage,
+  resolveExpirationAlertScopes,
+  filterAlertsByScopes
 } = require('../lib/documentExpiry');
 
 test('normalizeExpiryYmd ignora vacíos e inválidos', () => {
@@ -37,4 +39,67 @@ test('buildExpiryMessage identifica sujeto y tipo', () => {
   assert.match(msg, /ART/);
   assert.match(msg, /Juan Pérez/);
   assert.match(msg, /7/);
+});
+
+const SAMPLE_ALERTS = [
+  { id: 'a1', kind: 'authorization' },
+  { id: 'p1', kind: 'art' },
+  { id: 'p2', kind: 'license' },
+  { id: 'v1', kind: 'insurance' },
+  { id: 'v2', kind: 'vtv' }
+];
+
+test('scopes: solo entries.view → solo autorizaciones', () => {
+  const scopes = resolveExpirationAlertScopes({
+    role: 'guardia',
+    permissions: ['entries.view']
+  });
+  assert.deepEqual(scopes, {
+    authorizations: true,
+    personal: false,
+    vehicles: false
+  });
+  const kinds = filterAlertsByScopes(SAMPLE_ALERTS, scopes).map((a) => a.kind);
+  assert.deepEqual(kinds, ['authorization']);
+});
+
+test('scopes: personal+vehicles sin entries/citaciones → ART/licencia/seguro/VTV, no autorizaciones', () => {
+  const scopes = resolveExpirationAlertScopes({
+    role: 'supervisor',
+    permissions: ['master.personal.read', 'master.vehicles.read']
+  });
+  assert.deepEqual(scopes, {
+    authorizations: false,
+    personal: true,
+    vehicles: true
+  });
+  const kinds = filterAlertsByScopes(SAMPLE_ALERTS, scopes).map((a) => a.kind).sort();
+  assert.deepEqual(kinds, ['art', 'insurance', 'license', 'vtv']);
+});
+
+test('scopes: los tres dominios juntos (como supervisor completo) → todo', () => {
+  const scopes = resolveExpirationAlertScopes({
+    role: 'supervisor',
+    permissions: [
+      'entries.view',
+      'master.citaciones.read',
+      'master.personal.read',
+      'master.vehicles.read'
+    ]
+  });
+  assert.deepEqual(scopes, {
+    authorizations: true,
+    personal: true,
+    vehicles: true
+  });
+  assert.equal(filterAlertsByScopes(SAMPLE_ALERTS, scopes).length, 5);
+});
+
+test('scopes: admin ve todos los dominios aunque la lista de permisos venga vacía', () => {
+  const scopes = resolveExpirationAlertScopes({ role: 'admin', permissions: [] });
+  assert.deepEqual(scopes, {
+    authorizations: true,
+    personal: true,
+    vehicles: true
+  });
 });

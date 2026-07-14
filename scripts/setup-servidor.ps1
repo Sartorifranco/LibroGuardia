@@ -48,12 +48,19 @@ pm2 save
 
 ---
 
-## Apagar el API Node+Mongo viejo (si aún corre)
+## Apagar el API Node+Mongo viejo (definitivo — Fase 15)
+
+Confirmado: no hay datos relevantes en Mongo → no migrar. Solo apagar el proceso.
 
 ```powershell
+pm2 status
 pm2 stop bacarguard-api
 pm2 delete bacarguard-api
 pm2 save
+pm2 status
+netstat -ano | findstr ":5020"
 ```
 
-El código histórico está en `legacy/backend-libro-guardia/` (solo referencia).
+Detalle y variantes: `docs/MIGRACION-BACKEND.md` §13.
+
+El código histórico está en `legacy/backend-libro-guardia/` (solo referencia; no iniciar).
