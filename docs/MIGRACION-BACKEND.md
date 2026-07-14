@@ -201,3 +201,14 @@ Completado (refactor puro, sin cambio de UX intencional):
 - [x] `App.js` como shell (~360 líneas): layout, routing por `activeTab`, providers
 
 Siguiente: **Fase 3 — UX / sesión / manejo de errores** (conectar `api.js` con sesión expirada).
+
+---
+
+## 10. Estado Fase 3 (2026-07-14)
+
+Completado:
+
+- [x] `apiFetch` centralizado: Bearer automático, 401/403 → logout + "Tu sesión expiró…", red tipada, message del backend, genérico honesto
+- [x] Cero `fetch` sueltos en frontend (salvo el interior de `services/api.js`)
+- [x] Toasts: error manual / éxito 5s (sin cambio de política)
+- [x] `allowForbidden` donde 403 es "sin permiso" esperado (roles, access-control kiosk)
