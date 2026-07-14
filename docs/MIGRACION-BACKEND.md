@@ -188,3 +188,16 @@ Completado:
 - [x] README y scripts de deploy actualizados (Firebase = app; bridge = hardware).
 
 Siguiente: **Fase 2 — modularizar `App.js` por dominio**.
+
+---
+
+## 9. Estado Fase 2 (2026-07-14)
+
+Completado (refactor puro, sin cambio de UX intencional):
+
+- [x] `services/api.js` — cliente HTTP centralizado (`apiFetch`)
+- [x] Contextos: Auth, Toast, Entries, ClockPrefill
+- [x] Pages: Login, Home, Personal, VehiculosExternos, FlotaInterna, Novedad, Historial, Admin
+- [x] `App.js` como shell (~360 líneas): layout, routing por `activeTab`, providers
+
+Siguiente: **Fase 3 — UX / sesión / manejo de errores** (conectar `api.js` con sesión expirada).
