@@ -7,8 +7,7 @@ import {
   UserX,
   Clock,
 } from 'lucide-react';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+import { apiFetch } from '../services/api';
 
 const STATUS_LABELS = {
   present: 'En planta',
@@ -33,11 +32,7 @@ function CitadosPanel({ authToken, enabled = true, pollSeconds = 60, onRegistere
     if (!authToken || !enabled) return;
     if (manual) setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/guard/citados/today`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || 'Error al cargar citados');
+      const payload = await apiFetch('/guard/citados/today', { token: authToken });
       setData(payload);
       setError('');
       setSelectedIds(new Set());
@@ -91,16 +86,11 @@ function CitadosPanel({ authToken, enabled = true, pollSeconds = 60, onRegistere
     if (!items.length) return;
     setActing(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/guard/attendance/bulk-present`, {
+      await apiFetch('/guard/attendance/bulk-present', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({ items })
+        token: authToken,
+        body: { items }
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || 'No se pudo registrar');
       onRegisteredRef.current?.(items[0]);
       await fetchCitados(false);
     } catch (err) {
@@ -114,16 +104,11 @@ function CitadosPanel({ authToken, enabled = true, pollSeconds = 60, onRegistere
     if (!items.length) return;
     setActing(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/guard/attendance/bulk-absent`, {
+      await apiFetch('/guard/attendance/bulk-absent', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({ items, reason: 'ausente_guardia' })
+        token: authToken,
+        body: { items, reason: 'ausente_guardia' }
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.message || 'No se pudo marcar ausente');
       await fetchCitados(false);
     } catch (err) {
       setError(err.message);

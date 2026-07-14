@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useClockPrefill } from '../../context/ClockPrefillContext';
 import { useEntries } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
-import { apiFetch, API_BASE_URL } from '../../services/api';
+import { apiFetch } from '../../services/api';
 import { hasPermission } from '../../utils/permissions';
 
 function VehiculosExternosPage() {
@@ -38,12 +38,12 @@ function VehiculosExternosPage() {
 
     setVehicleAuthStatus('checking');
     try {
-      const response = await fetch(`${API_BASE_URL}/master-data/vehicles/lookup?plate=${encodeURIComponent(value.trim())}`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const data = await response.json();
+      const data = await apiFetch(
+        `/master-data/vehicles/lookup?plate=${encodeURIComponent(value.trim())}`,
+        { token: authToken }
+      );
       setVehicleLookupInfo(data);
-      if (response.ok && data.authorized) {
+      if (data.authorized) {
         setVehicleAuthStatus('authorized');
         if (data.vehicle) {
           setVehicleBrand(data.vehicle.brand || vehicleBrand);

@@ -5,8 +5,7 @@ import {
   PERMISSION_LABELS,
   hasPermission
 } from '../utils/permissions';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+import { apiFetch } from '../services/api';
 
 function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
   const [roles, setRoles] = useState([]);
@@ -25,11 +24,7 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
     if (!authToken) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/roles`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al cargar roles');
+      const data = await apiFetch('/admin/roles', { token: authToken, allowForbidden: true });
       setRoles(data.roles || []);
       setPermissionKeys(data.permissionKeys || Object.keys(PERMISSION_LABELS));
     } catch (err) {
@@ -48,22 +43,17 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
     if (!canManage) return;
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/roles`, {
+      await apiFetch('/admin/roles', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
+        token: authToken,
+        body: {
           id: newRoleId,
           label: newRoleLabel,
           description: newRoleDescription,
           dashboardProfile: newRoleProfile,
           permissions: []
-        })
+        }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al crear rol');
       onSuccess?.('Rol creado correctamente.');
       setNewRoleId('');
       setNewRoleLabel('');
@@ -93,21 +83,16 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
     if (!canManage) return;
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/roles/${role.id}`, {
+      await apiFetch(`/admin/roles/${role.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
+        token: authToken,
+        body: {
           label: role.label,
           description: role.description,
           dashboardProfile: role.dashboardProfile,
           permissions: role.permissions
-        })
+        }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al guardar rol');
       onSuccess?.(`Rol ${role.label} actualizado.`);
       setEditingRole(null);
       loadRoles();
@@ -123,12 +108,10 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
     if (!window.confirm(`¿Eliminar el rol "${role.label}"?`)) return;
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/roles/${role.id}`, {
+      await apiFetch(`/admin/roles/${role.id}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${authToken}` }
+        token: authToken
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al eliminar rol');
       onSuccess?.('Rol eliminado.');
       loadRoles();
     } catch (err) {

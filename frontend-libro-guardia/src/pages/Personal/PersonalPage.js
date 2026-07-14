@@ -5,7 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useClockPrefill } from '../../context/ClockPrefillContext';
 import { useEntries } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
-import { apiFetch, API_BASE_URL } from '../../services/api';
+import { apiFetch } from '../../services/api';
 import { hasPermission } from '../../utils/permissions';
 
 function PersonalPage() {
@@ -92,19 +92,12 @@ function PersonalPage() {
       setPersonalNominaProfile(localMatch);
     } else if (hasPermission(currentUser, 'master.personal.read') && authToken) {
       try {
-        const response = await fetch(`${API_BASE_URL}/master-data/personal/by-dni/${normalized}`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          const profile = data.personal;
-          setPersonalNominaProfile(profile);
-          setPersonalName(profile.name || '');
-          setPersonalCompany(profile.company || profile.centroCosto || '');
-          setPersonalDestination(profile.destination || profile.centroCosto || '');
-        } else {
-          setPersonalNominaProfile(null);
-        }
+        const data = await apiFetch(`/master-data/personal/by-dni/${normalized}`, { token: authToken });
+        const profile = data.personal;
+        setPersonalNominaProfile(profile);
+        setPersonalName(profile.name || '');
+        setPersonalCompany(profile.company || profile.centroCosto || '');
+        setPersonalDestination(profile.destination || profile.centroCosto || '');
       } catch {
         setPersonalNominaProfile(null);
       }
@@ -116,11 +109,8 @@ function PersonalPage() {
           dni: normalized,
           name: personalName || localMatch?.name || ''
         });
-        const response = await fetch(`${API_BASE_URL}/guard/access-status?${params}`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        const data = await response.json();
-        if (response.ok) setPersonalAccessStatus(data);
+        const data = await apiFetch(`/guard/access-status?${params}`, { token: authToken });
+        setPersonalAccessStatus(data);
       } catch {
         setPersonalAccessStatus(null);
       }

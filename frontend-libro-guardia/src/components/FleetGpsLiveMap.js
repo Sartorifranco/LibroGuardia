@@ -15,9 +15,8 @@ import {
   normalizeGatePolygonsForSave,
   buildGatePolygonPatch
 } from '../utils/fleetGpsGeofence';
+import { apiFetch } from '../services/api';
 import 'leaflet/dist/leaflet.css';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
 
 const ZONE_LABELS = {
   gate: 'Port?n',
@@ -159,11 +158,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
           params.set('plantPolygon', JSON.stringify(queryConfig.plantPolygon));
         }
       }
-      const response = await fetch(`${API_BASE_URL}/admin/fleet-gps/live?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || data.error || 'Error al cargar mapa');
+      const data = await apiFetch(`/admin/fleet-gps/live?${params.toString()}`, { token: authToken });
       setSnapshot(data);
       setError(data.error || null);
     } catch (err) {
@@ -465,18 +460,11 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       const plantPolygon = draftPatch.plantPolygon || queryConfig.plantPolygon;
       if (plantPolygon) body.plantPolygon = plantPolygon;
 
-      const response = await fetch(`${API_BASE_URL}/admin/fleet-gps/geofence`, {
+      const data = await apiFetch('/admin/fleet-gps/geofence', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify(body)
+        token: authToken,
+        body
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || data.message || 'Error al guardar geocercas');
-      }
 
       const cfg = data.config || {};
       const patch = {

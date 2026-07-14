@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Car, Loader2, PlusCircle, Save, UserPlus } from 'lucide-react';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+import { apiFetch } from '../services/api';
 
 function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegistered }) {
   const [vehicles, setVehicles] = useState([]);
@@ -21,11 +20,7 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
     if (!authToken) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/master-data/vehicles`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al cargar vehículos');
+      const data = await apiFetch('/master-data/vehicles', { token: authToken });
       const filtered = (data.vehicles || []).filter((item) =>
         item.gateProfile === 'monitoreo' || !item.gateProfile
       );
@@ -51,13 +46,10 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
   const registerMovement = async (vehicle, movementType) => {
     setSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/entries`, {
+      const data = await apiFetch('/entries', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
+        token: authToken,
+        body: {
           type: 'vehiculo',
           movementType,
           plate: vehicle.plate,
@@ -68,10 +60,8 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
           authorizedStatus: 'authorized',
           gateProfile: 'monitoreo',
           notes: `Registro Monitoreo${vehicle.companions?.length ? ` · Acompañantes: ${vehicle.companions.map((c) => c.name).join(', ')}` : ''}`
-        })
+        }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al registrar movimiento');
       onSuccess?.(`${movementType === 'ingreso' ? 'Ingreso' : 'Egreso'} registrado: ${vehicle.plate}`);
       onMovementRegistered?.(data.entry);
     } catch (err) {
@@ -89,13 +79,10 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
     }
     setSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/master-data/vehicles/quick-authorize`, {
+      await apiFetch('/master-data/vehicles/quick-authorize', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
+        token: authToken,
+        body: {
           plate,
           brand,
           company,
@@ -104,10 +91,8 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
           companions,
           notes,
           gateProfile: 'monitoreo'
-        })
+        }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al autorizar vehículo');
       onSuccess?.('Vehículo autorizado para ingreso por Monitoreo.');
       setPlate('');
       setBrand('');

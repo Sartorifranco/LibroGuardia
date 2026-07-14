@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, UserPlus, ShieldCheck } from 'lucide-react';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+import { apiFetch } from '../services/api';
 
 const AUTH_TYPE_LABELS = {
   citacion: 'Citación',
@@ -56,12 +55,10 @@ function GuardAuthorizationsPanel({
     if (!authToken) return;
     setLoading(true);
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/guard/authorizations?scope=external&date=${viewDate}`,
-        { headers: { Authorization: `Bearer ${authToken}` } }
+      const data = await apiFetch(
+        `/guard/authorizations?scope=external&date=${viewDate}`,
+        { token: authToken }
       );
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al cargar autorizados');
       setAuthorizations(data.authorizations || []);
       setPlannedDates(data.plannedDates || []);
     } catch (err) {
@@ -95,13 +92,10 @@ function GuardAuthorizationsPanel({
     }
     setSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/guard/pre-register`, {
+      await apiFetch('/guard/pre-register', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
+        token: authToken,
+        body: {
           type: 'visita',
           name: preName.trim(),
           idNumber: preDni.trim(),
@@ -112,10 +106,8 @@ function GuardAuthorizationsPanel({
           endDate: preEnd,
           notes: preNotes.trim(),
           personTipo: 'visita'
-        })
+        }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'No se pudo pre-registrar');
       onSuccess?.('Visita pre-registrada. La persona quedará autorizada en esas fechas.');
       setPreName('');
       setPreDni('');

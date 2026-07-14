@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { DoorOpen } from 'lucide-react';
 import { hasPermission } from '../utils/permissions';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+import { apiFetch } from '../services/api';
 
 function ManualDoorButton({
   authToken,
@@ -18,10 +17,7 @@ function ManualDoorButton({
 
   useEffect(() => {
     if (!authToken || !hasPermission(currentUser, 'access.manual_open')) return;
-    fetch(`${API_BASE_URL}/guard/doors`, {
-      headers: { Authorization: `Bearer ${authToken}` }
-    })
-      .then((res) => res.json())
+    apiFetch('/guard/doors', { token: authToken, allowForbidden: true })
       .then((data) => {
         const list = (data.doors || []).filter((door) => door.manualOpenAllowed !== false);
         setDoors(list);
@@ -44,20 +40,15 @@ function ManualDoorButton({
 
     setOpening(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/guard/open-door`, {
+      const data = await apiFetch('/guard/open-door', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
+        token: authToken,
+        body: {
           reason: 'apertura_manual_guardia',
           doorId: selectedDoorId || null,
           bypassAirlock: true
-        })
+        }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'No se pudo abrir la puerta');
       onSuccess?.(data.message || `${label} abierta`);
     } catch (err) {
       onError?.(err.message || 'Error al abrir la puerta');

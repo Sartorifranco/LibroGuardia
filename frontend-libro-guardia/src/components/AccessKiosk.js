@@ -4,12 +4,7 @@ import { ShieldCheck, ShieldX, User, LogOut, AlertTriangle } from 'lucide-react'
 
 import ContinuousScanner from './ContinuousScanner';
 import ManualDoorButton from './ManualDoorButton';
-
-
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
-
-
+import { apiFetch } from '../services/api';
 
 const REASON_LABELS = {
 
@@ -153,31 +148,11 @@ function AccessKiosk({
 
     try {
 
-      const response = await fetch(`${API_BASE_URL}/access/kiosk-scan`, {
-
+      const data = await apiFetch('/access/kiosk-scan', {
         method: 'POST',
-
-        headers: {
-
-          'Content-Type': 'application/json',
-
-          Authorization: `Bearer ${authToken}`
-
-        },
-
-        body: JSON.stringify({ rawData, doorId, readerId })
-
+        token: authToken,
+        body: { rawData, doorId, readerId }
       });
-
-
-
-      const data = await response.json();
-
-      if (!response.ok) {
-
-        throw new Error(data.message || 'Error al procesar el escaneo');
-
-      }
 
 
 
@@ -243,37 +218,16 @@ function AccessKiosk({
 
     try {
 
-      const response = await fetch(`${API_BASE_URL}/guard/exceptional-entry`, {
-
+      const data = await apiFetch('/guard/exceptional-entry', {
         method: 'POST',
-
-        headers: {
-
-          'Content-Type': 'application/json',
-
-          Authorization: `Bearer ${authToken}`
-
-        },
-
-        body: JSON.stringify({
-
+        token: authToken,
+        body: {
           name: result.name || 'Sin nombre',
-
           idNumber: result.idNumber || '',
-
           reason: exceptionalReason.trim(),
-
           movementType: 'ingreso'
-
-        })
-
+        }
       });
-
-
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.message || 'No se pudo autorizar');
 
 
 

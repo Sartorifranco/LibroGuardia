@@ -10,7 +10,7 @@ import RolesAdminPanel from '../../components/RolesAdminPanel';
 import { hasPermission, canManageTargetUser, PERMISSION_LABELS } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
-import { API_BASE_URL } from '../../services/api';
+import { apiFetch } from '../../services/api';
 import { ADMIN_SECTION_META, AUTH_WEEKDAYS, AUTH_TYPE_LABELS, formatAuthSchedule } from './adminConstants';
 
 /**
@@ -160,24 +160,12 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
       }
       try {
         setLoading(true);
-        const response = await fetch(`${API_BASE_URL}/admin/users`, {
-          headers: {
-            'Authorization': `Bearer ${authToken}`
-          }
-        });
-        if (!response.ok) {
-          throw new Error('Error al cargar usuarios');
-        }
-        const data = await response.json();
+        const data = await apiFetch('/admin/users', { token: authToken });
         setUsers(data.users);
         setError(null);
       } catch (err) {
         console.error("Error al obtener usuarios:", err);
-        if (err instanceof TypeError && err.message === 'Failed to fetch') {
-          setError("No se pudo conectar con el servidor para cargar la lista de usuarios. Asegúrese de que el backend esté funcionando.");
-        } else {
-          setError(err.message || "Error al cargar la lista de usuarios. Asegúrese de tener permisos de administrador.");
-        }
+        setError(err.message || "Error al cargar la lista de usuarios. Asegúrese de tener permisos de administrador.");
       } finally {
         setLoading(false);
       }
@@ -192,13 +180,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
         return;
       }
       try {
-        const response = await fetch(`${API_BASE_URL}/master-data/vehicles`, {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setVehicleMasterData(data.vehicles || []);
-        }
+        const data = await apiFetch('/master-data/vehicles', { token: authToken, allowForbidden: true });
+        setVehicleMasterData(data.vehicles || []);
       } catch (err) {
         console.error('Error al cargar vehículos autorizados:', err);
       }
@@ -213,31 +196,21 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
       }
       setAdminSectionLoading(true);
       try {
-        let authUrl = `${API_BASE_URL}/admin/authorizations?`;
+        let authQuery = '';
         if (citacionesViewMode === 'day') {
-          authUrl += `date=${citacionesViewDate}`;
+          authQuery = `date=${citacionesViewDate}`;
         } else if (citacionesViewMode === 'range') {
-          authUrl += `from=${citacionesRangeFrom}&to=${citacionesRangeTo}`;
+          authQuery = `from=${citacionesRangeFrom}&to=${citacionesRangeTo}`;
         } else {
-          authUrl += `planned=true&date=${citacionesRangeFrom}`;
+          authQuery = `planned=true&date=${citacionesRangeFrom}`;
         }
 
-        const response = await fetch(authUrl, {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setCitaciones(data.authorizations || []);
-          setPlannedDates(data.plannedDates || []);
-        }
+        const data = await apiFetch(`/admin/authorizations?${authQuery}`, { token: authToken, allowForbidden: true });
+        setCitaciones(data.authorizations || []);
+        setPlannedDates(data.plannedDates || []);
 
-        const importsRes = await fetch(`${API_BASE_URL}/admin/citaciones-imports?limit=100`, {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        if (importsRes.ok) {
-          const importsData = await importsRes.json();
-          setCitacionesImports(importsData.imports || []);
-        }
+        const importsData = await apiFetch('/admin/citaciones-imports?limit=100', { token: authToken, allowForbidden: true });
+        setCitacionesImports(importsData.imports || []);
       } catch (err) {
         console.error('Error al cargar citaciones:', err);
       } finally {
@@ -249,13 +222,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
       const fetchCitacionesBridge = async () => {
         if (!hasPermission(currentUser, 'master.citaciones.write')) return;
         try {
-          const response = await fetch(`${API_BASE_URL}/admin/citaciones-bridge`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-          });
-          if (response.ok) {
-            const data = await response.json();
-            setCitacionesBridgeConfig((prev) => ({ ...prev, ...(data.config || {}) }));
-          }
+          const data = await apiFetch('/admin/citaciones-bridge', { token: authToken, allowForbidden: true });
+          setCitacionesBridgeConfig((prev) => ({ ...prev, ...(data.config || {}) }));
         } catch (err) {
           console.error('Error al cargar puente de citaciones:', err);
         }
@@ -269,19 +237,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
       if (!currentUser || !hasPermission(currentUser, 'settings.permissions')) return;
       setAdminSectionLoading(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/roles`, {
-          headers: { Authorization: `Bearer ${authToken}` }
+        const data = await apiFetch('/admin/roles', { token: authToken, allowForbidden: true });
+        const rolesMap = {};
+        (data.roles || []).forEach((role) => {
+          rolesMap[role.id] = role.permissions || [];
         });
-        if (response.ok) {
-          const data = await response.json();
-          const rolesMap = {};
-          (data.roles || []).forEach((role) => {
-            rolesMap[role.id] = role.permissions || [];
-          });
-          setRolePermissions(rolesMap);
-          setSystemRoles(data.roles || []);
-          setPermissionKeys(data.permissionKeys || []);
-        }
+        setRolePermissions(rolesMap);
+        setSystemRoles(data.roles || []);
+        setPermissionKeys(data.permissionKeys || []);
       } catch (err) {
         console.error('Error al cargar permisos por rol:', err);
       } finally {
@@ -298,13 +261,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
       if (!currentUser || !hasPermission(currentUser, 'master.nomina.read')) return;
       setAdminSectionLoading(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/nomina`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setNominaData(data.personal || []);
-        }
+        const data = await apiFetch('/admin/nomina', { token: authToken, allowForbidden: true });
+        setNominaData(data.personal || []);
       } catch (err) {
         console.error('Error al cargar nómina:', err);
       } finally {
@@ -320,13 +278,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     const fetchKioskSettings = async () => {
       if (!currentUser || !hasPermission(currentUser, 'access.kiosk')) return;
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/access-control`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setAccessControlConfig((prev) => { const next = { ...prev, ...(data.config || {}) }; onAccessConfigSaved?.(next); return next; });
-        }
+        const data = await apiFetch('/admin/access-control', { token: authToken, allowForbidden: true });
+        setAccessControlConfig((prev) => { const next = { ...prev, ...(data.config || {}) }; onAccessConfigSaved?.(next); return next; });
       } catch (err) {
         console.error('Error al cargar ajustes del molinete:', err);
       }
@@ -339,23 +292,18 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
       if (!currentUser || !hasPermission(currentUser, 'access.control')) return;
       setAdminSectionLoading(true);
       try {
-        const fleetResponse = await fetch(`${API_BASE_URL}/admin/fleet-gps`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        if (fleetResponse.ok) {
-          const data = await fleetResponse.json();
-          const cfg = data.config || {};
-          setFleetGpsConfig((prev) => ({
-            ...prev,
-            ...cfg,
-            geofenceMode: cfg.geofenceMode || prev.geofenceMode || 'circle',
-            gatePolygons: normalizeGatePolygonsForSave(cfg.gatePolygons || prev.gatePolygons || []),
-            plantPolygon: cfg.plantPolygon ?? prev.plantPolygon ?? null,
-            guardiaLat: cfg.guardiaLat ?? '',
-            guardiaLng: cfg.guardiaLng ?? '',
-            apiKey: cfg.hasApiKey ? '********' : ''
-          }));
-        }
+        const data = await apiFetch('/admin/fleet-gps', { token: authToken, allowForbidden: true });
+        const cfg = data.config || {};
+        setFleetGpsConfig((prev) => ({
+          ...prev,
+          ...cfg,
+          geofenceMode: cfg.geofenceMode || prev.geofenceMode || 'circle',
+          gatePolygons: normalizeGatePolygonsForSave(cfg.gatePolygons || prev.gatePolygons || []),
+          plantPolygon: cfg.plantPolygon ?? prev.plantPolygon ?? null,
+          guardiaLat: cfg.guardiaLat ?? '',
+          guardiaLng: cfg.guardiaLng ?? '',
+          apiKey: cfg.hasApiKey ? '********' : ''
+        }));
       } catch (err) {
         console.error('Error al cargar GPS flota:', err);
       } finally {
@@ -406,16 +354,11 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
           }
         }
 
-        const response = await fetch(`${API_BASE_URL}/admin/authorizations`, {
+        const data = await apiFetch('/admin/authorizations', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify(payload)
+          token: authToken,
+          body: payload
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al crear autorización');
         setNewCitacionName('');
         setNewCitacionDni('');
         setNewCitacionLegajo('');
@@ -439,12 +382,10 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   const handleDeleteCitacion = async (id) => {
     if (!window.confirm('¿Desactivar esta autorización?')) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/authorizations/${id}`, {
+      await apiFetch(`/admin/authorizations/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        token: authToken
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al desactivar autorización');
       setCitaciones((prev) => prev.filter((item) => item.id !== id));
       showSuccess('Autorización desactivada.');
     } catch (err) {
@@ -456,22 +397,17 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     e.preventDefault();
     await runAction('saveVehicle', async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/master-data/vehicles`, {
+        const data = await apiFetch('/master-data/vehicles', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify({
+          token: authToken,
+          body: {
             plate: newVehiclePlate,
             brand: newVehicleBrand,
             company: newVehicleCompany,
             driver: newVehicleDriver,
             authorized: true
-          })
+          }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al precargar vehículo');
         setNewVehiclePlate('');
         setNewVehicleBrand('');
         setNewVehicleCompany('');
@@ -490,12 +426,10 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   const handleDeletePreloadedVehicle = async (id) => {
     if (!window.confirm('¿Eliminar este vehículo de la base autorizada?')) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/master-data/vehicles/${id}`, {
+      await apiFetch(`/master-data/vehicles/${id}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        token: authToken
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al eliminar vehículo');
       setVehicleMasterData((prev) => prev.filter((item) => item.id !== id));
       showSuccess('Vehículo eliminado de la base autorizada.');
     } catch (err) {
@@ -515,16 +449,11 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   const handleSaveRolePermissions = async () => {
     await runAction('saveRolePermissions', async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/permissions/roles`, {
+        await apiFetch('/admin/permissions/roles', {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ roles: rolePermissions })
+          token: authToken,
+          body: { roles: rolePermissions }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al guardar permisos');
         showSuccess('Permisos por rol actualizados.');
       } catch (err) {
         showError(err.message || 'Error al guardar permisos');
@@ -536,16 +465,11 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     if (!editingUser) return;
     await runAction('saveUserPermissions', async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/users/${editingUser.id}/permissions`, {
+        const data = await apiFetch(`/admin/users/${editingUser.id}/permissions`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ permissions: editingUserPermissions })
+          token: authToken,
+          body: { permissions: editingUserPermissions }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al guardar permisos del usuario');
         showSuccess('Permisos personalizados guardados.');
         setUsers((prev) => prev.map((user) => (user.id === data.user.id ? data.user : user)));
       } catch (err) {
@@ -583,16 +507,11 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
           approachRequireMotion: configToSave.approachRequireMotion !== false
         };
 
-        const response = await fetch(`${API_BASE_URL}/admin/fleet-gps`, {
+        const data = await apiFetch('/admin/fleet-gps', {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`
-          },
-          body: JSON.stringify(saveBody)
+          token: authToken,
+          body: saveBody
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al guardar GPS UBIKA');
         const cfg = data.config || {};
         setFleetGpsConfig((prev) => ({
           ...prev,
@@ -614,12 +533,10 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   const handleTestFleetGps = async () => {
     await runAction('testFleetGps', async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/fleet-gps/test`, {
+        const data = await apiFetch('/admin/fleet-gps/test', {
           method: 'POST',
-          headers: { Authorization: `Bearer ${authToken}` }
+          token: authToken
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || data.error || 'Error al probar UBIKA');
         setFleetGpsTestResult(data);
         if (data.error) {
           showError(data.error);
@@ -637,20 +554,15 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     e.preventDefault();
     await runAction('saveCitacionesBridge', async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/citaciones-bridge`, {
+        const data = await apiFetch('/admin/citaciones-bridge', {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify({
+          token: authToken,
+          body: {
             enabled: citacionesBridgeConfig.enabled,
             bridgeSecret: citacionesBridgeConfig.bridgeSecret,
             watchFolderHint: citacionesBridgeConfig.watchFolderHint
-          })
+          }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al guardar puente de citaciones');
         setCitacionesBridgeConfig((prev) => ({ ...prev, ...(data.config || {}) }));
         showSuccess('Puente de carpeta de citaciones guardado.');
       } catch (err) {
@@ -669,16 +581,11 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   const handleRelinkCitacionesNomina = async () => {
     await runAction('relinkCitacionesNomina', async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/citaciones/relink-nomina`, {
+        const data = await apiFetch('/admin/citaciones/relink-nomina', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ date: citacionesFilterDate || newCitacionDate })
+          token: authToken,
+          body: { date: citacionesFilterDate || newCitacionDate }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al vincular citaciones');
         showSuccess(data.message || `${data.linked || 0} citación(es) vinculada(s)`);
       } catch (err) {
         showError(err.message || 'No se pudo vincular citaciones con nómina');
@@ -689,24 +596,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   const handleReprocessCitacionesImport = async (importId) => {
     await runAction(`reprocess-import-${importId}`, async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/citaciones-imports/${importId}/reprocess`, {
+        const data = await apiFetch(`/admin/citaciones-imports/${importId}/reprocess`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ force: true })
+          token: authToken,
+          body: { force: true }
         });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al reprocesar importación');
         showSuccess(data.message || 'Importación reprocesada');
-        const importsRes = await fetch(`${API_BASE_URL}/admin/citaciones-imports?limit=100`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        if (importsRes.ok) {
-          const importsData = await importsRes.json();
-          setCitacionesImports(importsData.imports || []);
-        }
+        const importsData = await apiFetch('/admin/citaciones-imports?limit=100', { token: authToken, allowForbidden: true });
+        setCitacionesImports(importsData.imports || []);
       } catch (err) {
         showError(err.message || 'No se pudo reprocesar la importación');
       }
@@ -715,11 +612,7 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
 
   const handleDownloadImportJson = async (importId, sourceFile) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/citaciones-imports/${importId}`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al descargar importación');
+      const data = await apiFetch(`/admin/citaciones-imports/${importId}`, { token: authToken });
       const blob = new Blob([JSON.stringify(data.import, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -755,37 +648,21 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     setError(null);
     await runAction('createUser', async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/users`, {
+        await apiFetch('/admin/users', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ username: newUsername, password: newUserPassword, role: newUserRole })
+          token: authToken,
+          body: { username: newUsername, password: newUserPassword, role: newUserRole }
         });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.message || 'Error al crear usuario');
-        }
 
         setNewUsername('');
         setNewUserPassword('');
         setNewUserRole('guardia');
         showSuccess('Usuario creado exitosamente.');
-        const usersResponse = await fetch(`${API_BASE_URL}/admin/users`, {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        const usersData = await usersResponse.json();
+        const usersData = await apiFetch('/admin/users', { token: authToken });
         setUsers(usersData.users);
       } catch (createError) {
         console.error('Error al crear usuario:', createError);
-        if (createError instanceof TypeError && createError.message === 'Failed to fetch') {
-          setError('No se pudo conectar con el servidor para crear el usuario. Asegúrese de que el backend esté funcionando.');
-        } else {
-          setError(createError.message || 'Error al crear usuario.');
-        }
+        setError(createError.message || 'Error al crear usuario.');
       }
     });
   };
@@ -809,35 +686,19 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
           updateData.password = editedUserPassword;
         }
 
-        const response = await fetch(`${API_BASE_URL}/admin/users/${editingUser.id}`, {
+        await apiFetch(`/admin/users/${editingUser.id}`, {
           method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify(updateData)
+          token: authToken,
+          body: updateData
         });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.message || 'Error al actualizar usuario');
-        }
 
         setEditingUser(null);
         showSuccess('Usuario actualizado exitosamente.');
-        const usersResponse = await fetch(`${API_BASE_URL}/admin/users`, {
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        const usersData = await usersResponse.json();
+        const usersData = await apiFetch('/admin/users', { token: authToken });
         setUsers(usersData.users);
       } catch (saveError) {
         console.error('Error al actualizar usuario:', saveError);
-        if (saveError instanceof TypeError && saveError.message === 'Failed to fetch') {
-          setError('No se pudo conectar con el servidor para actualizar el usuario. Asegúrese de que el backend esté funcionando.');
-        } else {
-          setError(saveError.message || 'Error al actualizar usuario.');
-        }
+        setError(saveError.message || 'Error al actualizar usuario.');
       }
     });
   };
@@ -850,34 +711,18 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     setError(null);
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/users/${userId}`, {
+      await apiFetch(`/admin/users/${userId}`, {
         method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${authToken}`
-        }
+        token: authToken
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Error al eliminar usuario');
-      }
 
       showSuccess("Usuario eliminado exitosamente.");
-      // Refrescar la lista de usuarios
-      const usersResponse = await fetch(`${API_BASE_URL}/admin/users`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
-      const usersData = await usersResponse.json();
+      const usersData = await apiFetch('/admin/users', { token: authToken });
       setUsers(usersData.users);
 
     } catch (error) {
       console.error("Error al eliminar usuario:", error);
-      if (error instanceof TypeError && error.message === 'Failed to fetch') {
-        setError("No se pudo conectar con el servidor para eliminar el usuario. Asegúrese de que el backend esté funcionando.");
-      } else {
-        setError(error.message || "Error al eliminar usuario.");
-      }
+      setError(error.message || "Error al eliminar usuario.");
     } finally {
       setLoading(false);
     }
@@ -941,24 +786,11 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
           });
           return cleaned;
         });
-        const response = await fetch(`${API_BASE_URL}/admin/nomina/upload`, {
+        const result = await apiFetch('/admin/nomina/upload', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ data: parsedData })
+          token: authToken,
+          body: { data: parsedData }
         });
-        const rawText = await response.text();
-        let result;
-        try {
-          result = rawText ? JSON.parse(rawText) : {};
-        } catch {
-          throw new Error(response.status === 502
-            ? 'El servidor tardó demasiado o rechazó la carga. Intente de nuevo en unos segundos.'
-            : 'Respuesta inválida del servidor. Intente de nuevo.');
-        }
-        if (!response.ok) throw new Error(result.message || 'Error al importar nómina');
         if ((result.imported ?? 0) === 0 && (result.total ?? 0) > 0) {
           const sample = (result.errors || []).slice(0, 3).map((e) => `${e.name}: ${e.reason}`).join(' · ');
           setError(result.message || `Ningún empleado importado${sample ? ` (${sample})` : ''}`);
@@ -966,20 +798,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
           showSuccess(result.message || 'Nómina importada');
         }
         setSelectedNominaFile(null);
-        const listRes = await fetch(`${API_BASE_URL}/admin/nomina`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        if (listRes.ok) {
-          const listData = await listRes.json();
+        try {
+          const listData = await apiFetch('/admin/nomina', { token: authToken, allowForbidden: true });
           setNominaData(listData.personal || []);
-        }
-        const personalRes = await fetch(`${API_BASE_URL}/master-data/personal`, {
-          headers: { Authorization: `Bearer ${authToken}` }
-        });
-        if (personalRes.ok) {
-          const personalPayload = await personalRes.json();
+        } catch { /* ignore refresh */ }
+        try {
+          const personalPayload = await apiFetch('/master-data/personal', { token: authToken, allowForbidden: true });
           setPersonalMasterData(personalPayload.personal || []);
-        }
+        } catch { /* ignore refresh */ }
       } catch (err) {
         setError(err.message || 'Error al procesar nómina');
       } finally {
@@ -997,24 +823,20 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
     let fileToUpload = null;
     let endpoint = '';
     let successMessage = '';
-    let errorMessage = '';
     let parseRows = (json) => json.map((row) => ({ name: row.name }));
 
     if (type === 'mobiles') {
       fileToUpload = selectedMobilesFile;
       endpoint = '/admin/fleet/mobiles/upload';
       successMessage = 'Lista de móviles actualizada exitosamente.';
-      errorMessage = 'Error al subir la lista de móviles.';
     } else if (type === 'drivers') {
       fileToUpload = selectedDriversFile;
       endpoint = '/admin/fleet/drivers/upload';
       successMessage = 'Lista de choferes actualizada exitosamente.';
-      errorMessage = 'Error al subir la lista de choferes.';
     } else if (type === 'vehicles') {
       fileToUpload = selectedVehiclesFile;
       endpoint = '/admin/fleet/vehicles/upload';
       successMessage = 'Vehículos autorizados cargados exitosamente.';
-      errorMessage = 'Error al subir vehículos autorizados.';
       parseRows = (json) => json.map((row) => ({
         plate: row.plate || row.patente || row.Patente,
         brand: row.brand || row.marca || row.Marca,
@@ -1026,7 +848,6 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
       fileToUpload = selectedCitacionesFile;
       endpoint = '/admin/authorizations/upload';
       successMessage = 'Autorizaciones cargadas exitosamente.';
-      errorMessage = 'Error al subir autorizaciones.';
       parseRows = (json) => json.map((row) => ({
         type: row.type || row.tipo || row.Tipo || 'citacion',
         name: row.name || row.nombre || row.Nombre,
@@ -1056,84 +877,54 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
         const json = XLSX.utils.sheet_to_json(worksheet);
 
         if (type === 'citaciones') {
-          const response = await fetch(`${API_BASE_URL}/admin/citaciones/sync-upload`, {
+          const result = await apiFetch('/admin/citaciones/sync-upload', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${authToken}`
-            },
-            body: JSON.stringify({
+            token: authToken,
+            body: {
               data: json,
               sourceFile: fileToUpload.name,
               force: true
-            })
+            }
           });
-          const result = await response.json();
-          if (!response.ok) {
-            throw new Error(result.message || errorMessage);
-          }
           showSuccess(result.message || successMessage);
-          const citacionesRes = await fetch(`${API_BASE_URL}/admin/authorizations?date=${newCitacionDate}`, {
-            headers: { Authorization: `Bearer ${authToken}` }
-          });
-          if (citacionesRes.ok) {
-            const citacionesData = await citacionesRes.json();
+          try {
+            const citacionesData = await apiFetch(`/admin/authorizations?date=${newCitacionDate}`, { token: authToken, allowForbidden: true });
             setCitaciones(citacionesData.authorizations || []);
-          }
-          const importsRes = await fetch(`${API_BASE_URL}/admin/citaciones-imports?limit=100`, {
-            headers: { Authorization: `Bearer ${authToken}` }
-          });
-          if (importsRes.ok) {
-            const importsData = await importsRes.json();
+          } catch { /* ignore */ }
+          try {
+            const importsData = await apiFetch('/admin/citaciones-imports?limit=100', { token: authToken, allowForbidden: true });
             setCitacionesImports(importsData.imports || []);
-          }
+          } catch { /* ignore */ }
           setSelectedCitacionesFile(null);
           return;
         }
 
         const parsedData = parseRows(json);
 
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        await apiFetch(endpoint, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify({ data: parsedData })
+          token: authToken,
+          body: { data: parsedData }
         });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.message || errorMessage);
-        }
 
         showSuccess(successMessage);
         if (type === 'vehicles') {
-          const vehiclesRes = await fetch(`${API_BASE_URL}/master-data/vehicles`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-          });
-          if (vehiclesRes.ok) {
-            const vehiclesData = await vehiclesRes.json();
+          try {
+            const vehiclesData = await apiFetch('/master-data/vehicles', { token: authToken, allowForbidden: true });
             setVehicleMasterData(vehiclesData.vehicles || []);
-          }
+          } catch { /* ignore */ }
           setSelectedVehiclesFile(null);
         } else if (type === 'citaciones') {
-          const citacionesRes = await fetch(`${API_BASE_URL}/admin/authorizations?date=${newCitacionDate}`, {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-          });
-          if (citacionesRes.ok) {
-            const citacionesData = await citacionesRes.json();
+          try {
+            const citacionesData = await apiFetch(`/admin/authorizations?date=${newCitacionDate}`, { token: authToken, allowForbidden: true });
             setCitaciones(citacionesData.authorizations || []);
-          }
+          } catch { /* ignore */ }
           setSelectedCitacionesFile(null);
         } else {
-          const [mobilesRes, driversRes] = await Promise.all([
-            fetch(`${API_BASE_URL}/fleet/mobiles`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
-            fetch(`${API_BASE_URL}/fleet/drivers`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+          const [mobilesData, driversData] = await Promise.all([
+            apiFetch('/fleet/mobiles', { token: authToken }),
+            apiFetch('/fleet/drivers', { token: authToken })
           ]);
-          const mobilesData = await mobilesRes.json();
-          const driversData = await driversRes.json();
           setMovilesList(mobilesData.mobiles.map(m => m.name));
           setDriversList(driversData.drivers.map(d => d.name));
           setSelectedMobilesFile(null);

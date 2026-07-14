@@ -9,8 +9,7 @@ import {
   Radio
 } from 'lucide-react';
 import FleetGpsVehicleTable, { formatDistance, formatFleetTime } from './FleetGpsVehicleTable';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+import { apiFetch } from '../services/api';
 
 function FleetGatePanel({
   authToken,
@@ -37,11 +36,7 @@ function FleetGatePanel({
     if (!authToken || !enabled) return;
     if (manual) setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/guard/fleet-gps/alerts`, {
-        headers: { Authorization: `Bearer ${authToken}` }
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error GPS');
+      const data = await apiFetch('/guard/fleet-gps/alerts', { token: authToken, allowForbidden: true });
 
       const nextTransit = data.transit || data.alerts || [];
       setTransit(nextTransit);

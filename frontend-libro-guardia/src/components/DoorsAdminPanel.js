@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PlusCircle, Save, Trash2 } from 'lucide-react';
 import PendingButton from './PendingButton';
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
+import { apiFetch } from '../services/api';
 
 const createLocalId = (prefix = 'item') =>
   typeof crypto !== 'undefined' && crypto.randomUUID
@@ -112,11 +111,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
   }, [onError]);
 
   const loadConfig = useCallback(async () => {
-    const response = await fetch(`${API_BASE_URL}/admin/doors-config`, {
-      headers: { Authorization: `Bearer ${authToken}` }
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.message || 'Error al cargar puertas');
+    const data = await apiFetch('/admin/doors-config', { token: authToken, allowForbidden: true });
     setConfig((prev) => mergeLocalIds(prev, data.config || { doors: [], airlockGroups: [] }));
     setGlobalAccess({ ...DEFAULT_GLOBAL, ...(data.globalAccess || {}) });
     setAuthMethods(data.authMethods || ['dni', 'credential', 'manual']);
@@ -167,16 +162,11 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
         })),
         globalAccess
       };
-      const response = await fetch(`${API_BASE_URL}/admin/doors-config`, {
+      const data = await apiFetch('/admin/doors-config', {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify(payload)
+        token: authToken,
+        body: payload
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al guardar');
       setConfig((prev) => mergeLocalIds(prev, data.config));
       setGlobalAccess({ ...DEFAULT_GLOBAL, ...(data.globalAccess || {}) });
       setLegacyFallback(false);
@@ -187,16 +177,11 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
 
   const testDoor = async (doorId) => {
     await onPending(`test-door-${doorId}`, async () => {
-      const response = await fetch(`${API_BASE_URL}/access/test-relay`, {
+      const data = await apiFetch('/access/test-relay', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`
-        },
-        body: JSON.stringify({ doorId })
+        token: authToken,
+        body: { doorId }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Error al probar puerta');
       onSuccess?.(data.message || 'Pulso enviado');
     });
   };

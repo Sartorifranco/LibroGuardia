@@ -54,12 +54,15 @@ function AppShell() {
     let cancelled = false;
     (async () => {
       try {
-        const data = await apiFetch('/admin/access-control', { token: authToken });
+        const data = await apiFetch('/admin/access-control', {
+          token: authToken,
+          allowForbidden: true
+        });
         if (!cancelled && data.config?.kioskResetSeconds != null) {
           setKioskResetSeconds(data.config.kioskResetSeconds || 4);
         }
       } catch {
-        // Sin permiso access.kiosk / access.control: default 4
+        // Sin permiso: default 4
       }
     })();
     return () => { cancelled = true; };

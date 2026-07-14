@@ -23,11 +23,7 @@ function LoginPage() {
       clearMessages();
     } catch (err) {
       console.error('Error de autenticación:', err);
-      if (err.isNetworkError || (err instanceof TypeError && err.message === 'Failed to fetch')) {
-        showError('No se pudo conectar con el servidor. Por favor, asegúrese de que el backend esté funcionando y la URL de la API sea correcta.');
-      } else {
-        showError(err.message || 'Error de autenticación. Intente de nuevo.');
-      }
+      showError(err.message || 'Error de autenticación. Intente de nuevo.');
     } finally {
       setLoading(false);
     }
