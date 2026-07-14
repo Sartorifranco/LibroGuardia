@@ -1961,10 +1961,31 @@ app.post('/api/entries', auth, async (req, res) => {
   }
 });
 
-app.get('/api/entries', auth, async (_req, res) => {
+app.get('/api/entries', auth, async (req, res) => {
   try {
-    const snap = await db.collection('entries').orderBy('timestamp', 'desc').get();
-    const userIds = [...new Set(snap.docs.map((doc) => doc.data().registeredBy).filter(Boolean))];
+    const { queryEntriesPage } = require('./lib/entriesQuery');
+    const {
+      startDate,
+      endDate,
+      limit,
+      cursor,
+      type,
+      q,
+      search
+    } = req.query || {};
+
+    const page = await queryEntriesPage(db, {
+      startDate: startDate || undefined,
+      endDate: endDate || undefined,
+      limit,
+      cursor: cursor || null,
+      type: type || 'todos',
+      q: q || search || ''
+    });
+
+    const userIds = [...new Set(
+      page.docs.map((doc) => doc.data().registeredBy).filter(Boolean)
+    )];
 
     const usernames = {};
     await Promise.all(userIds.map(async (userId) => {
@@ -1972,13 +1993,30 @@ app.get('/api/entries', auth, async (_req, res) => {
       usernames[userId] = userSnap.exists ? userSnap.data().username : 'Desconocido';
     }));
 
-    const entries = snap.docs.map((doc) =>
+    const entries = page.docs.map((doc) =>
       entryToJSON(doc, usernames[doc.data().registeredBy] || 'Desconocido')
     );
 
-    res.json({ entries });
+    res.json({
+      entries,
+      page: {
+        limit: page.limit,
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor
+      },
+      meta: {
+        startDate: page.startDate,
+        endDate: page.endDate,
+        type: type || 'todos',
+        q: q || search || ''
+      }
+    });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener entradas', error: err.message });
+    const status = err.status || 500;
+    res.status(status).json({
+      message: err.message || 'Error al obtener entradas',
+      error: err.message
+    });
   }
 });
 
