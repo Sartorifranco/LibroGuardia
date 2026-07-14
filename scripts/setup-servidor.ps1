@@ -1,38 +1,59 @@
-# Ejecutar UNA VEZ en el SERVIDOR (192.168.0.9) como administrador.
-# Instala PM2 para que la API quede corriendo siempre y se reinicie sola.
-#
-# Copiá y pegá estos comandos en PowerShell del servidor:
+# Setup en PC de planta (puentes locales, NO el API Mongo)
 
-Write-Host @"
+El Libro de Guardia corre en Firebase. En planta solo hace falta:
 
-=== SETUP SERVIDOR (ejecutar en 192.168.0.9) ===
+1. **Puente SR201** — obligatorio si hay molinete/puertas (`scripts/sr201-bridge.js`)
+2. **Puente citaciones** — opcional (`scripts/citaciones-folder-bridge.js`)
 
-1. Instalar PM2 global:
-   npm install -g pm2
-   npm install -g pm2-windows-startup
-   pm2-startup install
+NO iniciar `bacarguard-api` ni MongoDB para este sistema.
 
-2. Iniciar la API:
-   cd C:\LG\backend-libro-guardia
-   npm install
-   pm2 start server.js --name bacarguard-api
-   pm2 save
+---
 
-3. Habilitar OpenSSH (para deploy remoto desde tu PC):
-   Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-   Start-Service sshd
-   Set-Service -Name sshd -StartupType Automatic
+## SR201 bridge (recomendado con PM2)
 
-4. (Opcional) Clonar con Git en el servidor:
-   cd C:\LG
-   git clone https://github.com/TU_USUARIO/libro-guardia.git .
-   cd backend-libro-guardia
-   copy .env.example .env
-   # editar .env con MongoDB y JWT_SECRET
+```powershell
+npm install -g pm2 pm2-windows-startup
+pm2-startup install
 
-Comandos útiles en el servidor:
-   pm2 status
-   pm2 logs bacarguard-api
-   pm2 restart bacarguard-api
+cd C:\LG\scripts   # o la carpeta donde copien scripts/
+$env:SR201_HOST="192.168.0.50"
+$env:SR201_PORT="6722"
+$env:BRIDGE_PORT="5022"
+$env:BRIDGE_SECRET="una-clave-secreta-larga"
+pm2 start sr201-bridge.js --name bacarguard-sr201-bridge
+pm2 save
+```
 
-"@ -ForegroundColor Yellow
+Health:
+```powershell
+Invoke-RestMethod http://127.0.0.1:5022/health
+```
+
+Configurar en Admin → Control SR201 la **URL del puente** reachable desde internet
+(túnel Cloudflare/ngrok o IP pública). Una IP LAN sola no es alcanzable desde Cloud Functions.
+
+Ver: docs/INSTALACION-SR201.md
+
+---
+
+## Citaciones folder-bridge (opcional)
+
+```powershell
+cd C:\LG\scripts
+copy citaciones-bridge.config.example.json citaciones-bridge.config.json
+# editar watchFolder + bridgeSecret
+pm2 start citaciones-folder-bridge.js --name bacarguard-citaciones-bridge
+pm2 save
+```
+
+---
+
+## Apagar el API Node+Mongo viejo (si aún corre)
+
+```powershell
+pm2 stop bacarguard-api
+pm2 delete bacarguard-api
+pm2 save
+```
+
+El código histórico está en `legacy/backend-libro-guardia/` (solo referencia).

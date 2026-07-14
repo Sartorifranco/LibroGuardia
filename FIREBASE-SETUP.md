@@ -1,13 +1,14 @@
 # Libro de Guardia Bacar — 100% Firebase
 
-Todo el proyecto corre en Firebase. **Sin MongoDB, sin servidor local.**
+Todo el proyecto corre en Firebase. **Sin MongoDB, sin API Node local.**
 
-| Componente | Servicio Firebase |
+| Componente | Servicio Firebase / local |
 |---|---|
 | Frontend | Hosting → https://bacarguard.web.app |
 | Backend / API | Cloud Functions → `/api/*` |
 | Base de datos | **Firestore** |
-| Secretos | Firebase Secret Manager (`JWT_SECRET`) |
+| Secretos | Firebase Secret Manager / `functions/.env` (`JWT_SECRET`) |
+| Molinete (hardware) | Puente mínimo `scripts/sr201-bridge.js` en PC de planta |
 
 ---
 
@@ -129,12 +130,16 @@ npm start
 
 ---
 
-## Apagar el servidor viejo (192.168.0.9)
+## Apagar el API Node+Mongo viejo (192.168.0.9)
 
-Ya no se necesita para Libro de Guardia:
+Ya **no** se necesita Mongo ni `bacarguard-api` para Libro de Guardia.
+El código histórico quedó en `legacy/backend-libro-guardia/`.
 
 ```powershell
 pm2 stop bacarguard-api
 pm2 delete bacarguard-api
 pm2 save
 ```
+
+Sí hace falta (si usan molinete) el puente SR201 — ver [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md)
+y `.\scripts\setup-servidor.ps1`.

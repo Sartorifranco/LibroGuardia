@@ -1,6 +1,11 @@
 /**
- * Puente local SR201 para Bacar Guardia.
- * Ejecutar en el servidor/red de planta (ej. 192.168.0.9) donde el SR201 es alcanzable.
+ * Puente local SR201 para Bacar Guardia — servicio MÍNIMO.
+ *
+ * Solo traduce HTTP (POST /pulse) → TCP al SR201 en la LAN.
+ * SIN lógica de negocio, SIN base de datos, SIN usuarios/roles.
+ * La autorización y el control de acceso viven en Firebase Cloud Functions.
+ *
+ * Ejecutar en PC de planta donde el SR201 es alcanzable (ej. 192.168.0.9).
  *
  * Uso:
  *   set SR201_HOST=192.168.1.100
@@ -8,6 +13,8 @@
  *   set BRIDGE_PORT=5022
  *   set BRIDGE_SECRET=clave-secreta
  *   node scripts/sr201-bridge.js
+ *
+ * Docs: docs/INSTALACION-SR201.md · scripts/setup-servidor.ps1
  */
 
 const http = require('http');

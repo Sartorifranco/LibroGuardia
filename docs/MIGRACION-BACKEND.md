@@ -170,23 +170,21 @@ Pendientes de producto (no bloquean migrar Mongo):
 
 ### Orden sugerido (fases siguientes, sin romper)
 
-1. **Fase 1 — Frontend apunta solo a Functions** (dev + prod) + smoke test punta a punta.  
+1. ~~**Fase 1 — Frontend apunta solo a Functions**~~ → hecha (sección 8).  
 2. **Fase 2 — Modularizar `App.js` por dominio** (sin cambiar contratos API).  
 3. **Fase 3 — UX/intuitividad / a prueba de errores** (hallazgos acordados).  
-4. **Fase 4 — Marcar/retirar `backend-libro-guardia`** del flujo operativo (código puede quedar en repo como archivo histórico hasta confirmar).  
-5. Commits **separados por tema**, nunca un commit gigante.
+4. Commits **separados por tema**, nunca un commit gigante.
 
 ---
 
-## 7. Veredicto operativo
+## 8. Estado Fase 1 (2026-07-14)
 
-| Pregunta | Respuesta |
-|----------|-----------|
-| ¿El molinete depende del API Node+Mongo? | **No.** |
-| ¿Depende de Firebase Functions? | **Sí** (lógica + comando de apertura). |
-| ¿Hace falta algo local? | **Sí:** el puente `sr201-bridge.js` (y opcionalmente el de citaciones). |
-| ¿Se puede apagar `bacarguard-api` (Mongo)? | **Sí**, tras checklist de bridging SR201 desde producción. |
-| ¿Se puede borrar los bridges? | **No** — sin ellos la nube no llega al hardware. |
+Completado:
 
-**Backend real a consolidar:** Firebase Functions + Firestore.  
-**Procesos locales a conservar:** puentes LAN (hardware / carpeta), no el monolito Express+Mongo.
+- [x] Confirmado: ninguna ruta de `server.js` Node faltaba en `functions/app.js` (Functions es un superconjunto).
+- [x] Frontend apunta solo a Firebase (`.env.development` → `https://bacarguard.web.app/api`, prod → `/api`).
+- [x] `backend-libro-guardia/` movido a `legacy/backend-libro-guardia/` (marcado LEGACY, no desplegar).
+- [x] Puente SR201 documentado como servicio mínimo (`scripts/sr201-bridge.js` + `deploy-sr201-bridge.ps1`).
+- [x] README y scripts de deploy actualizados (Firebase = app; bridge = hardware).
+
+Siguiente: **Fase 2 — modularizar `App.js` por dominio**.
