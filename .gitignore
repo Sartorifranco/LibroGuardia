@@ -9,8 +9,9 @@ node_modules/
 # Builds
 frontend-libro-guardia/build/
 
-# Backups duplicados
-backend-libro-guardia/Bak/
+# Backups duplicados / carpetas locales sobrantes
+legacy/backend-libro-guardia/Bak/
+backend-libro-guardia/          # sobra local tras migración a legacy/
 frontend-libro-guardia/src/BAK/
 
 # Logs y caché
