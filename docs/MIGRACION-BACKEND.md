@@ -291,11 +291,19 @@ Colecciones esperadas según el schema legacy (`users`, `entries`, `personalmast
 
 > Hasta no tener el JSON del script en planta, **no migrar ni apagar Mongo**. El apagado del proceso `bacarguard-api` puede hacerse cuando el checklist de hardware en `docs/INSTALACION-SR201.md` esté OK; el dump de datos es decisión aparte.
 
-### Pregunta abierta — citaciones-folder-bridge
+### Citaciones folder bridge — en uso, mantener
 
-**¿Se sigue usando en planta `scripts/citaciones-folder-bridge.js` (watch de carpeta Excel → sync)?**
+Confirmado en operación (2026-07-14): **sí se usa** en planta.  
+Documentación completa: [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md).
 
-- Si **no** se usa → marcar para descontinuar (dejar el script en repo como legado documentado).
-- Si **sí** se usa → documentarlo al mismo nivel que el bridge SR201 (PM2, secreto, URL de sync).
+No forma parte de lo que se retira al apagar Node+Mongo. Debe seguir en PM2 junto al bridge SR201.
 
-Estado actual: **pregunta abierta al cliente/operación** (no asumir).
+---
+
+## 14. Servicios locales que deben seguir en el servidor de planta
+
+| Servicio | Script | Estado |
+|----------|--------|--------|
+| Puente SR201 | `scripts/sr201-bridge.js` | **Mantener** — [INSTALACION-SR201.md](./INSTALACION-SR201.md) |
+| Puente citaciones Excel | `scripts/citaciones-folder-bridge.js` | **Mantener (en uso)** — [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md) |
+| API Node+Mongo `bacarguard-api` | `legacy/backend-libro-guardia` | **Retirar** cuando checklist hardware OK |

@@ -15,6 +15,13 @@ App: https://bacarguard.web.app
 - [ ] Confirmar comportamiento si el túnel se cae (mensaje de error claro en el panel de puertas, no un error genérico).
 - [ ] Recién ahí, apagar definitivamente cualquier resto del backend Node/Mongo en el servidor de planta (`pm2 stop bacarguard-api`).
 
+### Servicios locales a mantener (no se retiran con Node/Mongo)
+
+| Servicio | Docs |
+|----------|------|
+| Este bridge SR201 | este documento |
+| Puente citaciones Excel (**en uso**) | [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md) |
+
 ---
 
 ## Resumen

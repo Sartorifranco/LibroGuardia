@@ -121,6 +121,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
   const [newVehicleBrand, setNewVehicleBrand] = useState('');
   const [newVehicleCompany, setNewVehicleCompany] = useState('');
   const [newVehicleDriver, setNewVehicleDriver] = useState('');
+  const [newVehicleInsuranceExpiry, setNewVehicleInsuranceExpiry] = useState('');
+  const [newVehicleVtvExpiry, setNewVehicleVtvExpiry] = useState('');
   const [rolePermissions, setRolePermissions] = useState({});
   const [permissionKeys, setPermissionKeys] = useState([]);
   const [editingUserPermissions, setEditingUserPermissions] = useState([]);
@@ -414,13 +416,17 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
             brand: newVehicleBrand,
             company: newVehicleCompany,
             driver: newVehicleDriver,
-            authorized: true
+            authorized: true,
+            insuranceExpiryDate: newVehicleInsuranceExpiry || null,
+            vtvExpiryDate: newVehicleVtvExpiry || null
           }
         });
         setNewVehiclePlate('');
         setNewVehicleBrand('');
         setNewVehicleCompany('');
         setNewVehicleDriver('');
+        setNewVehicleInsuranceExpiry('');
+        setNewVehicleVtvExpiry('');
         showSuccess('Vehículo precargado correctamente.');
         setVehicleMasterData((prev) => {
           const filtered = prev.filter((item) => item.plateNormalized !== data.vehicle.plateNormalized);
@@ -1823,6 +1829,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
                       <input type="text" value={newVehicleBrand} onChange={(e) => setNewVehicleBrand(e.target.value)} className="input-field" placeholder="Marca / modelo" />
                       <input type="text" value={newVehicleCompany} onChange={(e) => setNewVehicleCompany(e.target.value)} className="input-field" placeholder="Empresa" />
                       <input type="text" value={newVehicleDriver} onChange={(e) => setNewVehicleDriver(e.target.value)} className="input-field" placeholder="Conductor" />
+                      <label className="text-sm text-gray-600 md:col-span-1">
+                        Venc. seguro (opcional)
+                        <input type="date" value={newVehicleInsuranceExpiry} onChange={(e) => setNewVehicleInsuranceExpiry(e.target.value)} className="input-field mt-1" />
+                      </label>
+                      <label className="text-sm text-gray-600 md:col-span-1">
+                        Venc. VTV (opcional)
+                        <input type="date" value={newVehicleVtvExpiry} onChange={(e) => setNewVehicleVtvExpiry(e.target.value)} className="input-field mt-1" />
+                      </label>
                       <PendingButton type="submit" actionId="saveVehicle" pendingAction={pendingAction} className="btn btn-primary xl:col-span-4" pendingLabel="Guardando...">
                         <PlusCircle size={18} /> Agregar vehículo autorizado
                       </PendingButton>
@@ -1855,6 +1869,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
                             <th className="px-4 py-2 text-left text-xs uppercase">Marca</th>
                             <th className="px-4 py-2 text-left text-xs uppercase">Empresa</th>
                             <th className="px-4 py-2 text-left text-xs uppercase">Conductor</th>
+                            <th className="px-4 py-2 text-left text-xs uppercase">Seguro</th>
+                            <th className="px-4 py-2 text-left text-xs uppercase">VTV</th>
                             <th className="px-4 py-2 text-left text-xs uppercase">Estado</th>
                             <th className="px-4 py-2 text-left text-xs uppercase">Acción</th>
                           </tr>
@@ -1866,6 +1882,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved 
                               <td className="px-4 py-2">{vehicle.brand}</td>
                               <td className="px-4 py-2">{vehicle.company}</td>
                               <td className="px-4 py-2">{vehicle.driver}</td>
+                              <td className="px-4 py-2">{vehicle.insuranceExpiryDate || '—'}</td>
+                              <td className="px-4 py-2">{vehicle.vtvExpiryDate || '—'}</td>
                               <td className="px-4 py-2">{vehicle.authorized !== false ? 'Autorizado' : 'No autorizado'}</td>
                               <td className="px-4 py-2">
                                 <button type="button" className="btn btn-danger-small" onClick={() => handleDeletePreloadedVehicle(vehicle.id)}><Trash2 size={14} /></button>

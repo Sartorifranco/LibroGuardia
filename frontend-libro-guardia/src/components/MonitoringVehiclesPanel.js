@@ -15,6 +15,8 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
   const [companionDni, setCompanionDni] = useState('');
   const [companions, setCompanions] = useState([]);
   const [notes, setNotes] = useState('');
+  const [insuranceExpiryDate, setInsuranceExpiryDate] = useState('');
+  const [vtvExpiryDate, setVtvExpiryDate] = useState('');
 
   const loadVehicles = useCallback(async () => {
     if (!authToken) return;
@@ -90,7 +92,9 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
           driverDni,
           companions,
           notes,
-          gateProfile: 'monitoreo'
+          gateProfile: 'monitoreo',
+          insuranceExpiryDate: insuranceExpiryDate || null,
+          vtvExpiryDate: vtvExpiryDate || null
         }
       });
       onSuccess?.('Vehículo autorizado para ingreso por Monitoreo.');
@@ -101,6 +105,8 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
       setDriverDni('');
       setCompanions([]);
       setNotes('');
+      setInsuranceExpiryDate('');
+      setVtvExpiryDate('');
       loadVehicles();
     } catch (err) {
       onError?.(err.message);
@@ -125,6 +131,14 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
           <input className="input-field" placeholder="Empresa / cliente" value={company} onChange={(e) => setCompany(e.target.value)} />
           <input className="input-field" placeholder="Chofer *" value={driver} onChange={(e) => setDriver(e.target.value)} required />
           <input className="input-field" placeholder="DNI chofer" value={driverDni} onChange={(e) => setDriverDni(e.target.value)} />
+          <label className="text-sm text-gray-600">
+            Venc. seguro (opcional)
+            <input type="date" className="input-field mt-1" value={insuranceExpiryDate} onChange={(e) => setInsuranceExpiryDate(e.target.value)} />
+          </label>
+          <label className="text-sm text-gray-600">
+            Venc. VTV (opcional)
+            <input type="date" className="input-field mt-1" value={vtvExpiryDate} onChange={(e) => setVtvExpiryDate(e.target.value)} />
+          </label>
           <input className="input-field md:col-span-2" placeholder="Notas" value={notes} onChange={(e) => setNotes(e.target.value)} />
 
           <div className="md:col-span-2 border rounded-md p-3 bg-gray-50">

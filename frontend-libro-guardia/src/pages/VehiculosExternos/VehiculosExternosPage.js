@@ -18,6 +18,8 @@ function VehiculosExternosPage() {
   const [vehicleDriver, setVehicleDriver] = useState('');
   const [vehicleType, setVehicleType] = useState('ingreso');
   const [vehicleEventTime, setVehicleEventTime] = useState('');
+  const [vehicleInsuranceExpiry, setVehicleInsuranceExpiry] = useState('');
+  const [vehicleVtvExpiry, setVehicleVtvExpiry] = useState('');
   const [vehicleLookupInfo, setVehicleLookupInfo] = useState(null);
   const [vehicleAuthStatus, setVehicleAuthStatus] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -49,6 +51,8 @@ function VehiculosExternosPage() {
           setVehicleBrand(data.vehicle.brand || vehicleBrand);
           setVehicleCompany(data.vehicle.company || vehicleCompany);
           setVehicleDriver(data.vehicle.driver || vehicleDriver);
+          setVehicleInsuranceExpiry(data.vehicle.insuranceExpiryDate || '');
+          setVehicleVtvExpiry(data.vehicle.vtvExpiryDate || '');
         }
       } else {
         setVehicleAuthStatus('not_authorized');
@@ -56,6 +60,8 @@ function VehiculosExternosPage() {
           setVehicleBrand(data.vehicle.brand || '');
           setVehicleCompany(data.vehicle.company || '');
           setVehicleDriver(data.vehicle.driver || '');
+          setVehicleInsuranceExpiry(data.vehicle.insuranceExpiryDate || '');
+          setVehicleVtvExpiry(data.vehicle.vtvExpiryDate || '');
         }
       }
     } catch (err) {
@@ -78,7 +84,9 @@ function VehiculosExternosPage() {
           plate: vehiclePlate,
           brand: vehicleBrand,
           company: vehicleCompany,
-          driver: vehicleDriver
+          driver: vehicleDriver,
+          insuranceExpiryDate: vehicleInsuranceExpiry || null,
+          vtvExpiryDate: vehicleVtvExpiry || null
         }
       });
       setVehicleAuthStatus('authorized');
@@ -110,6 +118,8 @@ function VehiculosExternosPage() {
       setVehicleDriver('');
       setVehicleType('ingreso');
       setVehicleEventTime('');
+      setVehicleInsuranceExpiry('');
+      setVehicleVtvExpiry('');
       setVehicleAuthStatus(null);
       setVehicleLookupInfo(null);
     } finally {
@@ -180,6 +190,14 @@ function VehiculosExternosPage() {
           <div>
             <label htmlFor="vehicleDriver" className="block text-sm font-medium text-gray-700 mb-1">Conductor</label>
             <input type="text" id="vehicleDriver" value={vehicleDriver} onChange={(e) => setVehicleDriver(e.target.value)} className="input-field" placeholder="Ej: María López" />
+          </div>
+          <div>
+            <label htmlFor="vehicleInsuranceExpiry" className="block text-sm font-medium text-gray-700 mb-1">Vencimiento seguro (opcional)</label>
+            <input type="date" id="vehicleInsuranceExpiry" value={vehicleInsuranceExpiry} onChange={(e) => setVehicleInsuranceExpiry(e.target.value)} className="input-field" />
+          </div>
+          <div>
+            <label htmlFor="vehicleVtvExpiry" className="block text-sm font-medium text-gray-700 mb-1">Vencimiento VTV (opcional)</label>
+            <input type="date" id="vehicleVtvExpiry" value={vehicleVtvExpiry} onChange={(e) => setVehicleVtvExpiry(e.target.value)} className="input-field" />
           </div>
         </div>
 

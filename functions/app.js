@@ -99,6 +99,11 @@ const { seedInitialUsers, isBootstrapCompleted, INITIAL_USERS } = require('./see
 const { getCitadosToday } = require('./citadosToday');
 const { logActivity } = require('./lib/activityLog');
 const { getArgentinaDateString } = require('./lib/normalize');
+const {
+  normalizeExpiryYmd,
+  evaluateExpiry,
+  buildExpiryMessage
+} = require('./lib/documentExpiry');
 
 const app = express();
 
@@ -704,6 +709,17 @@ app.get('/api/master-data/personal', auth, async (_req, res) => {
   }
 });
 
+const mergeOptionalExpiry = (target, body, key) => {
+  if (!Object.prototype.hasOwnProperty.call(body || {}, key)) return;
+  const raw = body[key];
+  if (raw === null || raw === '') {
+    target[key] = null;
+    return;
+  }
+  const ymd = normalizeExpiryYmd(raw);
+  if (ymd) target[key] = ymd;
+};
+
 app.post('/api/master-data/personal', auth, async (req, res) => {
   try {
     const { name, idNumber, company, destination } = req.body;
@@ -719,15 +735,20 @@ app.post('/api/master-data/personal', auth, async (req, res) => {
     let personData;
 
     if (!existing.empty) {
+      const prev = existing.docs[0].data() || {};
       personRef = existing.docs[0].ref;
       personData = {
         name: normalizedName,
         nameLower,
-        idNumber: idNumber || existing.docs[0].data().idNumber || '',
-        idNumberNormalized: normalizeIdNumber(idNumber || existing.docs[0].data().idNumber || ''),
-        company: company || existing.docs[0].data().company || '',
-        destination: destination || existing.docs[0].data().destination || ''
+        idNumber: idNumber || prev.idNumber || '',
+        idNumberNormalized: normalizeIdNumber(idNumber || prev.idNumber || ''),
+        company: company || prev.company || '',
+        destination: destination || prev.destination || '',
+        artExpiryDate: prev.artExpiryDate || null,
+        licenseExpiryDate: prev.licenseExpiryDate || null
       };
+      mergeOptionalExpiry(personData, req.body, 'artExpiryDate');
+      mergeOptionalExpiry(personData, req.body, 'licenseExpiryDate');
       await personRef.update(personData);
     } else {
       personRef = db.collection('personalMaster').doc();
@@ -737,8 +758,12 @@ app.post('/api/master-data/personal', auth, async (req, res) => {
         idNumber: idNumber || '',
         idNumberNormalized: normalizeIdNumber(idNumber || ''),
         company: company || '',
-        destination: destination || ''
+        destination: destination || '',
+        artExpiryDate: null,
+        licenseExpiryDate: null
       };
+      mergeOptionalExpiry(personData, req.body, 'artExpiryDate');
+      mergeOptionalExpiry(personData, req.body, 'licenseExpiryDate');
       await personRef.set(personData);
     }
 
@@ -1795,6 +1820,7 @@ app.post('/api/master-data/vehicles', auth, requirePermission('master.vehicles.w
       .limit(1)
       .get();
 
+    const prev = existing.empty ? {} : (existing.docs[0].data() || {});
     const vehicleData = {
       plate: plate.trim(),
       plateNormalized,
@@ -1803,8 +1829,12 @@ app.post('/api/master-data/vehicles', auth, requirePermission('master.vehicles.w
       driver: driver?.trim() || '',
       authorized: authorized !== false,
       notes: notes?.trim() || '',
+      insuranceExpiryDate: prev.insuranceExpiryDate || null,
+      vtvExpiryDate: prev.vtvExpiryDate || null,
       updatedAt: FieldValue.serverTimestamp()
     };
+    mergeOptionalExpiry(vehicleData, req.body, 'insuranceExpiryDate');
+    mergeOptionalExpiry(vehicleData, req.body, 'vtvExpiryDate');
 
     let vehicleRef;
     if (!existing.empty) {
@@ -1846,6 +1876,7 @@ app.post('/api/master-data/vehicles/quick-authorize', auth, requireAnyPermission
         .filter((item) => item.name)
       : [];
 
+    const prev = existing.empty ? {} : (existing.docs[0].data() || {});
     const vehicleData = {
       plate: plate.trim(),
       plateNormalized,
@@ -1858,8 +1889,12 @@ app.post('/api/master-data/vehicles/quick-authorize', auth, requireAnyPermission
       authorized: true,
       authorizedBy: req.user.id,
       authorizedAt: FieldValue.serverTimestamp(),
-      notes: notes?.trim() || 'Autorización rápida en puesto'
+      notes: notes?.trim() || 'Autorización rápida en puesto',
+      insuranceExpiryDate: prev.insuranceExpiryDate || null,
+      vtvExpiryDate: prev.vtvExpiryDate || null
     };
+    mergeOptionalExpiry(vehicleData, req.body, 'insuranceExpiryDate');
+    mergeOptionalExpiry(vehicleData, req.body, 'vtvExpiryDate');
 
     let vehicleRef;
     if (!existing.empty) {
@@ -2227,59 +2262,129 @@ app.get(
 app.get(
   '/api/guard/expiration-alerts',
   auth,
-  requireAnyPermission(['entries.view', 'master.citaciones.read']),
+  requireAnyPermission(['entries.view', 'master.citaciones.read', 'master.personal.read', 'master.vehicles.read']),
   async (_req, res) => {
     try {
       const today = getArgentinaDateString();
-      const snap = await db.collection('authorizations').where('active', '==', true).get();
-      const expired = [];
-      const endingIn7 = [];
-      const endingIn15 = [];
-      const endingIn30 = [];
+      const buckets = {
+        expired: [],
+        endingIn7: [],
+        endingIn15: [],
+        endingIn30: []
+      };
 
-      snap.docs.forEach((doc) => {
+      const pushAlert = (item) => {
+        const list = buckets[item.bucket];
+        if (!list || list.length >= 40) return;
+        list.push(item);
+      };
+
+      const [authSnap, personalSnap, vehiclesSnap] = await Promise.all([
+        db.collection('authorizations').where('active', '==', true).get(),
+        db.collection('personalMaster').get(),
+        db.collection('vehiclesMaster').get()
+      ]);
+
+      authSnap.docs.forEach((doc) => {
         const data = doc.data() || {};
         if (data.type === 'permanent') return;
-        const endDate = data.endDate || data.startDate || data.appointmentDate;
-        if (!endDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate))) return;
-
-        const daysLeft = daysBetweenYmd(today, String(endDate));
-        if (daysLeft === null) return;
-
-        const item = {
-          id: doc.id,
+        const evaluated = evaluateExpiry(
+          data.endDate || data.startDate || data.appointmentDate,
+          today
+        );
+        if (!evaluated) return;
+        const subject = data.name || data.idNumber || 'autorización';
+        pushAlert({
+          id: `auth:${doc.id}`,
+          kind: 'authorization',
+          kindLabel: 'Autorización',
+          subject,
           name: data.name || '',
-          idNumber: data.idNumber || '',
-          company: data.company || '',
-          type: data.type || '',
+          title: subject,
+          message: buildExpiryMessage({
+            kind: 'authorization',
+            subject,
+            endDate: evaluated.endDate,
+            daysLeft: evaluated.daysLeft
+          }),
           typeLabel: getAuthorizationLabel(data.type) || data.type || '',
-          endDate: String(endDate),
-          daysLeft
-        };
-
-        if (daysLeft < 0) {
-          if (expired.length < 20) expired.push(item);
-        } else if (daysLeft <= 7) {
-          if (endingIn7.length < 20) endingIn7.push(item);
-        } else if (daysLeft <= 15) {
-          if (endingIn15.length < 15) endingIn15.push(item);
-        } else if (daysLeft <= 30) {
-          if (endingIn30.length < 15) endingIn30.push(item);
-        }
+          endDate: evaluated.endDate,
+          daysLeft: evaluated.daysLeft,
+          bucket: evaluated.bucket
+        });
       });
 
-      const byEnd = (a, b) => String(a.endDate).localeCompare(String(b.endDate));
-      expired.sort(byEnd);
-      endingIn7.sort(byEnd);
-      endingIn15.sort(byEnd);
-      endingIn30.sort(byEnd);
+      personalSnap.docs.forEach((doc) => {
+        const data = doc.data() || {};
+        const subject = data.name || data.idNumberNormalized || data.idNumber || 'persona';
+        [
+          { key: 'artExpiryDate', kind: 'art' },
+          { key: 'licenseExpiryDate', kind: 'license' }
+        ].forEach(({ key, kind }) => {
+          const evaluated = evaluateExpiry(data[key], today);
+          if (!evaluated) return;
+          pushAlert({
+            id: `personal:${doc.id}:${kind}`,
+            kind,
+            kindLabel: kind === 'art' ? 'ART' : 'Licencia',
+            subject,
+            name: data.name || '',
+            title: subject,
+            message: buildExpiryMessage({
+              kind,
+              subject,
+              endDate: evaluated.endDate,
+              daysLeft: evaluated.daysLeft
+            }),
+            endDate: evaluated.endDate,
+            daysLeft: evaluated.daysLeft,
+            bucket: evaluated.bucket
+          });
+        });
+      });
+
+      vehiclesSnap.docs.forEach((doc) => {
+        const data = doc.data() || {};
+        const plate = data.plate || data.plateNormalized || 'vehículo';
+        const subject = `la patente ${plate}`;
+        [
+          { key: 'insuranceExpiryDate', kind: 'insurance' },
+          { key: 'vtvExpiryDate', kind: 'vtv' }
+        ].forEach(({ key, kind }) => {
+          const evaluated = evaluateExpiry(data[key], today);
+          if (!evaluated) return;
+          pushAlert({
+            id: `vehicle:${doc.id}:${kind}`,
+            kind,
+            kindLabel: kind === 'insurance' ? 'Seguro' : 'VTV',
+            subject: plate,
+            name: plate,
+            title: plate,
+            message: buildExpiryMessage({
+              kind,
+              subject,
+              endDate: evaluated.endDate,
+              daysLeft: evaluated.daysLeft
+            }),
+            endDate: evaluated.endDate,
+            daysLeft: evaluated.daysLeft,
+            bucket: evaluated.bucket
+          });
+        });
+      });
+
+      const byPriority = (a, b) => {
+        if (a.daysLeft !== b.daysLeft) return a.daysLeft - b.daysLeft;
+        return String(a.endDate).localeCompare(String(b.endDate));
+      };
+      Object.keys(buckets).forEach((key) => buckets[key].sort(byPriority));
 
       res.json({
         today,
-        expired,
-        endingIn7,
-        endingIn15,
-        endingIn30
+        expired: buckets.expired,
+        endingIn7: buckets.endingIn7,
+        endingIn15: buckets.endingIn15,
+        endingIn30: buckets.endingIn30
       });
     } catch (err) {
       res.status(500).json({ message: 'Error al obtener alertas de vencimiento', error: err.message });

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { hasPermission, getDashboardProfile } from '../utils/permissions';
 
 const BUCKET_LABELS = {
-  expired: 'Vencidas',
+  expired: 'Vencidos',
   d7: 'Vencen en 7 días',
   d15: 'Vencen en 15 días',
   d30: 'Vencen en 30 días'
@@ -19,7 +19,9 @@ function canSeeAlerts(user) {
   if (!roleOk) return false;
   return (
     hasPermission(user, 'entries.view') ||
-    hasPermission(user, 'master.citaciones.read')
+    hasPermission(user, 'master.citaciones.read') ||
+    hasPermission(user, 'master.personal.read') ||
+    hasPermission(user, 'master.vehicles.read')
   );
 }
 
@@ -61,8 +63,8 @@ function ExpirationAlertsBanner() {
   if (loading && !alerts) {
     return (
       <div className="expiration-alerts expiration-alerts--loading">
-        <Loader2 size={16} className="animate-spin" />
-        <span>Revisando vencimientos de autorizaciones…</span>
+        <Loader2 size={16} className="animate-spin" aria-hidden />
+        <span>Revisando vencimientos (autorizaciones, ART, seguro, licencia)…</span>
       </div>
     );
   }
@@ -73,7 +75,7 @@ function ExpirationAlertsBanner() {
     <section className="expiration-alerts" aria-label="Alertas de vencimiento">
       <div className="expiration-alerts__header">
         <CalendarClock size={18} aria-hidden />
-        <h3>Autorizaciones por vencer</h3>
+        <h3>Vencimientos próximos</h3>
       </div>
       <div className="expiration-alerts__grid">
         {buckets.map(({ key, items }) => (
@@ -87,13 +89,19 @@ function ExpirationAlertsBanner() {
               <span>{items.length}</span>
             </div>
             <ul>
-              {items.slice(0, 5).map((item) => (
+              {items.slice(0, 6).map((item) => (
                 <li key={item.id}>
-                  <span>{item.name || item.title || 'Sin nombre'}</span>
-                  <small>
-                    {item.endDate || '—'}
-                    {item.typeLabel ? ` · ${item.typeLabel}` : ''}
-                  </small>
+                  <span>{item.message || item.name || item.title || 'Sin nombre'}</span>
+                  {!item.message && (
+                    <small>
+                      {item.endDate || '—'}
+                      {item.kindLabel ? ` · ${item.kindLabel}` : ''}
+                      {item.typeLabel ? ` · ${item.typeLabel}` : ''}
+                    </small>
+                  )}
+                  {item.message && item.kindLabel && (
+                    <small>{item.kindLabel}{item.endDate ? ` · ${item.endDate}` : ''}</small>
+                  )}
                 </li>
               ))}
             </ul>

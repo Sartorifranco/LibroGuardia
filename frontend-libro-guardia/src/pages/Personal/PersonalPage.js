@@ -24,6 +24,8 @@ function PersonalPage() {
   const [personalDestination, setPersonalDestination] = useState('');
   const [personalType, setPersonalType] = useState('ingreso');
   const [personalEventTime, setPersonalEventTime] = useState('');
+  const [personalArtExpiry, setPersonalArtExpiry] = useState('');
+  const [personalLicenseExpiry, setPersonalLicenseExpiry] = useState('');
   const [personalMasterData, setPersonalMasterData] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -66,10 +68,14 @@ function PersonalPage() {
       setPersonalId(foundPerson.idNumber || '');
       setPersonalCompany(foundPerson.company || '');
       setPersonalDestination(foundPerson.destination || '');
+      setPersonalArtExpiry(foundPerson.artExpiryDate || '');
+      setPersonalLicenseExpiry(foundPerson.licenseExpiryDate || '');
     } else {
       setPersonalId('');
       setPersonalCompany('');
       setPersonalDestination('');
+      setPersonalArtExpiry('');
+      setPersonalLicenseExpiry('');
     }
   };
 
@@ -89,6 +95,8 @@ function PersonalPage() {
       setPersonalName(localMatch.name || '');
       setPersonalCompany(localMatch.company || localMatch.centroCosto || '');
       setPersonalDestination(localMatch.destination || localMatch.centroCosto || '');
+      setPersonalArtExpiry(localMatch.artExpiryDate || '');
+      setPersonalLicenseExpiry(localMatch.licenseExpiryDate || '');
       setPersonalNominaProfile(localMatch);
     } else if (hasPermission(currentUser, 'master.personal.read') && authToken) {
       try {
@@ -98,6 +106,8 @@ function PersonalPage() {
         setPersonalName(profile.name || '');
         setPersonalCompany(profile.company || profile.centroCosto || '');
         setPersonalDestination(profile.destination || profile.centroCosto || '');
+        setPersonalArtExpiry(profile.artExpiryDate || '');
+        setPersonalLicenseExpiry(profile.licenseExpiryDate || '');
       } catch {
         setPersonalNominaProfile(null);
       }
@@ -124,6 +134,8 @@ function PersonalPage() {
     setPersonalDestination('');
     setPersonalType('ingreso');
     setPersonalEventTime('');
+    setPersonalArtExpiry('');
+    setPersonalLicenseExpiry('');
     setPersonalAllowOverride(false);
     setPersonalAccessStatus(null);
     setPersonalNominaProfile(null);
@@ -167,31 +179,32 @@ function PersonalPage() {
       (person) => person.name.toLowerCase() === personalName.toLowerCase()
     );
 
-    if (!personExistsInMaster) {
-      try {
-        setLoading(true);
-        await apiFetch('/master-data/personal', {
-          method: 'POST',
-          token: authToken,
-          body: {
-            name: personalName,
-            idNumber: personalId,
-            company: personalCompany,
-            destination: personalDestination,
-          },
-        });
+    try {
+      setLoading(true);
+      await apiFetch('/master-data/personal', {
+        method: 'POST',
+        token: authToken,
+        body: {
+          name: personalName,
+          idNumber: personalId,
+          company: personalCompany,
+          destination: personalDestination,
+          artExpiryDate: personalArtExpiry || null,
+          licenseExpiryDate: personalLicenseExpiry || null
+        },
+      });
+      if (!personExistsInMaster) {
         showSuccess('Nueva persona guardada en la base de datos.');
-
-        const updatedData = await apiFetch('/master-data/personal', { token: authToken });
-        setPersonalMasterData(updatedData.personal || []);
-      } catch (err) {
-        console.error('Error al guardar nueva persona en la base maestra: ', err);
-        showError(err.message || 'Error al guardar los datos de la nueva persona. Intente de nuevo.');
-        setLoading(false);
-        return;
-      } finally {
-        setLoading(false);
       }
+      const updatedData = await apiFetch('/master-data/personal', { token: authToken });
+      setPersonalMasterData(updatedData.personal || []);
+    } catch (err) {
+      console.error('Error al guardar persona en la base maestra: ', err);
+      showError(err.message || 'Error al guardar los datos de la persona. Intente de nuevo.');
+      setLoading(false);
+      return;
+    } finally {
+      setLoading(false);
     }
 
     const useExceptional = personalType === 'ingreso'
@@ -270,6 +283,26 @@ function PersonalPage() {
           <div>
             <label htmlFor="personalDestination" className="block text-sm font-medium text-gray-700 mb-1">Área / Destino</label>
             <input type="text" id="personalDestination" value={personalDestination} onChange={(e) => setPersonalDestination(e.target.value)} className="input-field" placeholder="Ej: Producción, Oficinas" />
+          </div>
+          <div>
+            <label htmlFor="personalArtExpiry" className="block text-sm font-medium text-gray-700 mb-1">Vencimiento ART (opcional)</label>
+            <input
+              type="date"
+              id="personalArtExpiry"
+              value={personalArtExpiry}
+              onChange={(e) => setPersonalArtExpiry(e.target.value)}
+              className="input-field"
+            />
+          </div>
+          <div>
+            <label htmlFor="personalLicenseExpiry" className="block text-sm font-medium text-gray-700 mb-1">Vencimiento licencia (opcional)</label>
+            <input
+              type="date"
+              id="personalLicenseExpiry"
+              value={personalLicenseExpiry}
+              onChange={(e) => setPersonalLicenseExpiry(e.target.value)}
+              className="input-field"
+            />
           </div>
         </div>
 

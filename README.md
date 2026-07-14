@@ -10,13 +10,14 @@ con control de acceso (molinete/puertas) vía SR201.
 | Frontend | Firebase Hosting → https://bacarguard.web.app |
 | Backend / API | Cloud Functions → `/api/*` (Firestore) |
 | Base de datos | **Firestore** (sin MongoDB) |
-| Molinete / puertas | `scripts/sr201-bridge.js` en PC de planta (HTTP → TCP SR201) |
-| Citaciones Excel (opc.) | `scripts/citaciones-folder-bridge.js` |
+| Molinete / puertas | `scripts/sr201-bridge.js` en PC de planta (HTTP → TCP SR201) — **mantener** |
+| Citaciones Excel | `scripts/citaciones-folder-bridge.js` — **en uso, mantener** |
 
 El frontend **no** habla con Firestore directamente (`firestore.rules` lo bloquea): todo pasa por Cloud Functions.
 
 **Guía setup:** [FIREBASE-SETUP.md](./FIREBASE-SETUP.md)  
 **Puente SR201:** [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md)  
+**Puente citaciones:** [docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md)  
 **Migración backend:** [docs/MIGRACION-BACKEND.md](./docs/MIGRACION-BACKEND.md)
 
 ---
@@ -33,16 +34,19 @@ El frontend **no** habla con Firestore directamente (`firestore.rules` lo bloque
 
 No hay backend Node+Mongo que desplegar. El API viejo está archivado en `legacy/backend-libro-guardia/` (**no usar**).
 
-### Puente de hardware en planta (si usan molinete/SR201)
+### Servicios locales en planta (mantener — no son el API Node/Mongo)
 
-En una PC de la red local (siempre encendida), dejar corriendo solo el bridge:
+En PCs de la red local (siempre encendidas), dejar corriendo:
+
+| Servicio | Docs |
+|----------|------|
+| Puente SR201 | [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md) · `.\scripts\setup-servidor.ps1` |
+| Puente citaciones Excel | [docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md) |
 
 ```powershell
-.\scripts\setup-servidor.ps1          # instrucciones
-.\scripts\deploy-sr201-bridge.ps1     # sincroniza scripts del bridge (opcional)
+.\scripts\setup-servidor.ps1          # instrucciones SR201
+.\scripts\deploy-sr201-bridge.ps1     # sincroniza scripts del bridge SR201 (opcional)
 ```
-
-Detalle: [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md).
 
 ---
 
