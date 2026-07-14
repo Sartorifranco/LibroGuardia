@@ -3576,3 +3576,9 @@ body {
   color: var(--text-muted, #737373);
   margin-bottom: 0.75rem;
 }
+
+.historial-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.25rem;
+}

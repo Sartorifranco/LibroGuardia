@@ -225,3 +225,15 @@ Completado:
 - [x] `filterHistorialEntries` único en `utils/historialFilters.js`
 - [x] Sidebar: un ítem Historial si `entries.view` **o** `reports.export` (export visible solo con `reports.export`)
 - [x] Formulario **Cargar novedad** se mantiene (alta operativa, no era pantalla de consulta)
+
+---
+
+## 12. Estado Fase 5 (2026-07-14)
+
+Completado:
+
+- [x] `GET /api/entries?startDate&endDate&limit&cursor&type&q` con paginación
+- [x] Home poll solo del día actual (no histórico completo)
+- [x] Historial consulta el rango elegido + botón **Cargar más**
+- [x] Export carga páginas del rango (tope 1000)
+- [x] Índice Firestore `entries`: type + timestamp

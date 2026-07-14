@@ -9,6 +9,7 @@ import React, {
 import { apiFetch } from '../services/api';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
+import { toLocalYmd } from '../utils/historialFilters';
 
 const EntriesContext = createContext(null);
 
@@ -18,6 +19,7 @@ export function EntriesProvider({ children }) {
   const [entries, setEntries] = useState([]);
   const [entriesLoading, setEntriesLoading] = useState(false);
 
+  /** Home / KPIs: solo el día local actual (no el histórico completo). */
   const reloadEntries = useCallback(async (silent = true) => {
     if (!currentUser || !authToken) {
       setEntries([]);
@@ -25,7 +27,13 @@ export function EntriesProvider({ children }) {
     }
     try {
       if (!silent) setEntriesLoading(true);
-      const data = await apiFetch('/entries', { token: authToken });
+      const today = toLocalYmd();
+      const params = new URLSearchParams({
+        startDate: today,
+        endDate: today,
+        limit: '200'
+      });
+      const data = await apiFetch(`/entries?${params.toString()}`, { token: authToken });
       const next = data.entries || [];
       setEntries(next);
       return next;
