@@ -42,7 +42,7 @@ const ADMIN_SECTION_META = {
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
 };
 
-// En producción usa /api (misma URL que Firebase Hosting). En desarrollo local, configurar REACT_APP_API_BASE_URL.
+// Backend: Firebase Cloud Functions (Hosting rewrite /api). Ver .env.development / .env.production.
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
 
 const AUTH_WEEKDAYS = [
