@@ -77,8 +77,8 @@ function DashboardShell({
       <section className="home-recent">
         <div className="home-recent-header">
           <h3>Últimos movimientos</h3>
-          <button type="button" className="home-link-btn" onClick={() => onNavigate('allRecords')}>
-            Ver todos <ArrowRight size={14} />
+          <button type="button" className="home-link-btn" onClick={() => onNavigate('historial')}>
+            Ver historial <ArrowRight size={14} />
           </button>
         </div>
         {recentRows.length === 0 ? (

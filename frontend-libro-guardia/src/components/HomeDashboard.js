@@ -151,8 +151,8 @@ function HomeDashboard({
       <section className="home-recent">
         <div className="home-recent-header">
           <h3>Últimos movimientos</h3>
-          <button type="button" className="home-link-btn" onClick={() => onNavigate('allRecords')}>
-            Ver todos
+          <button type="button" className="home-link-btn" onClick={() => onNavigate('historial')}>
+            Ver historial
           </button>
         </div>
         {recentRows.length === 0 ? (

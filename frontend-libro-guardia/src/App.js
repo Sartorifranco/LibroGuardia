@@ -331,8 +331,9 @@ function AppShell() {
               {activeTab === 'vehiculo' && <VehiculosExternosPage />}
               {activeTab === 'flota' && <FlotaInternaPage />}
               {activeTab === 'novedad' && <NovedadPage />}
-              {activeTab === 'reportes' && <HistorialPage view="reportes" />}
-              {activeTab === 'allRecords' && <HistorialPage view="allRecords" />}
+              {(activeTab === 'historial' || activeTab === 'reportes' || activeTab === 'allRecords') && (
+                <HistorialPage />
+              )}
 
               {isAdminMode && canAccessAdmin(currentUser) && (
                 <AdminPage

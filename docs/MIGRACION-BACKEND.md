@@ -212,3 +212,16 @@ Completado:
 - [x] Cero `fetch` sueltos en frontend (salvo el interior de `services/api.js`)
 - [x] Toasts: error manual / éxito 5s (sin cambio de política)
 - [x] `allowForbidden` donde 403 es "sin permiso" esperado (roles, access-control kiosk)
+
+---
+
+## 11. Estado Fase 4 (2026-07-14)
+
+Completado:
+
+- [x] Pantalla única **Historial** (reemplaza Reportes + Todos los registros)
+- [x] Presets de fecha: Hoy (default) / 7 días / Último mes / Personalizado
+- [x] Filtro por tipo + búsqueda; export CSV/PDF/Excel con mismos filtros
+- [x] `filterHistorialEntries` único en `utils/historialFilters.js`
+- [x] Sidebar: un ítem Historial si `entries.view` **o** `reports.export` (export visible solo con `reports.export`)
+- [x] Formulario **Cargar novedad** se mantiene (alta operativa, no era pantalla de consulta)

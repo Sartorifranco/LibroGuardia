@@ -9,7 +9,6 @@ import {
   Radio,
   CalendarCheck,
   List,
-  FileText,
   ArrowDownCircle,
   ArrowUpCircle,
   Settings
@@ -17,7 +16,7 @@ import {
 import { useLiveClock } from '../../hooks/useLiveClock';
 import { getExecutiveChartData, buildDonutGradient } from '../../utils/dashboardCharts';
 import { hasPermission, canAccessAdmin } from '../../utils/permissions';
-import { getProfileKicker } from '../../utils/navigation';
+import { getProfileKicker, canAccessHistorial } from '../../utils/navigation';
 
 function ExecutiveDashboard({ currentUser, entries, onNavigate, isAdmin = false }) {
   const { timeDisplay, dateDisplay } = useLiveClock();
@@ -66,24 +65,17 @@ function ExecutiveDashboard({ currentUser, entries, onNavigate, isAdmin = false 
     },
     {
       id: 'novedad',
-      label: 'Novedades',
+      label: 'Cargar novedad',
       hint: `${chart.stats.novedades} hoy`,
       icon: ClipboardList,
       show: hasPermission(currentUser, 'entries.create')
     },
     {
-      id: 'allRecords',
-      label: 'Todos los registros',
-      hint: 'Detalle completo',
+      id: 'historial',
+      label: 'Historial',
+      hint: 'Consulta y exportar',
       icon: List,
-      show: hasPermission(currentUser, 'entries.view')
-    },
-    {
-      id: 'reportes',
-      label: 'Reportes',
-      hint: 'Exportar datos',
-      icon: FileText,
-      show: hasPermission(currentUser, 'reports.export')
+      show: canAccessHistorial(currentUser)
     },
     {
       id: 'adminPanel',

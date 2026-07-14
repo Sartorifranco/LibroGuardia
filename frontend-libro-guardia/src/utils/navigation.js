@@ -5,14 +5,17 @@ import {
   Truck,
   ClipboardList,
   Scan,
-  FileText,
-  List,
+  History,
   ShieldCheck,
   CalendarCheck,
   DoorOpen,
   Radio
 } from 'lucide-react';
 import { hasPermission } from './permissions';
+
+/** Acceso a la pantalla unificada Historial (ver y/o exportar). */
+export const canAccessHistorial = (user) =>
+  hasPermission(user, 'entries.view') || hasPermission(user, 'reports.export');
 
 export const buildSidebarItems = (user) => {
   if (!user) return [];
@@ -36,7 +39,7 @@ export const buildSidebarItems = (user) => {
     });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
-      label: 'Novedades',
+      label: 'Cargar novedad',
       icon: ClipboardList
     });
   } else if (profile === 'guardia') {
@@ -73,7 +76,7 @@ export const buildSidebarItems = (user) => {
     });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
-      label: 'Novedades',
+      label: 'Cargar novedad',
       icon: ClipboardList
     });
   } else {
@@ -119,16 +122,16 @@ export const buildSidebarItems = (user) => {
     });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
-      label: 'Novedades',
+      label: 'Cargar novedad',
       icon: ClipboardList
     });
   }
 
-  addIf(hasPermission(user, 'reports.export'), { id: 'reportes', label: 'Reportes', icon: FileText });
-  addIf(hasPermission(user, 'entries.view'), {
-    id: 'allRecords',
-    label: 'Todos los registros',
-    icon: List
+  // Unifica Reportes (reports.export) + Todos los registros (entries.view)
+  addIf(canAccessHistorial(user), {
+    id: 'historial',
+    label: 'Historial',
+    icon: History
   });
 
   return items;
