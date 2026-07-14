@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Car, ClipboardList, PlusCircle, Save, Loader2, AlertCircle, LogIn, LogOut, UserPlus, Settings, KeyRound, Download, FileText, FileSpreadsheet, File, Truck, Edit, Trash2, XCircle, Upload, ToggleRight, ToggleLeft, ShieldCheck, ShieldX, Search, Eye, EyeOff, QrCode, Sun, Moon, ArrowLeft } from 'lucide-react';
+import { Car, ClipboardList, PlusCircle, Save, Loader2, AlertCircle, LogIn, LogOut, UserPlus, Settings, KeyRound, Download, FileText, FileSpreadsheet, File, Truck, Edit, Trash2, XCircle, Upload, ToggleRight, ToggleLeft, ShieldCheck, ShieldX, Search, Eye, EyeOff, QrCode, Sun, Moon, ArrowLeft, DoorOpen } from 'lucide-react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -11,21 +11,35 @@ import LiveClockBar from './components/LiveClockBar';
 import GuardAuthorizationsPanel from './components/GuardAuthorizationsPanel';
 import FleetGatePanel from './components/FleetGatePanel';
 import FleetGpsVehicleTable, { formatFleetTime } from './components/FleetGpsVehicleTable';
+import FleetGpsLiveMap from './components/FleetGpsLiveMap';
+import { normalizeGatePolygonsForSave } from './utils/fleetGpsGeofence';
 import EmployeeNominaCard from './components/EmployeeNominaCard';
-import HomeDashboard from './components/HomeDashboard';
-import { hasPermission, canAccessAdmin, PERMISSION_LABELS } from './utils/permissions';
+import CitadosPanel from './components/CitadosPanel';
+import ManualDoorButton from './components/ManualDoorButton';
+import DoorsAdminPanel from './components/DoorsAdminPanel';
+import ExecutiveDashboard from './components/dashboards/ExecutiveDashboard';
+import MonitoreoDashboard from './components/dashboards/MonitoreoDashboard';
+import GuardiaDashboard from './components/dashboards/GuardiaDashboard';
+import MonitoringVehiclesPanel from './components/MonitoringVehiclesPanel';
+import DigitalDoorPanel from './components/DigitalDoorPanel';
+import RolesAdminPanel from './components/RolesAdminPanel';
+import { entryMatchesTypeFilter, getEntryTableDisplay } from './utils/entryDisplay';
+import { hasPermission, canAccessAdmin, canManageTargetUser, PERMISSION_LABELS, getDashboardProfile } from './utils/permissions';
+import { buildSidebarItems } from './utils/navigation';
 import { useTheme } from './hooks/useTheme';
 
 import './App.css'; // Importa el archivo CSS definido
 
 const ADMIN_SECTION_META = {
   users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
-  access: { title: 'Control acceso SR201', description: 'Relevador Ethernet, puente local y molinete.' },
+  access: { title: 'GPS flota UBIKA', description: 'Monitoreo de móviles en portón y registro automático.' },
+  doors: { title: 'Puertas y acceso', description: 'SR201, multi-puerta, autenticación y estancos en un solo lugar.' },
   citaciones: { title: 'Autorizaciones', description: 'Citaciones del día, visitas y accesos permanentes.' },
   nomina: { title: 'Nómina de personal', description: 'Base de empleados, turnos y tipos de autorización.' },
   vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },
   fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
+  roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
 };
 
 // En producción usa /api (misma URL que Firebase Hosting). En desarrollo local, configurar REACT_APP_API_BASE_URL.
@@ -83,8 +97,8 @@ function App() {
   // Estados para autenticación
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false); // Para alternar entre login y registro
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [systemRoles, setSystemRoles] = useState([]);
 
   // Registro manual de personal (sin escaneo; el DNI se valida en molinete)
   const [personalAllowOverride, setPersonalAllowOverride] = useState(false);
@@ -123,6 +137,9 @@ function App() {
     hasApiKey: false,
     guardiaLat: '',
     guardiaLng: '',
+    geofenceMode: 'circle',
+    gatePolygons: [],
+    plantPolygon: null,
     gateRadiusMeters: 45,
     plantRadiusMeters: 400,
     alertRadiusMeters: 45,
@@ -131,10 +148,14 @@ function App() {
     autoRegisterMovements: true,
     movementCooldownSeconds: 300,
     pollIntervalSeconds: 20,
+    approachAlertEnabled: false,
+    approachRadiusMeters: 400,
+    approachRequireMotion: true,
     lastError: null,
     lastSyncAt: null
   });
   const [fleetGpsTestResult, setFleetGpsTestResult] = useState(null);
+  const fleetGpsMapRef = useRef(null);
 
   const [citacionesBridgeConfig, setCitacionesBridgeConfig] = useState({
     enabled: false,
@@ -248,15 +269,15 @@ function App() {
     return () => clearTimeout(timer);
   }, [successMessage]);
 
-  const showSuccess = (message) => {
+  const showSuccess = useCallback((message) => {
     setError(null);
     setSuccessMessage(message);
-  };
+  }, []);
 
-  const showError = (message) => {
+  const showError = useCallback((message) => {
     setSuccessMessage(null);
     setError(message);
-  };
+  }, []);
 
   // Estados para carga de archivos de flota
   const [selectedMobilesFile, setSelectedMobilesFile] = useState(null);
@@ -387,7 +408,7 @@ function App() {
   // Efecto para cargar usuarios en el panel de administración
   useEffect(() => {
     const fetchUsers = async () => {
-      if (!currentUser || !canAccessAdmin(currentUser)) {
+      if (!currentUser || !hasPermission(currentUser, 'users.view')) {
         setUsers([]);
         return;
       }
@@ -417,6 +438,27 @@ function App() {
     };
 
     fetchUsers();
+  }, [currentUser, authToken]);
+
+  useEffect(() => {
+    const fetchRoles = async () => {
+      if (!currentUser || (!hasPermission(currentUser, 'users.view') && !hasPermission(currentUser, 'roles.view'))) {
+        setSystemRoles([]);
+        return;
+      }
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin/roles`, {
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setSystemRoles(data.roles || []);
+        }
+      } catch (err) {
+        console.error('Error al cargar roles:', err);
+      }
+    };
+    fetchRoles();
   }, [currentUser, authToken]);
 
   // Efecto para cargar listas de móviles y choferes
@@ -606,12 +648,17 @@ function App() {
       if (!currentUser || !hasPermission(currentUser, 'settings.permissions')) return;
       setAdminSectionLoading(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/admin/permissions/roles`, {
-          headers: { 'Authorization': `Bearer ${authToken}` }
+        const response = await fetch(`${API_BASE_URL}/admin/roles`, {
+          headers: { Authorization: `Bearer ${authToken}` }
         });
         if (response.ok) {
           const data = await response.json();
-          setRolePermissions(data.roles || {});
+          const rolesMap = {};
+          (data.roles || []).forEach((role) => {
+            rolesMap[role.id] = role.permissions || [];
+          });
+          setRolePermissions(rolesMap);
+          setSystemRoles(data.roles || []);
           setPermissionKeys(data.permissionKeys || []);
         }
       } catch (err) {
@@ -649,41 +696,53 @@ function App() {
   }, [currentUser, authToken, activeTab, adminSection]);
 
   useEffect(() => {
-    const fetchAccessControl = async () => {
+    const fetchKioskSettings = async () => {
+      if (!currentUser || !hasPermission(currentUser, 'access.kiosk')) return;
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin/access-control`, {
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setAccessControlConfig((prev) => ({ ...prev, ...(data.config || {}) }));
+        }
+      } catch (err) {
+        console.error('Error al cargar ajustes del molinete:', err);
+      }
+    };
+    if (currentUser) fetchKioskSettings();
+  }, [currentUser, authToken]);
+
+  useEffect(() => {
+    const fetchFleetGps = async () => {
       if (!currentUser || !hasPermission(currentUser, 'access.control')) return;
       setAdminSectionLoading(true);
       try {
-        const [accessResponse, fleetResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/admin/access-control`, {
-            headers: { Authorization: `Bearer ${authToken}` }
-          }),
-          fetch(`${API_BASE_URL}/admin/fleet-gps`, {
-            headers: { Authorization: `Bearer ${authToken}` }
-          })
-        ]);
-        if (accessResponse.ok) {
-          const data = await accessResponse.json();
-          setAccessControlConfig((prev) => ({ ...prev, ...(data.config || {}) }));
-        }
+        const fleetResponse = await fetch(`${API_BASE_URL}/admin/fleet-gps`, {
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
         if (fleetResponse.ok) {
           const data = await fleetResponse.json();
           const cfg = data.config || {};
           setFleetGpsConfig((prev) => ({
             ...prev,
             ...cfg,
+            geofenceMode: cfg.geofenceMode || prev.geofenceMode || 'circle',
+            gatePolygons: normalizeGatePolygonsForSave(cfg.gatePolygons || prev.gatePolygons || []),
+            plantPolygon: cfg.plantPolygon ?? prev.plantPolygon ?? null,
             guardiaLat: cfg.guardiaLat ?? '',
             guardiaLng: cfg.guardiaLng ?? '',
             apiKey: cfg.hasApiKey ? '********' : ''
           }));
         }
       } catch (err) {
-        console.error('Error al cargar control de acceso:', err);
+        console.error('Error al cargar GPS flota:', err);
       } finally {
         setAdminSectionLoading(false);
       }
     };
     if (activeTab === 'adminPanel' && adminSection === 'access') {
-      fetchAccessControl();
+      fetchFleetGps();
     }
   }, [currentUser, authToken, activeTab, adminSection]);
 
@@ -693,60 +752,33 @@ function App() {
     setError(null);
     setLoading(true);
     try {
-      if (isRegistering) {
-        // Handle registration
-        // For self-registration, only send username and password. Backend defaults role to 'guardia'.
-        const response = await fetch(`${API_BASE_URL}/auth/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: loginUsername, password: loginPassword })
-        });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.message || 'Error de registro');
-        }
-        showSuccess("Registro exitoso. Iniciando sesión...");
-        // Now, log in the newly registered user
-        const loginResponse = await fetch(`${API_BASE_URL}/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: loginUsername, password: loginPassword })
-        });
-        const loginData = await loginResponse.json();
-        if (!loginResponse.ok) {
-          throw new Error(loginData.message || 'Error al iniciar sesión después del registro.');
-        }
-        setAuthToken(loginData.token);
-        localStorage.setItem('authToken', loginData.token);
-        setCurrentUser(loginData.user);
-        setError(null);
-      } else {
-        // Handle login
-        const response = await fetch(`${API_BASE_URL}/auth/login`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ username: loginUsername, password: loginPassword })
-        });
+      const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          username: loginUsername.trim().toLowerCase(),
+          password: loginPassword
+        })
+      });
 
-        const data = await response.json();
+      const data = await response.json();
 
-        if (!response.ok) {
-          throw new Error(data.message || 'Error de autenticación');
-        }
-
-        setAuthToken(data.token);
-        localStorage.setItem('authToken', data.token);
-        setCurrentUser(data.user);
-        setError(null);
+      if (!response.ok) {
+        throw new Error(data.message || 'Error de autenticación');
       }
+
+      setAuthToken(data.token);
+      localStorage.setItem('authToken', data.token);
+      setCurrentUser(data.user);
+      setError(null);
     } catch (error) {
-      console.error("Error de autenticación/registro:", error);
+      console.error('Error de autenticación:', error);
       if (error instanceof TypeError && error.message === 'Failed to fetch') {
-        setError("No se pudo conectar con el servidor. Por favor, asegúrese de que el backend esté funcionando y la URL de la API sea correcta.");
+        setError('No se pudo conectar con el servidor. Por favor, asegúrese de que el backend esté funcionando y la URL de la API sea correcta.');
       } else {
-        setError(error.message || "Error de autenticación/registro. Intente de nuevo.");
+        setError(error.message || 'Error de autenticación. Intente de nuevo.');
       }
     } finally {
       setLoading(false);
@@ -1213,54 +1245,42 @@ function App() {
     });
   };
 
-  const handleSaveAccessControl = async (e) => {
-    e.preventDefault();
-    await runAction('saveAccessControl', async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/admin/access-control`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authToken}`
-          },
-          body: JSON.stringify(accessControlConfig)
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error al guardar configuración');
-        setAccessControlConfig((prev) => ({ ...prev, ...(data.config || {}) }));
-        showSuccess('Configuración SR201 guardada.');
-      } catch (err) {
-        showError(err.message || 'Error al guardar configuración SR201');
-      }
-    });
-  };
-
   const handleSaveFleetGps = async (e) => {
     e.preventDefault();
     await runAction('saveFleetGps', async () => {
       try {
+        const configToSave = {
+          ...fleetGpsConfig,
+          gatePolygons: normalizeGatePolygonsForSave(fleetGpsConfig.gatePolygons || [])
+        };
+
+        const saveBody = {
+          enabled: configToSave.enabled,
+          provider: 'ubika',
+          apiUrl: configToSave.apiUrl,
+          apiKey: configToSave.apiKey,
+          guardiaLat: configToSave.guardiaLat === '' ? null : Number(configToSave.guardiaLat),
+          guardiaLng: configToSave.guardiaLng === '' ? null : Number(configToSave.guardiaLng),
+          gateRadiusMeters: Number(configToSave.gateRadiusMeters) || 45,
+          plantRadiusMeters: Number(configToSave.plantRadiusMeters) || 400,
+          alertRadiusMeters: Number(configToSave.gateRadiusMeters) || 45,
+          minSpeedKnots: Number(configToSave.minSpeedKnots) || 0,
+          requireMotion: configToSave.requireMotion !== false,
+          autoRegisterMovements: configToSave.autoRegisterMovements !== false,
+          movementCooldownSeconds: Number(configToSave.movementCooldownSeconds) || 300,
+          pollIntervalSeconds: Number(configToSave.pollIntervalSeconds) || 20,
+          approachAlertEnabled: configToSave.approachAlertEnabled === true,
+          approachRadiusMeters: Number(configToSave.approachRadiusMeters) || 400,
+          approachRequireMotion: configToSave.approachRequireMotion !== false
+        };
+
         const response = await fetch(`${API_BASE_URL}/admin/fleet-gps`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${authToken}`
           },
-          body: JSON.stringify({
-            enabled: fleetGpsConfig.enabled,
-            provider: 'ubika',
-            apiUrl: fleetGpsConfig.apiUrl,
-            apiKey: fleetGpsConfig.apiKey,
-            guardiaLat: fleetGpsConfig.guardiaLat === '' ? null : Number(fleetGpsConfig.guardiaLat),
-            guardiaLng: fleetGpsConfig.guardiaLng === '' ? null : Number(fleetGpsConfig.guardiaLng),
-            gateRadiusMeters: Number(fleetGpsConfig.gateRadiusMeters) || 45,
-            plantRadiusMeters: Number(fleetGpsConfig.plantRadiusMeters) || 400,
-            alertRadiusMeters: Number(fleetGpsConfig.gateRadiusMeters) || 45,
-            minSpeedKnots: Number(fleetGpsConfig.minSpeedKnots) || 0,
-            requireMotion: fleetGpsConfig.requireMotion !== false,
-            autoRegisterMovements: fleetGpsConfig.autoRegisterMovements !== false,
-            movementCooldownSeconds: Number(fleetGpsConfig.movementCooldownSeconds) || 300,
-            pollIntervalSeconds: Number(fleetGpsConfig.pollIntervalSeconds) || 20
-          })
+          body: JSON.stringify(saveBody)
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.message || 'Error al guardar GPS UBIKA');
@@ -1268,6 +1288,9 @@ function App() {
         setFleetGpsConfig((prev) => ({
           ...prev,
           ...cfg,
+          geofenceMode: cfg.geofenceMode || configToSave.geofenceMode || 'circle',
+          gatePolygons: normalizeGatePolygonsForSave(cfg.gatePolygons || configToSave.gatePolygons || []),
+          plantPolygon: cfg.plantPolygon ?? configToSave.plantPolygon ?? prev.plantPolygon ?? null,
           guardiaLat: cfg.guardiaLat ?? '',
           guardiaLng: cfg.guardiaLng ?? '',
           apiKey: cfg.hasApiKey ? '********' : ''
@@ -1334,6 +1357,53 @@ function App() {
     setCitacionesBridgeConfig((prev) => ({ ...prev, bridgeSecret: secret }));
   };
 
+  const handleRelinkCitacionesNomina = async () => {
+    await runAction('relinkCitacionesNomina', async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin/citaciones/relink-nomina`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ date: citacionesFilterDate || newCitacionDate })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Error al vincular citaciones');
+        showSuccess(data.message || `${data.linked || 0} citación(es) vinculada(s)`);
+      } catch (err) {
+        showError(err.message || 'No se pudo vincular citaciones con nómina');
+      }
+    });
+  };
+
+  const handleReprocessCitacionesImport = async (importId) => {
+    await runAction(`reprocess-import-${importId}`, async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/admin/citaciones-imports/${importId}/reprocess`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ force: true })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Error al reprocesar importación');
+        showSuccess(data.message || 'Importación reprocesada');
+        const importsRes = await fetch(`${API_BASE_URL}/admin/citaciones-imports?limit=100`, {
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        if (importsRes.ok) {
+          const importsData = await importsRes.json();
+          setCitacionesImports(importsData.imports || []);
+        }
+      } catch (err) {
+        showError(err.message || 'No se pudo reprocesar la importación');
+      }
+    });
+  };
+
   const handleDownloadImportJson = async (importId, sourceFile) => {
     try {
       const response = await fetch(`${API_BASE_URL}/admin/citaciones-imports/${importId}`, {
@@ -1364,22 +1434,6 @@ function App() {
     }
     return true;
   });
-
-  const handleTestRelay = async () => {
-    await runAction('testRelay', async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/access/test-relay`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${authToken}` }
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.message || 'Error en prueba de relevador');
-        showSuccess('Pulso de prueba enviado al SR201.');
-      } catch (err) {
-        showError(err.message || 'No se pudo activar el relevador. Verifique IP/puente local.');
-      }
-    });
-  };
 
   const toggleEditingUserPermission = (permission) => {
     setEditingUserPermissions((prev) =>
@@ -1835,6 +1889,42 @@ function App() {
         const worksheet = workbook.Sheets[sheetName];
         const json = XLSX.utils.sheet_to_json(worksheet);
 
+        if (type === 'citaciones') {
+          const response = await fetch(`${API_BASE_URL}/admin/citaciones/sync-upload`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+              data: json,
+              sourceFile: fileToUpload.name,
+              force: true
+            })
+          });
+          const result = await response.json();
+          if (!response.ok) {
+            throw new Error(result.message || errorMessage);
+          }
+          showSuccess(result.message || successMessage);
+          const citacionesRes = await fetch(`${API_BASE_URL}/admin/authorizations?date=${newCitacionDate}`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (citacionesRes.ok) {
+            const citacionesData = await citacionesRes.json();
+            setCitaciones(citacionesData.authorizations || []);
+          }
+          const importsRes = await fetch(`${API_BASE_URL}/admin/citaciones-imports?limit=100`, {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (importsRes.ok) {
+            const importsData = await importsRes.json();
+            setCitacionesImports(importsData.imports || []);
+          }
+          setSelectedCitacionesFile(null);
+          return;
+        }
+
         const parsedData = parseRows(json);
 
         const response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -1912,7 +2002,7 @@ function App() {
       }
 
       const matchesDate = (!start || entryDate >= start) && (!end || entryDate <= end);
-      const matchesType = reportTypeFilter === 'todos' || entry.type === reportTypeFilter;
+      const matchesType = entryMatchesTypeFilter(entry, reportTypeFilter);
 
       return matchesDate && matchesType;
     });
@@ -1933,7 +2023,7 @@ function App() {
       }
 
       const matchesDate = (!start || entryDate >= start) && (!end || entryDate <= end);
-      const matchesType = allRecordsTypeFilter === 'todos' || entry.type === allRecordsTypeFilter;
+      const matchesType = entryMatchesTypeFilter(entry, allRecordsTypeFilter);
 
       // Lógica de búsqueda general
       const matchesSearchTerm = Object.values(entry).some(value =>
@@ -1977,44 +2067,7 @@ function App() {
         entry.eventTime || 'N/A', // Mostrar la hora del evento si existe, sino 'N/A'
         entry.registeredByUsername || 'Desconocido'
       ];
-      let typeDisplay = '';
-      let entrySpecificDetails = ['', '', '', '']; // Initialize with empty strings for 4 details
-
-      if (entry.type === 'personal') {
-        typeDisplay = (entry.movementType === 'ingreso' ? 'INGRESO Personal' : 'EGRESO Personal');
-        entrySpecificDetails = [
-          entry.name,
-          entry.idNumber,
-          entry.company || 'N/A',
-          entry.destination || 'N/A'
-        ];
-      } else if (entry.type === 'vehiculo') {
-        typeDisplay = (entry.movementType === 'ingreso' ? 'INGRESO Vehículo Externo' : 'EGRESO Vehículo Externo');
-        entrySpecificDetails = [
-          entry.plate,
-          entry.brand || 'N/A',
-          entry.company || 'N/A',
-          entry.driver || 'N/A'
-        ];
-      } else if (entry.type === 'flota') {
-        if (entry.movementType === 'ingreso') typeDisplay = 'INGRESO Flota Interna';
-        else if (entry.movementType === 'egreso') typeDisplay = 'EGRESO Flota Interna';
-        else if (entry.movementType === 'ingreso auxilio') typeDisplay = 'INGRESO Auxilio Flota Interna';
-        else if (entry.movementType === 'egreso auxilio') typeDisplay = 'EGRESO Auxilio Flota Interna';
-
-        entrySpecificDetails = [
-          entry.mobile || 'N/A',
-          entry.flotaDriver || 'N/A',
-          entry.scheduledTime ? new Date(entry.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : 'N/A',
-          entry.actualTime ? new Date(entry.actualTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : 'N/A'
-        ];
-      } else if (entry.type === 'novedad') {
-        typeDisplay = 'NOVEDAD';
-        entrySpecificDetails = [
-          entry.description,
-          '', '', '' // Fill with empty strings to match 4 columns
-        ];
-      }
+      const { typeDisplay, specificDetails: entrySpecificDetails } = getEntryTableDisplay(entry);
       return [typeDisplay, ...commonDetails, ...entrySpecificDetails];
     });
 
@@ -2116,7 +2169,13 @@ function App() {
     if (!currentUser) return [];
     const items = [];
     if (hasPermission(currentUser, 'users.view')) items.push({ id: 'users', label: 'Usuarios', icon: KeyRound });
-    if (hasPermission(currentUser, 'access.control')) items.push({ id: 'access', label: 'Control SR201', icon: ShieldCheck });
+    if (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) {
+      items.push({ id: 'roles', label: 'Roles', icon: ShieldCheck });
+    }
+    if (hasPermission(currentUser, 'access.doors.manage') || hasPermission(currentUser, 'access.control')) {
+      items.push({ id: 'doors', label: 'Puertas y acceso', icon: DoorOpen });
+    }
+    if (hasPermission(currentUser, 'access.control')) items.push({ id: 'access', label: 'GPS flota', icon: ShieldCheck });
     if (hasPermission(currentUser, 'master.citaciones.write')) items.push({ id: 'citaciones', label: 'Autorizaciones', icon: QrCode });
     if (hasPermission(currentUser, 'master.nomina.write')) items.push({ id: 'nomina', label: 'Nómina', icon: ClipboardList });
     if (hasPermission(currentUser, 'master.vehicles.write')) items.push({ id: 'vehicles', label: 'Vehículos', icon: Car });
@@ -2124,6 +2183,81 @@ function App() {
     if (hasPermission(currentUser, 'settings.permissions')) items.push({ id: 'permissions', label: 'Permisos', icon: Settings });
     return items;
   }, [currentUser]);
+
+  const sidebarItems = useMemo(
+    () => (currentUser ? buildSidebarItems(currentUser) : []),
+    [currentUser]
+  );
+
+  const assignableRoles = useMemo(() => {
+    if (!currentUser) return [];
+    return (systemRoles.length ? systemRoles : [
+      { id: 'monitoreo', label: 'Monitoreo' },
+      { id: 'guardia', label: 'Guardia' },
+      { id: 'supervisor', label: 'Supervisor' },
+      { id: 'admin', label: 'Administrador' }
+    ]).filter((role) => canManageTargetUser(currentUser, { role: role.id }));
+  }, [currentUser, systemRoles]);
+
+  const permissionMatrixRoles = useMemo(() => {
+    if (systemRoles.length) return systemRoles;
+    return Object.keys(rolePermissions).map((id) => ({ id, label: id }));
+  }, [systemRoles, rolePermissions]);
+
+  const dashboardProfile = getDashboardProfile(currentUser);
+
+  const renderHomeDashboard = () => {
+    if (dashboardProfile === 'monitoreo') {
+      return (
+        <MonitoreoDashboard
+          currentUser={currentUser}
+          entries={entries}
+          onNavigate={navigateToTab}
+        />
+      );
+    }
+    if (dashboardProfile === 'guardia') {
+      return (
+        <GuardiaDashboard
+          currentUser={currentUser}
+          entries={entries}
+          onNavigate={navigateToTab}
+          authToken={authToken}
+          showFleetGps={hasPermission(currentUser, 'fleet.gps.read')}
+          showAttendanceAlerts={hasPermission(currentUser, 'attendance.alerts.read')}
+          showCitados={hasPermission(currentUser, 'attendance.alerts.read')}
+          onGpsMovementRegistered={handleGpsMovementsRegistered}
+          onAttendanceRegistered={handleAttendanceRegistered}
+        />
+      );
+    }
+    if (dashboardProfile === 'supervisor' || dashboardProfile === 'admin') {
+      return (
+        <ExecutiveDashboard
+          currentUser={currentUser}
+          entries={entries}
+          isAdmin={dashboardProfile === 'admin'}
+          onNavigate={(tab) => {
+            if (tab === 'adminPanel') enterAdminPanel();
+            else navigateToTab(tab);
+          }}
+        />
+      );
+    }
+    return (
+      <GuardiaDashboard
+        currentUser={currentUser}
+        entries={entries}
+        onNavigate={navigateToTab}
+        authToken={authToken}
+        showFleetGps={hasPermission(currentUser, 'fleet.gps.read')}
+        showAttendanceAlerts={hasPermission(currentUser, 'attendance.alerts.read')}
+        showCitados={hasPermission(currentUser, 'attendance.alerts.read')}
+        onGpsMovementRegistered={handleGpsMovementsRegistered}
+        onAttendanceRegistered={handleAttendanceRegistered}
+      />
+    );
+  };
 
   const activeAdminMeta = ADMIN_SECTION_META[adminSection] || { title: 'Administración', description: '' };
   const isAdminMode = activeTab === 'adminPanel';
@@ -2217,22 +2351,9 @@ function App() {
             </div>
           </div>
 
-          <div className="auth-tabs">
-            <button
-              type="button"
-              className={`auth-tab ${!isRegistering ? 'active' : ''}`}
-              onClick={() => setIsRegistering(false)}
-            >
-              Iniciar sesión
-            </button>
-            <button
-              type="button"
-              className={`auth-tab ${isRegistering ? 'active' : ''}`}
-              onClick={() => setIsRegistering(true)}
-            >
-              Registrarse
-            </button>
-          </div>
+          <p className="auth-help-text">
+            El acceso es provisto por un administrador. Si no tiene usuario, contacte a Sistemas o a su supervisor.
+          </p>
 
           {error && (
             <div className="error-message auth-inline-message" role="alert">
@@ -2256,8 +2377,11 @@ function App() {
                 value={loginUsername}
                 onChange={(e) => setLoginUsername(e.target.value)}
                 className="input-field"
-                placeholder="Ingrese su usuario"
+                placeholder="Ingrese su usuario (ej: sistemas.ti@bacarsa.com.ar)"
                 autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 required
               />
             </div>
@@ -2271,7 +2395,7 @@ function App() {
                   onChange={(e) => setLoginPassword(e.target.value)}
                   className="input-field"
                   placeholder="Ingrese su contraseña"
-                  autoComplete={isRegistering ? 'new-password' : 'current-password'}
+                  autoComplete="current-password"
                   required
                 />
                 <button
@@ -2289,7 +2413,7 @@ function App() {
               className="btn btn-primary w-full"
               disabled={loading}
             >
-              {loading ? 'Cargando...' : (isRegistering ? <><UserPlus size={20} /> Crear cuenta de guardia</> : <><LogIn size={20} /> Entrar al sistema</>)}
+              {loading ? 'Cargando...' : <><LogIn size={20} /> Entrar al sistema</>}
             </button>
           </form>
         </div>
@@ -2305,6 +2429,7 @@ function App() {
         currentUser={currentUser}
         onExit={() => setActiveTab('inicio')}
         resetSeconds={accessControlConfig.kioskResetSeconds || 4}
+        canExceptionalEntry={hasPermission(currentUser, 'access.exceptional_entry')}
       />
     );
   }
@@ -2333,6 +2458,12 @@ function App() {
               </div>
             </div>
             <div className="app-header-actions">
+              <ManualDoorButton
+                authToken={authToken}
+                currentUser={currentUser}
+                onSuccess={showSuccess}
+                onError={showError}
+              />
               <button
                 type="button"
                 className="theme-toggle-btn"
@@ -2343,7 +2474,7 @@ function App() {
                 {isDark ? <Sun size={18} /> : <Moon size={18} />}
               </button>
               <span className="user-info-tag">
-                {currentUser.username} · {currentUser.role}
+                {currentUser.username} · {currentUser.roleLabel || currentUser.role}
               </span>
               {canAccessAdmin(currentUser) && (
                 <button
@@ -2376,9 +2507,8 @@ function App() {
               activeTab={activeTab}
               onNavigate={navigateToTab}
               onEnterAdmin={enterAdminPanel}
-              showKiosk={hasPermission(currentUser, 'access.kiosk') || currentUser.role === 'admin' || currentUser.role === 'guardia'}
-              showAutorizados={hasPermission(currentUser, 'master.citaciones.read')}
               showAdmin={canAccessAdmin(currentUser)}
+              items={sidebarItems}
             />
           )}
 
@@ -2416,17 +2546,42 @@ function App() {
             )}
 
             <main className="app-main-inner">
-          {activeTab === 'inicio' && !isAdminMode && (
-            <HomeDashboard
-              entries={entries}
-              currentUser={currentUser}
-              onNavigate={navigateToTab}
-              authToken={authToken}
-              showFleetGps={hasPermission(currentUser, 'fleet.gps.read')}
-              showAttendanceAlerts={hasPermission(currentUser, 'attendance.alerts.read')}
-              onGpsMovementRegistered={handleGpsMovementsRegistered}
-              onAttendanceRegistered={handleAttendanceRegistered}
-            />
+          {activeTab === 'inicio' && !isAdminMode && renderHomeDashboard()}
+
+          {activeTab === 'vehiculosAutorizados' && !isAdminMode && (
+            hasPermission(currentUser, 'monitoring.vehicles.manage') || hasPermission(currentUser, 'master.vehicles.quick_authorize')
+          ) && (
+            <div className="form-section">
+              <MonitoringVehiclesPanel
+                authToken={authToken}
+                onSuccess={showSuccess}
+                onError={showError}
+                onMovementRegistered={() => reloadEntries(true)}
+              />
+            </div>
+          )}
+
+          {activeTab === 'botoneraMonitoreo' && !isAdminMode && hasPermission(currentUser, 'monitoring.doors.panel') && (
+            <div className="form-section">
+              <DigitalDoorPanel profile="monitoreo" canManualOpen={hasPermission(currentUser, 'access.manual_open')} />
+            </div>
+          )}
+
+          {activeTab === 'botoneraGuardia' && !isAdminMode && hasPermission(currentUser, 'guard.doors.panel') && (
+            <div className="form-section">
+              <DigitalDoorPanel profile="guardia" canManualOpen={hasPermission(currentUser, 'access.manual_open')} />
+            </div>
+          )}
+
+          {activeTab === 'citados' && !isAdminMode && hasPermission(currentUser, 'attendance.alerts.read') && (
+            <div className="form-section">
+              <CitadosPanel
+                authToken={authToken}
+                enabled
+                pollSeconds={60}
+                onRegistered={handleAttendanceRegistered}
+              />
+            </div>
           )}
 
           {activeTab === 'autorizados' && !isAdminMode && hasPermission(currentUser, 'master.citaciones.read') && (
@@ -2441,7 +2596,7 @@ function App() {
           )}
 
           {/* Formularios de registro */}
-          {activeTab !== 'adminPanel' && activeTab !== 'reportes' && activeTab !== 'allRecords' && activeTab !== 'inicio' && activeTab !== 'autorizados' && (
+          {activeTab !== 'adminPanel' && activeTab !== 'reportes' && activeTab !== 'allRecords' && activeTab !== 'inicio' && activeTab !== 'autorizados' && activeTab !== 'citados' && (
             <div className="form-section">
               {activeTab === 'personal' && (
                 <form onSubmit={handlePersonalSubmit} className="space-y-4">
@@ -2511,13 +2666,14 @@ function App() {
                     && !personalAccessStatus.authorized
                     && hasPermission(currentUser, 'access.exceptional_entry') && (
                     <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
-                      <p className="text-sm font-medium text-amber-900">Ingreso excepcional (queda registrado con motivo)</p>
-                      <input
-                        type="text"
-                        className="input-field"
-                        placeholder="Motivo breve (ej. autorizado por supervisor, carga urgente)"
+                      <p className="text-sm font-medium text-amber-900">Ingreso excepcional — motivo obligatorio</p>
+                      <textarea
+                        className="input-field min-h-[72px]"
+                        placeholder="Describa por qué se autoriza el ingreso (obligatorio)"
                         value={personalExceptionalReason}
                         onChange={(e) => setPersonalExceptionalReason(e.target.value)}
+                        required
+                        rows={2}
                       />
                       <button
                         type="button"
@@ -2827,46 +2983,7 @@ function App() {
                           entry.eventTime || 'N/A', // Hora del evento
                           entry.registeredByUsername || 'Desconocido'
                         ];
-                        let typeDisplay = '';
-                        let specificDetails = ['', '', '', '']; // Initialize with empty strings for 4 details
-
-                        if (entry.type === 'personal') {
-                          typeDisplay = entry.movementType === 'ingreso' ? 'INGRESO Personal' : 'EGRESO Personal';
-                          specificDetails = [
-                            entry.name,
-                            entry.idNumber,
-                            entry.company || 'N/A',
-                            entry.destination || 'N/A'
-                          ];
-                        } else if (entry.type === 'vehiculo') {
-                          typeDisplay = entry.movementType === 'ingreso' ? 'INGRESO Vehículo Externo' : 'EGRESO Vehículo Externo';
-                          specificDetails = [
-                            entry.plate,
-                            entry.brand || 'N/A',
-                            entry.company || 'N/A',
-                            entry.driver || 'N/A'
-                          ];
-                        } else if (entry.type === 'flota') {
-                          if (entry.movementType === 'ingreso') typeDisplay = 'INGRESO Flota Interna';
-                          else if (entry.movementType === 'egreso') typeDisplay = 'EGRESO Flota Interna';
-                          else if (entry.movementType === 'ingreso auxilio') typeDisplay = 'INGRESO Auxilio Flota Interna';
-                          else if (entry.movementType === 'egreso auxilio') typeDisplay = 'EGRESO Auxilio Flota Interna';
-
-                          specificDetails = [
-                            entry.mobile || 'N/A',
-                            entry.flotaDriver || 'N/A', // Usar flotaDriver aquí
-                            entry.scheduledTime ? new Date(entry.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : 'N/A',
-                            entry.actualTime ? new Date(entry.actualTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : 'N/A'
-                          ];
-                        } else if (entry.type === 'novedad') {
-                          typeDisplay = 'NOVEDAD';
-                          specificDetails = [
-                            entry.description,
-                            '', // Empty for detail 2
-                            '', // Empty for detail 3
-                            ''  // Empty for detail 4
-                          ];
-                        }
+                        const { typeDisplay, specificDetails } = getEntryTableDisplay(entry);
 
                         return (
                           <tr key={entry._id}>
@@ -3009,46 +3126,7 @@ function App() {
                           entry.eventTime || 'N/A', // Hora del evento
                           entry.registeredByUsername || 'Desconocido'
                         ];
-                        let typeDisplay = '';
-                        let specificDetails = ['', '', '', '']; // Initialize with empty strings for 4 details
-
-                        if (entry.type === 'personal') {
-                          typeDisplay = entry.movementType === 'ingreso' ? 'INGRESO Personal' : 'EGRESO Personal';
-                          specificDetails = [
-                            entry.name,
-                            entry.idNumber,
-                            entry.company || 'N/A',
-                            entry.destination || 'N/A'
-                          ];
-                        } else if (entry.type === 'vehiculo') {
-                          typeDisplay = entry.movementType === 'ingreso' ? 'INGRESO Vehículo Externo' : 'EGRESO Vehículo Externo';
-                          specificDetails = [
-                            entry.plate,
-                            entry.brand || 'N/A',
-                            entry.company || 'N/A',
-                            entry.driver || 'N/A'
-                          ];
-                        } else if (entry.type === 'flota') {
-                          if (entry.movementType === 'ingreso') typeDisplay = 'INGRESO Flota Interna';
-                          else if (entry.movementType === 'egreso') typeDisplay = 'EGRESO Flota Interna';
-                          else if (entry.movementType === 'ingreso auxilio') typeDisplay = 'INGRESO Auxilio Flota Interna';
-                          else if (entry.movementType === 'egreso auxilio') typeDisplay = 'EGRESO Auxilio Flota Interna';
-
-                          specificDetails = [
-                            entry.mobile || 'N/A',
-                            entry.flotaDriver || 'N/A', // Usar flotaDriver aquí
-                            entry.scheduledTime ? new Date(entry.scheduledTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : 'N/A',
-                            entry.actualTime ? new Date(entry.actualTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : 'N/A'
-                          ];
-                        } else if (entry.type === 'novedad') {
-                          typeDisplay = 'NOVEDAD';
-                          specificDetails = [
-                            entry.description,
-                            '', // Empty for detail 2
-                            '', // Empty for detail 3
-                            ''  // Empty for detail 4
-                          ];
-                        }
+                        const { typeDisplay, specificDetails } = getEntryTableDisplay(entry);
 
                         return (
                           <tr key={entry._id}>
@@ -3142,9 +3220,9 @@ function App() {
                         <input type="text" id="newUsername" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className="input-field" placeholder="Usuario" required />
                         <input type="password" id="newUserPassword" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} className="input-field" placeholder="Contraseña" required />
                         <select id="newUserRole" value={newUserRole} onChange={(e) => setNewUserRole(e.target.value)} className="input-field bg-white">
-                          <option value="guardia">Guardia</option>
-                          <option value="supervisor">Supervisor</option>
-                          <option value="admin">Administrador</option>
+                          {assignableRoles.map((role) => (
+                            <option key={role.id} value={role.id}>{role.label}</option>
+                          ))}
                         </select>
                         <PendingButton type="submit" actionId="createUser" pendingAction={pendingAction} className="btn btn-success md:col-span-3" pendingLabel="Creando usuario...">
                           <PlusCircle size={20} /> Crear usuario
@@ -3163,13 +3241,13 @@ function App() {
                           <div key={user.id} className="user-list-item">
                             <div>
                               <p className="font-semibold text-gray-900">{user.username}</p>
-                              <p className="text-sm text-gray-600">Rol: <span className="capitalize">{user.role}</span> · {user.active ? 'Activo' : 'Inactivo'}</p>
+                              <p className="text-sm text-gray-600">Rol: <span className="capitalize">{systemRoles.find((r) => r.id === user.role)?.label || user.role}</span> · {user.active ? 'Activo' : 'Inactivo'}</p>
                             </div>
                             <div className="flex items-center gap-2 mt-2 sm:mt-0">
-                              {hasPermission(currentUser, 'users.edit') && (currentUser.role === 'admin' || user.role === 'guardia') && (
+                              {hasPermission(currentUser, 'users.edit') && canManageTargetUser(currentUser, user) && (
                                 <button onClick={() => handleEditUser(user)} className="btn btn-secondary-small"><Edit size={16} /> Editar</button>
                               )}
-                              {hasPermission(currentUser, 'users.delete') && user.id !== currentUser.id && (currentUser.role === 'admin' || user.role === 'guardia') && (
+                              {hasPermission(currentUser, 'users.delete') && user.id !== currentUser.id && canManageTargetUser(currentUser, user) && (
                                 <button onClick={() => handleDeleteUser(user.id)} className="btn btn-danger-small"><Trash2 size={16} /> Eliminar</button>
                               )}
                             </div>
@@ -3243,6 +3321,21 @@ function App() {
                         </PendingButton>
                       </div>
                     </form>
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      <PendingButton
+                        type="button"
+                        actionId="relinkCitacionesNomina"
+                        pendingAction={pendingAction}
+                        className="btn btn-secondary"
+                        pendingLabel="Vinculando..."
+                        onClick={handleRelinkCitacionesNomina}
+                      >
+                        Vincular citados con nómina (hoy)
+                      </PendingButton>
+                      <p className="text-xs text-gray-500 self-center">
+                        No requiere la PC de logística: usa las citaciones ya importadas y la nómina actual.
+                      </p>
+                    </div>
                     <div className="text-sm text-gray-600 grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
                       <p><strong>Última sync:</strong> {citacionesBridgeConfig.lastSyncAt ? new Date(citacionesBridgeConfig.lastSyncAt).toLocaleString('es-AR') : '—'}</p>
                       <p><strong>Archivo:</strong> {citacionesBridgeConfig.lastSyncFile || '—'}</p>
@@ -3267,6 +3360,7 @@ function App() {
                                 <th className="px-3 py-2 text-left text-xs uppercase">Días citados</th>
                                 <th className="px-3 py-2 text-left text-xs uppercase">Personas</th>
                                 <th className="px-3 py-2 text-left text-xs uppercase">JSON</th>
+                                <th className="px-3 py-2 text-left text-xs uppercase">Acciones</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -3284,6 +3378,18 @@ function App() {
                                     >
                                       Descargar
                                     </button>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <PendingButton
+                                      type="button"
+                                      actionId={`reprocess-import-${batch.id}`}
+                                      pendingAction={pendingAction}
+                                      className="btn btn-secondary-small"
+                                      pendingLabel="..."
+                                      onClick={() => handleReprocessCitacionesImport(batch.id)}
+                                    >
+                                      Reprocesar
+                                    </PendingButton>
                                   </td>
                                 </tr>
                               ))}
@@ -3305,8 +3411,8 @@ function App() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div>
-                      <label htmlFor="uploadCitaciones" className="block text-sm font-medium text-gray-700 mb-1">Carga masiva (XLSX/CSV)</label>
-                      <p className="text-xs text-gray-500 mb-2">Columnas: tipo, nombre, dni, empresa, destino, fecha_inicio, fecha_fin</p>
+                      <label htmlFor="uploadCitaciones" className="block text-sm font-medium text-gray-700 mb-1">Carga manual (XLSX/CSV)</label>
+                      <p className="text-xs text-gray-500 mb-2">Planilla de transporte: per__cod, per__des, sector__des, diacitacioningreso. Mismo formato que el puente automático.</p>
                       <input type="file" id="uploadCitaciones" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'citaciones')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100" />
                       <PendingButton
                         type="button"
@@ -3528,87 +3634,23 @@ function App() {
                 </div>
               )}
 
+              {adminSection === 'doors' && (hasPermission(currentUser, 'access.doors.manage') || hasPermission(currentUser, 'access.control')) && (
+                <DoorsAdminPanel
+                  authToken={authToken}
+                  pendingAction={pendingAction}
+                  onPending={runAction}
+                  onSuccess={showSuccess}
+                  onError={showError}
+                  onGlobalAccessSaved={(cfg) => setAccessControlConfig((prev) => ({ ...prev, ...(cfg || {}) }))}
+                />
+              )}
+
               {adminSection === 'access' && hasPermission(currentUser, 'access.control') && (
                 <div className="admin-sub-section">
-                  <h3 className="text-xl font-medium text-gray-800 mb-3">Relevador SR201 (Ethernet RJ45)</h3>
-                  <p className="text-sm text-gray-600 mb-4">
-                    El SR201 se controla por TCP puerto 6722. Como Firebase está en la nube, debe ejecutar el puente local
-                    <code className="mx-1">scripts/sr201-bridge.js</code> en el servidor de planta y completar la URL del puente.
-                  </p>
-                  <form onSubmit={handleSaveAccessControl} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={accessControlConfig.enabled}
-                        onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
-                      />
-                      Habilitar apertura automática con relevador SR201
-                    </label>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={accessControlConfig.allowManualOverride}
-                        onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, allowManualOverride: e.target.checked }))}
-                      />
-                      Permitir override manual desde guardia
-                    </label>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Segundos en pantalla molinete</label>
-                      <input type="number" min="2" max="15" value={accessControlConfig.kioskResetSeconds || 4} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, kioskResetSeconds: Number(e.target.value) }))} className="input-field" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">IP del SR201</label>
-                      <input type="text" value={accessControlConfig.host} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, host: e.target.value }))} className="input-field" placeholder="192.168.1.100" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Puerto TCP</label>
-                      <input type="number" value={accessControlConfig.port} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, port: Number(e.target.value) }))} className="input-field" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Canal relevador</label>
-                      <select value={accessControlConfig.relayChannel} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, relayChannel: Number(e.target.value) }))} className="input-field bg-white">
-                        <option value={1}>Canal 1 (molinete / puerta principal)</option>
-                        <option value={2}>Canal 2 (acceso secundario)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Modo pulso</label>
-                      <select value={accessControlConfig.pulseMode} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, pulseMode: e.target.value }))} className="input-field bg-white">
-                        <option value="jog">Jog (medio segundo)</option>
-                        <option value="timed">Temporizado (segundos)</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Segundos de apertura</label>
-                      <input type="number" min="1" max="99" value={accessControlConfig.pulseSeconds} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, pulseSeconds: Number(e.target.value) }))} className="input-field" />
-                    </div>
-                    <div className="md:col-span-2 xl:col-span-3">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">URL puente local (recomendado)</label>
-                      <input type="text" value={accessControlConfig.bridgeUrl} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, bridgeUrl: e.target.value }))} className="input-field" placeholder="http://192.168.0.9:5022" />
-                    </div>
-                    <div className="md:col-span-2 xl:col-span-3">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Secreto del puente</label>
-                      <input type="password" value={accessControlConfig.bridgeSecret} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, bridgeSecret: e.target.value }))} className="input-field" placeholder="Opcional" />
-                    </div>
-                    <div className="md:col-span-2 xl:col-span-3">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Mensaje de acceso denegado</label>
-                      <input type="text" value={accessControlConfig.denyMessage} onChange={(e) => setAccessControlConfig((prev) => ({ ...prev, denyMessage: e.target.value }))} className="input-field" />
-                    </div>
-                    <div className="md:col-span-2 xl:col-span-3 flex flex-wrap gap-3">
-                      <PendingButton type="submit" actionId="saveAccessControl" pendingAction={pendingAction} className="btn btn-primary" pendingLabel="Guardando...">
-                        <Save size={18} /> Guardar configuración
-                      </PendingButton>
-                      <PendingButton type="button" actionId="testRelay" pendingAction={pendingAction} className="btn btn-secondary" pendingLabel="Probando..." onClick={handleTestRelay}>
-                        <ShieldCheck size={18} /> Probar relevador
-                      </PendingButton>
-                    </div>
-                  </form>
-
-                  <div className="mt-8 pt-6 border-t border-gray-200">
-                    <h3 className="text-xl font-medium text-gray-800 mb-2">GPS flota interna (UBIKA)</h3>
+                  <h3 className="text-xl font-medium text-gray-800 mb-3">GPS flota interna (UBIKA)</h3>
                     <p className="text-sm text-gray-600 mb-4">
                       Detecta tránsito en el portón (entrando/saliendo), no los móviles estacionados en planta.
-                      Use un radio de portón chico (30–50 m) y un radio de planta más grande.
+                      Puede usar círculos rápidos o dibujar polígonos sobre cada portón en el mapa (recomendado si hay 2 accesos).
                     </p>
                     <form onSubmit={handleSaveFleetGps} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       <label className="flex items-center gap-2 text-sm md:col-span-2 xl:col-span-3">
@@ -3634,6 +3676,14 @@ function App() {
                           onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, requireMotion: e.target.checked }))}
                         />
                         Solo contar móviles en movimiento (ignora estacionados)
+                      </label>
+                      <label className="flex items-center gap-2 text-sm md:col-span-2 xl:col-span-3">
+                        <input
+                          type="checkbox"
+                          checked={fleetGpsConfig.approachAlertEnabled === true}
+                          onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, approachAlertEnabled: e.target.checked }))}
+                        />
+                        Alerta de vehículo acercándose a planta (avisa al guardia en el panel GPS). Compatible con polígonos de Portón Santiago y Portón Olmos.
                       </label>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Latitud guardia</label>
@@ -3672,8 +3722,13 @@ function App() {
                             alertRadiusMeters: Number(e.target.value)
                           }))}
                           className="input-field"
+                          disabled={fleetGpsConfig.geofenceMode === 'polygon'}
                         />
-                        <p className="text-xs text-gray-500 mt-1">Zona de tránsito. Recomendado 35–50 m.</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {fleetGpsConfig.geofenceMode === 'polygon'
+                            ? 'En modo polígonos se usa el dibujo del mapa.'
+                            : 'Zona de tránsito. Recomendado 35–50 m.'}
+                        </p>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Radio planta (metros)</label>
@@ -3685,7 +3740,23 @@ function App() {
                           onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, plantRadiusMeters: Number(e.target.value) }))}
                           className="input-field"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Para saber si venía de adentro o de afuera.</p>
+                        <p className="text-xs text-gray-500 mt-1">Respaldo si no dibuja polígono de planta.</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Radio alerta llegada (metros)</label>
+                        <input
+                          type="number"
+                          min="100"
+                          max="3000"
+                          value={fleetGpsConfig.approachRadiusMeters ?? 400}
+                          onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, approachRadiusMeters: Number(e.target.value) }))}
+                          className="input-field"
+                          disabled={!fleetGpsConfig.approachAlertEnabled}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Avisa cuando un móvil en movimiento entra en este radio y aún no está en planta/portón.
+                          El ingreso/egreso se registra al cruzar el polígono del portón (Santiago u Olmos).
+                        </p>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Velocidad mínima (nudos)</label>
@@ -3815,7 +3886,17 @@ function App() {
                         </div>
                       )}
                     </form>
-                  </div>
+
+                  <FleetGpsLiveMap
+                    ref={fleetGpsMapRef}
+                    authToken={authToken}
+                    previewConfig={fleetGpsConfig}
+                    active={adminSection === 'access'}
+                    editable
+                    onGeofenceChange={(patch) => setFleetGpsConfig((prev) => ({ ...prev, ...patch }))}
+                    onGeofenceSaved={() => showSuccess('Geocercas del mapa guardadas.')}
+                    onGeofenceError={(message) => showError(message)}
+                  />
                 </div>
               )}
 
@@ -3998,6 +4079,15 @@ function App() {
                 </div>
               )}
 
+              {adminSection === 'roles' && (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) && (
+                <RolesAdminPanel
+                  authToken={authToken}
+                  currentUser={currentUser}
+                  onSuccess={showSuccess}
+                  onError={showError}
+                />
+              )}
+
               {adminSection === 'permissions' && hasPermission(currentUser, 'settings.permissions') && (
                 <div className="admin-sub-section">
                   <h3 className="text-xl font-medium text-gray-800 mb-3">Permisos por rol</h3>
@@ -4006,8 +4096,8 @@ function App() {
                       <thead className="bg-gray-100">
                         <tr>
                           <th className="px-4 py-2 text-left text-xs uppercase">Permiso</th>
-                          {['guardia', 'supervisor', 'admin'].map((role) => (
-                            <th key={role} className="px-4 py-2 text-center text-xs uppercase capitalize">{role}</th>
+                          {permissionMatrixRoles.map((role) => (
+                            <th key={role.id} className="px-4 py-2 text-center text-xs uppercase">{role.label || role.id}</th>
                           ))}
                         </tr>
                       </thead>
@@ -4015,12 +4105,12 @@ function App() {
                         {(permissionKeys.length ? permissionKeys : Object.keys(PERMISSION_LABELS)).map((permission) => (
                           <tr key={permission} className="border-t">
                             <td className="px-4 py-2 text-sm">{PERMISSION_LABELS[permission] || permission}</td>
-                            {['guardia', 'supervisor', 'admin'].map((role) => (
-                              <td key={role} className="px-4 py-2 text-center">
+                            {permissionMatrixRoles.map((role) => (
+                              <td key={role.id} className="px-4 py-2 text-center">
                                 <input
                                   type="checkbox"
-                                  checked={(rolePermissions[role] || []).includes(permission)}
-                                  onChange={() => toggleRolePermission(role, permission)}
+                                  checked={(rolePermissions[role.id] || []).includes(permission)}
+                                  onChange={() => toggleRolePermission(role.id, permission)}
                                 />
                               </td>
                             ))}
@@ -4044,15 +4134,15 @@ function App() {
                     <h3 className="text-xl font-semibold text-gray-800 mb-4">Editar usuario: {editingUser.username}</h3>
                     <form onSubmit={handleSaveUserEdit} className="space-y-4">
                       <input type="text" id="editedUsername" value={editedUsername} className="input-field" disabled />
-                      {currentUser.role === 'admin' && (
+                      {hasPermission(currentUser, 'users.edit') && canManageTargetUser(currentUser, editingUser) && (
                         <select id="editedUserRole" value={editedUserRole} onChange={(e) => setEditedUserRole(e.target.value)} className="input-field bg-white" disabled={editingUser.id === currentUser.id}>
-                          <option value="guardia">Guardia</option>
-                          <option value="supervisor">Supervisor</option>
-                          <option value="admin">Administrador</option>
+                          {assignableRoles.map((role) => (
+                            <option key={role.id} value={role.id}>{role.label}</option>
+                          ))}
                         </select>
                       )}
                       <input type="password" id="editedUserPassword" value={editedUserPassword} onChange={(e) => setEditedUserPassword(e.target.value)} className="input-field" placeholder="Nueva contraseña (opcional)" />
-                      {currentUser.role === 'admin' && (
+                      {hasPermission(currentUser, 'users.edit') && canManageTargetUser(currentUser, editingUser) && (
                         <button type="button" onClick={() => setEditedUserActive(!editedUserActive)} className={`flex items-center gap-2 px-4 py-2 rounded-md ${editedUserActive ? 'bg-green-500 text-white' : 'bg-gray-300 text-gray-700'}`} disabled={editingUser.id === currentUser.id}>
                           {editedUserActive ? <ToggleRight size={20} /> : <ToggleLeft size={20} />} {editedUserActive ? 'Activo' : 'Inactivo'}
                         </button>

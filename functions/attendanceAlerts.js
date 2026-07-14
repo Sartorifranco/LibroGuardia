@@ -1,19 +1,13 @@
 const { db, FieldValue } = require('./firestore');
 const { getArgentinaDateParts, timeToMinutes } = require('./lib/normalize');
 const { normalizeIdNumber } = require('./dniParser');
-const { buildNameTokens } = require('./authorizations');
-const { extractAreaShort, getAreaKey, buildAttendanceAreaSummary } = require('./lib/centroCostoGroups');
+const { buildNameTokens } = require('./lib/nameUtils');
+const { normalizeLegajo, matchCitacionToEmployee, buildNominaEmployeeIndex } = require('./lib/personMatch');
+const { extractAreaShort, getAreaKey, buildAttendanceAreaSummary, isCitacionRequiredArea } = require('./lib/centroCostoGroups');
+const { resolveShiftSchedule } = require('./lib/shiftParser');
 
 const DEFAULT_TOLERANCE_MINUTES = 30;
 const DISMISSALS_COLLECTION = 'attendanceDismissals';
-
-const normalizeLegajo = (value = '') => {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  const digits = raw.replace(/\D/g, '');
-  if (digits) return String(Number.parseInt(digits, 10));
-  return raw.toLowerCase();
-};
 
 const normalizeNameKey = (name = '') => buildNameTokens(name);
 
@@ -80,23 +74,18 @@ const hasIngresoToday = (employee, entries) => {
 };
 
 const hasCitacionToday = (employee, citaciones) => {
-  const dni = employee.idNumberNormalized || normalizeIdNumber(employee.idNumber);
-  const legajo = normalizeLegajo(employee.legajoNormalized || employee.legajo);
-  const nameKey = employee.nameKey || normalizeNameKey(employee.name);
-
-  return citaciones.some((item) => {
-    const itemDni = item.idNumberNormalized || normalizeIdNumber(item.idNumber);
-    const itemLegajo = normalizeLegajo(item.legajoNormalized || item.legajo);
-    if (dni && itemDni && itemDni === dni) return true;
-    if (legajo && itemLegajo && itemLegajo === legajo) return true;
-    if (nameKey && item.nameKey === nameKey) return true;
-    if (nameKey && normalizeNameKey(item.name) === nameKey) return true;
-    return false;
-  });
+  const index = buildNominaEmployeeIndex([employee]);
+  return citaciones.some((item) => matchCitacionToEmployee(item, index));
 };
 
 const employeeRequiresCitacion = (employee) => {
+  const centro = employee.centroCosto || employee.company || '';
+  if (!isCitacionRequiredArea(centro)) return false;
+
+  const policy = employee.authorizationPolicy || '';
+  if (policy === 'citacion' || policy === 'citacion_shift') return true;
   if (employee.requiresCitacion === true) return true;
+
   const raw = String(employee.conCitacionRaw || '').trim().toUpperCase();
   return raw === 'SI' || raw === 'SÍ';
 };
@@ -106,48 +95,43 @@ const evaluateExpectedToday = (employee, { dayCode, citacionesToday }) => {
     return { expected: false, reason: 'inactivo' };
   }
 
-  const shift = employee.shiftSchedule;
+  const centro = employee.centroCosto || employee.company || '';
+  const citacionArea = isCitacionRequiredArea(centro);
+  const shift = resolveShiftSchedule(employee);
   const requiresCitacion = employeeRequiresCitacion(employee);
   const policy = employee.authorizationPolicy || 'unknown';
+  const citedToday = hasCitacionToday(employee, citacionesToday);
+  const hasShiftDays = Boolean(shift?.daysOfWeek?.length);
+  const onShiftDay = !hasShiftDays || shift.daysOfWeek.includes(dayCode);
+  const entryTime = shift?.timeWindow?.from || '07:00';
 
-  if (hasCitacionToday(employee, citacionesToday)) {
-    if (shift?.daysOfWeek?.length && !shift.daysOfWeek.includes(dayCode)) {
+  if (citedToday && (citacionArea || requiresCitacion || !centro)) {
+    if (hasShiftDays && !onShiftDay) {
       return { expected: false, reason: 'fuera_dia_turno' };
     }
-    return {
-      expected: true,
-      entryTime: shift?.timeWindow?.from || '07:00',
-      reason: 'citacion_hoy'
-    };
+    return { expected: true, entryTime, reason: 'citacion_hoy' };
   }
 
-  if (requiresCitacion) {
-    return { expected: false, reason: 'sin_citacion_hoy' };
-  }
-
-  if (policy === 'permanent_shift' || (shift?.daysOfWeek?.length && policy === 'permanent')) {
-    if (!shift?.daysOfWeek?.includes(dayCode)) {
-      return { expected: false, reason: 'fuera_dia_turno' };
+  if (!requiresCitacion && !citacionArea) {
+    if (hasShiftDays) {
+      if (!onShiftDay) {
+        return { expected: false, reason: 'fuera_dia_turno' };
+      }
+      return { expected: true, entryTime, reason: 'turno_hoy' };
     }
-    return {
-      expected: true,
-      entryTime: shift?.timeWindow?.from || '07:00',
-      reason: 'turno_hoy'
-    };
-  }
 
-  if (policy === 'permanent' && shift?.daysOfWeek?.length) {
-    if (!shift.daysOfWeek.includes(dayCode)) {
-      return { expected: false, reason: 'fuera_dia_turno' };
+    if (policy === 'permanent_shift' || policy === 'permanent') {
+      return { expected: true, entryTime, reason: 'permanente_sin_turno' };
     }
-    return {
-      expected: true,
-      entryTime: shift?.timeWindow?.from || '07:00',
-      reason: 'permanente_turno'
-    };
+
+    return { expected: false, reason: 'sin_turno' };
   }
 
-  return { expected: false, reason: 'sin_turno_o_politica' };
+  if (policy === 'permanent_shift' && hasShiftDays && onShiftDay) {
+    return { expected: true, entryTime, reason: 'turno_hoy' };
+  }
+
+  return { expected: false, reason: 'sin_citacion_hoy' };
 };
 
 const isPastEntryDeadline = (entryTime, toleranceMinutes, referenceDate) => {
@@ -208,6 +192,9 @@ const getMissingAttendanceAlerts = async (options = {}) => {
   let pendingCount = 0;
 
   employees.forEach((employee) => {
+    const centro = employee.centroCosto || employee.company || '';
+    if (isCitacionRequiredArea(centro)) return;
+
     const evaluation = evaluateExpectedToday(employee, { dayCode, citacionesToday });
     if (!evaluation.expected) return;
 
@@ -243,7 +230,12 @@ const getMissingAttendanceAlerts = async (options = {}) => {
 
   missing.sort((a, b) => (a.entryTime || '').localeCompare(b.entryTime || '') || (a.name || '').localeCompare(b.name || ''));
 
-  const areas = buildAttendanceAreaSummary(employees, roster);
+  const plantEmployees = employees.filter((employee) => {
+    const centro = employee.centroCosto || employee.company || '';
+    return !isCitacionRequiredArea(centro);
+  });
+
+  const areas = buildAttendanceAreaSummary(plantEmployees, roster);
 
   return {
     date: dateString,
@@ -251,6 +243,8 @@ const getMissingAttendanceAlerts = async (options = {}) => {
     dayCode,
     toleranceMinutes,
     nominaTotal: employees.length,
+    plantNominaTotal: plantEmployees.length,
+    citacionNominaTotal: employees.length - plantEmployees.length,
     expectedCount,
     presentCount,
     absentCount,
@@ -260,11 +254,12 @@ const getMissingAttendanceAlerts = async (options = {}) => {
     areas,
     missing,
     citacionesHoy: citacionesToday.length,
+    scope: 'plant_turno',
     message: missing.length
       ? `${missing.length} persona(s) sin ingreso marcado`
       : expectedCount > 0
-        ? `Sin faltantes (${presentCount}/${expectedCount} presentes)`
-        : `Sin personal esperado hoy (${employees.length} en nómina · ${citacionesToday.length} citaciones)`
+        ? `Sin faltantes (${presentCount}/${expectedCount} en planta)`
+        : `Sin personal de planta esperado hoy (${plantEmployees.length} en nómina por turno)`
   };
 };
 
@@ -320,5 +315,12 @@ module.exports = {
   dismissAttendanceAlert,
   bulkDismissAttendance,
   evaluateExpectedToday,
-  hasIngresoToday
+  hasIngresoToday,
+  loadTodayEntries,
+  loadCitacionesToday,
+  loadDismissalsToday,
+  isPastEntryDeadline,
+  isDismissedToday,
+  normalizeLegajo,
+  normalizeNameKey
 };

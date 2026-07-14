@@ -1,12 +1,15 @@
 const { normalizeIdNumber } = require('./dniParser');
 const { buildAuthorizationRecord, todayDateString } = require('./authorizations');
+const { buildNameTokens } = require('./lib/nameUtils');
+const { normalizeLegajo, findMasterForCitacionRow } = require('./lib/personMatch');
+const { expandTransportRow } = require('./lib/transportCsvParser');
 
 const COLUMN_ALIASES = {
   type: ['tipo', 'type', 'categoria', 'clasificacion', 'tarcon__des', 'tarcon_des'],
   name: ['nombre', 'name', 'apellido y nombre', 'apellido_y_nombre', 'nombre completo', 'nombre_completo', 'empleado', 'persona', 'conductor', 'chofer', 'personal', 'per__des', 'per_des'],
   lastName: ['apellido', 'apellidos', 'lastname', 'last_name'],
   firstName: ['nombres', 'nombre_pila', 'firstname', 'first_name'],
-  legajo: ['legajo', 'nro_legajo', 'nro legajo', 'numero_legajo'],
+  legajo: ['legajo', 'nro_legajo', 'nro legajo', 'numero_legajo', 'per', 'per__cod', 'per_cod', 'cod_per', 'codigo', 'interno', 'nro_per'],
   idNumber: ['dni', 'documento', 'cuil', 'idnumber', 'id_number', 'nro documento', 'nro_documento', 'nro dni', 'nro_doc', 'nrodoc', 'numero_documento', 'num_documento', 'n_documento', 'doc', 'cedula', 'identificacion'],
   company: ['empresa', 'company', 'contratista', 'transporte', 'transportista', 'firma', 'proveedor', 'tarcon__des', 'tarcon_des'],
   destination: ['destino', 'destination', 'area', 'sector', 'lugar', 'planta', 'puesto', 'ubicacion', 'servicio', 'sector__des', 'sector_des'],
@@ -95,11 +98,11 @@ const buildPersonName = (row, get) => {
     .trim();
 
   if (combined && !HEADER_SKIP_VALUES.has(normalizeHeader(combined))) {
-    return combined;
+    return combined.replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
   }
 
   const fallbackName = fuzzyPickByKey(row, ['empleado', 'persona', 'conductor', 'chofer', 'personal']);
-  return fallbackName ? String(fallbackName).trim() : '';
+  return fallbackName ? String(fallbackName).replace(/,/g, ' ').replace(/\s+/g, ' ').trim() : '';
 };
 
 const excelDateToIso = (value) => {
@@ -158,7 +161,8 @@ const resolveIdNumberFromMaster = (legajo, name, defaults = {}) => {
 };
 
 const normalizeImportRow = (rawRow, defaults = {}) => {
-  const row = normalizeRowKeys(rawRow);
+  const expandedRow = expandTransportRow(rawRow);
+  const row = normalizeRowKeys(expandedRow);
   const get = (field) => pickValue(row, COLUMN_ALIASES[field].map(normalizeHeader));
 
   const typeRaw = String(get('type') || defaults.type || 'citacion').toLowerCase();
@@ -194,12 +198,14 @@ const normalizeImportRow = (rawRow, defaults = {}) => {
     || defaults.company
     || '';
 
-  const horaIngreso = pickValue(row, ['horacitacioningreso', 'horacitacion_ingreso']);
+  const horaIngreso = pickValue(row, ['horacitacioningreso', 'horacitacion_ingreso'])
+    || expandedRow.appointmentTime
+    || null;
   const notes = [get('notes'), horaIngreso ? `Hora ingreso: ${horaIngreso}` : '']
     .filter(Boolean)
     .join(' | ');
 
-  return {
+  let normalized = {
     type,
     name,
     idNumber,
@@ -209,8 +215,21 @@ const normalizeImportRow = (rawRow, defaults = {}) => {
     role,
     startDate,
     endDate,
-    notes
+    notes,
+    appointmentTime: horaIngreso || null
   };
+
+  const master = findMasterForCitacionRow(normalized, defaults);
+  if (master) {
+    normalized = {
+      ...normalized,
+      name: master.name || normalized.name,
+      legajo: master.legajoNormalized || master.legajo || normalized.legajo,
+      idNumber: master.idNumberNormalized || master.idNumber || normalized.idNumber
+    };
+  }
+
+  return normalized;
 };
 
 const isEmptyImportRow = (rawRow) =>
@@ -238,16 +257,29 @@ const parseImportRows = (rows, defaults = {}) => {
 const buildMasterLookups = (docs = []) => {
   const masterByLegajo = {};
   const masterByName = {};
+  const masterByNameKey = {};
+  const masterList = [];
 
   docs.forEach((doc) => {
     const data = typeof doc.data === 'function' ? doc.data() : doc;
-    const legajo = String(data.legajoNormalized || data.legajo || '').trim();
+    if (data.source && data.source !== 'nomina') return;
+    if (data.active === false) return;
+
+    masterList.push(data);
+
+    const legajoRaw = String(data.legajoNormalized || data.legajo || '').trim();
+    const legajoNorm = normalizeLegajo(legajoRaw);
+    if (legajoRaw) masterByLegajo[legajoRaw] = data;
+    if (legajoNorm) masterByLegajo[legajoNorm] = data;
+
+    const nameKey = data.nameKey || buildNameTokens(data.name);
+    if (nameKey) masterByNameKey[nameKey] = data;
+
     const nameLower = String(data.nameLower || data.name || '').trim().toLowerCase();
-    if (legajo) masterByLegajo[legajo] = data;
     if (nameLower) masterByName[nameLower] = data;
   });
 
-  return { masterByLegajo, masterByName };
+  return { masterByLegajo, masterByName, masterByNameKey, masterList };
 };
 
 module.exports = {

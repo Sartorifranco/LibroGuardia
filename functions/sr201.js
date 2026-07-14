@@ -66,8 +66,8 @@ const sendViaBridge = async (bridgeUrl, payload, bridgeSecret = '') => {
   return data;
 };
 
-const triggerRelay = async (config = {}) => {
-  if (config.enabled === false) {
+const triggerRelay = async (config = {}, { force = false } = {}) => {
+  if (config.enabled === false && !force) {
     return { triggered: false, skipped: true, message: 'Control de acceso deshabilitado' };
   }
 

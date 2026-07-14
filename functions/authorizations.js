@@ -1,5 +1,7 @@
 const { db, FieldValue } = require('./firestore');
 const { normalizeIdNumber } = require('./dniParser');
+const { normalizeLegajo } = require('./lib/personMatch');
+const { normalizePersonName, buildNameTokens, namesMatch } = require('./lib/nameUtils');
 
 const AUTHORIZATION_TYPES = ['citacion', 'visit', 'visita', 'temporal', 'permanent'];
 
@@ -28,27 +30,6 @@ const getAuthorizationLabel = (type) => {
 
 const todayDateString = () => new Date().toISOString().slice(0, 10);
 
-const normalizePersonName = (value = '') =>
-  String(value || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ');
-
-const buildNameTokens = (value = '') =>
-  normalizePersonName(value)
-    .split(/\s+/)
-    .filter((token) => token.length > 1)
-    .sort()
-    .join(' ');
-
-const namesMatch = (left, right) => {
-  const a = buildNameTokens(left);
-  const b = buildNameTokens(right);
-  return Boolean(a && b && a === b);
-};
-
 const dateInRange = (date, startDate, endDate) => {
   if (!startDate) return false;
   const end = endDate || startDate;
@@ -73,11 +54,12 @@ const buildAuthorizationRecord = ({
   source = 'import',
   active = true,
   daysOfWeek = null,
-  timeWindow = null
+  timeWindow = null,
+  appointmentTime = null
 }) => {
   const authType = normalizeAuthorizationType(type);
   const idNumberNormalized = normalizeIdNumber(idNumber);
-  const legajoNormalized = String(legajo || '').trim();
+  const legajoNormalized = normalizeLegajo(legajo) || String(legajo || '').trim();
   let resolvedName = String(name || '').trim();
   if (!resolvedName && legajoNormalized) {
     resolvedName = `Legajo ${legajoNormalized}`;
@@ -111,6 +93,9 @@ const buildAuthorizationRecord = ({
   const normalizedTimeWindow = timeWindow?.from && timeWindow?.to
     ? { from: String(timeWindow.from).slice(0, 5), to: String(timeWindow.to).slice(0, 5) }
     : null;
+  const normalizedAppointmentTime = appointmentTime
+    ? String(appointmentTime).slice(0, 5)
+    : null;
 
   const nameKey = buildNameTokens(resolvedName);
 
@@ -131,6 +116,7 @@ const buildAuthorizationRecord = ({
     startDate: normalizedStart,
     endDate: normalizedEnd,
     appointmentDate: authType === 'citacion' ? normalizedStart : null,
+    appointmentTime: authType === 'citacion' ? normalizedAppointmentTime : null,
     daysOfWeek: authType === 'permanent' && normalizedDays?.length ? normalizedDays : null,
     timeWindow: authType === 'permanent' ? normalizedTimeWindow : null,
     notes: (notes || '').trim(),
@@ -327,6 +313,24 @@ const listPlannedCitacionDates = async (fromDate, toDate) => {
   }));
 };
 
+const isExternalAuthorization = (item) => {
+  if (item.type === 'citacion') return false;
+  if (item.source === 'nomina') return false;
+  return ['visit', 'visita', 'temporal', 'permanent'].includes(item.type);
+};
+
+const listExternalAuthorizations = async (date) => {
+  const snap = await db.collection('authorizations').where('active', '==', true).get();
+  return snap.docs
+    .map(authorizationToJSON)
+    .filter((item) => {
+      if (!isExternalAuthorization(item)) return false;
+      if (item.type === 'permanent') return true;
+      return dateInRange(date, item.startDate, item.endDate || item.startDate);
+    })
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+};
+
 module.exports = {
   AUTHORIZATION_TYPES,
   normalizeAuthorizationType,
@@ -344,5 +348,7 @@ module.exports = {
   listAuthorizationsByDate,
   listAuthorizationsInRange,
   listPlannedCitacionDates,
+  listExternalAuthorizations,
+  isExternalAuthorization,
   authorizationToJSON
 };

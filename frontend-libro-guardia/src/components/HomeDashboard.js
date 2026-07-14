@@ -12,6 +12,7 @@ import { useLiveClock } from '../hooks/useLiveClock';
 import { getDashboardStats, formatEntryRow } from '../utils/dashboardStats';
 import FleetGatePanel from './FleetGatePanel';
 import AttendanceMissingPanel from './AttendanceMissingPanel';
+import CitadosPanel from './CitadosPanel';
 
 const QUICK_ACTIONS = [
   { id: 'personal', label: 'Registrar personal', icon: User },
@@ -27,6 +28,7 @@ function HomeDashboard({
   authToken,
   showFleetGps = false,
   showAttendanceAlerts = false,
+  showCitados = false,
   onGpsMovementRegistered,
   onAttendanceRegistered,
 }) {
@@ -45,6 +47,15 @@ function HomeDashboard({
           enabled
           pollSeconds={20}
           onMovementRegistered={onGpsMovementRegistered}
+        />
+      )}
+
+      {showCitados && (
+        <CitadosPanel
+          authToken={authToken}
+          enabled
+          pollSeconds={60}
+          onRegistered={onAttendanceRegistered}
         />
       )}
 

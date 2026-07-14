@@ -5,7 +5,8 @@ import {
   ArrowUpCircle,
   RefreshCw,
   MapPin,
-  ParkingCircle
+  ParkingCircle,
+  Radio
 } from 'lucide-react';
 import FleetGpsVehicleTable, { formatDistance, formatFleetTime } from './FleetGpsVehicleTable';
 
@@ -19,6 +20,7 @@ function FleetGatePanel({
   onMovementRegistered
 }) {
   const [transit, setTransit] = useState([]);
+  const [approaching, setApproaching] = useState([]);
   const [atGateStopped, setAtGateStopped] = useState([]);
   const [inPlantCount, setInPlantCount] = useState(0);
   const [vehicleCount, setVehicleCount] = useState(0);
@@ -43,6 +45,7 @@ function FleetGatePanel({
 
       const nextTransit = data.transit || data.alerts || [];
       setTransit(nextTransit);
+      setApproaching(data.approaching || []);
       setAtGateStopped(data.atGateStopped || []);
       setInPlantCount((data.inPlant || []).length);
       setVehicleCount(data.vehicleCount || 0);
@@ -84,18 +87,22 @@ function FleetGatePanel({
   const entrando = transit.filter((item) => item.direction === 'ingreso');
   const saliendo = transit.filter((item) => item.direction === 'egreso');
   const hasTransit = transit.length > 0;
+  const hasApproaching = approaching.length > 0;
+  const approachRadius = config?.approachRadiusMeters || 400;
 
   if (compact) {
-    if (!hasTransit && !error) return null;
+    if (!hasTransit && !hasApproaching && !error) return null;
     return (
-      <div className={`fleet-gps-alert${hasTransit ? ' fleet-gps-alert--active' : ''}`}>
+      <div className={`fleet-gps-alert${hasTransit || hasApproaching ? ' fleet-gps-alert--active' : ''}`}>
         <div className="fleet-gps-alert__header">
           <Truck size={22} />
           <div className="fleet-gps-alert__title-wrap">
             <p className="fleet-gps-alert__title">
               {hasTransit
                 ? `Portón: ${entrando.length} entrando · ${saliendo.length} saliendo`
-                : 'GPS de flota'}
+                : hasApproaching
+                  ? `GPS: ${approaching.length} llegando a planta`
+                  : 'GPS de flota'}
             </p>
             {config?.lastSyncAt && (
               <p className="fleet-gps-alert__meta">{formatFleetTime(config.lastSyncAt)}</p>
@@ -103,6 +110,20 @@ function FleetGatePanel({
           </div>
         </div>
         {error && <p className="fleet-gps-alert__error">{error}</p>}
+        {hasApproaching && !hasTransit && (
+          <div className="fleet-gps-alert__table">
+            <FleetGpsVehicleTable
+              vehicles={approaching.map((item) => ({
+                ...item,
+                name: item.approachLabel || `Llegando: ${item.name}`,
+                distanceMeters: item.centerDistanceMeters ?? item.distanceMeters
+              }))}
+              radiusMeters={approachRadius}
+              compact
+              maxHeightClass="fleet-gps-alert-scroll"
+            />
+          </div>
+        )}
         {hasTransit && (
           <div className="fleet-gps-alert__table">
             <FleetGpsVehicleTable
@@ -121,7 +142,7 @@ function FleetGatePanel({
   }
 
   return (
-    <section className={`fleet-gate-panel${hasTransit ? ' fleet-gate-panel--active' : ''}`}>
+    <section className={`fleet-gate-panel${hasTransit || hasApproaching ? ' fleet-gate-panel--active' : ''}`}>
       <div className="fleet-gate-panel__header">
         <div>
           <p className="fleet-gate-panel__kicker">Flota interna · UBIKA</p>
@@ -164,6 +185,13 @@ function FleetGatePanel({
             <p className="fleet-gate-kpi__label">En planta (quietos)</p>
           </div>
         </article>
+        <article className={`fleet-gate-kpi${hasApproaching ? ' fleet-gate-kpi--approach' : ''}`}>
+          <Radio size={20} />
+          <div>
+            <p className="fleet-gate-kpi__value">{approaching.length}</p>
+            <p className="fleet-gate-kpi__label">Llegando ({approachRadius} m)</p>
+          </div>
+        </article>
         <article className="fleet-gate-kpi">
           <MapPin size={20} />
           <div>
@@ -180,6 +208,37 @@ function FleetGatePanel({
           {config?.lastSyncAt ? ` · ${formatFleetTime(config.lastSyncAt)}` : ''}
           {config?.autoRegisterMovements !== false ? ' · Registro automático activo' : ' · Solo alerta'}
         </p>
+      )}
+
+      {hasApproaching && (
+        <div className="fleet-gate-approaching">
+          <h4 className="fleet-gps-section-title">Acercándose a planta</h4>
+          <p className="fleet-gate-approaching__hint">
+            Móviles en movimiento dentro de {approachRadius} m que aún no ingresaron a planta ni portón.
+            Visible para guardia y supervisión con permiso GPS.
+          </p>
+          <div className="fleet-gate-transit-list">
+            {approaching.map((item) => (
+              <article
+                key={`approach-${item.deviceId}-${item.centerDistanceMeters}`}
+                className="fleet-gate-card fleet-gate-card--approach"
+              >
+                <div className="fleet-gate-card__badge fleet-gate-card__badge--approach">
+                  <Radio size={18} />
+                  Llegando
+                </div>
+                <div className="fleet-gate-card__body">
+                  <p className="fleet-gate-card__name">{item.name}</p>
+                  <p className="fleet-gate-card__meta">
+                    <span className="fleet-gps-plate">{item.plate || 'Sin patente'}</span>
+                    <span>{formatDistance(item.centerDistanceMeters ?? item.distanceMeters)}</span>
+                    <span>En movimiento</span>
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
       )}
 
       {hasTransit ? (

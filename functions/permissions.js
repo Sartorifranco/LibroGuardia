@@ -16,8 +16,12 @@ const PERMISSION_KEYS = [
   'users.create',
   'users.edit',
   'users.delete',
+  'roles.view',
+  'roles.manage',
   'settings.permissions',
   'access.control',
+  'access.doors.manage',
+  'access.manual_open',
   'access.manual_override',
   'access.exceptional_entry',
   'access.kiosk',
@@ -25,10 +29,29 @@ const PERMISSION_KEYS = [
   'fleet.gps.read',
   'master.nomina.read',
   'master.nomina.write',
-  'attendance.alerts.read'
+  'attendance.alerts.read',
+  'monitoring.vehicles.manage',
+  'monitoring.doors.panel',
+  'guard.doors.panel'
+];
+
+const TECHNICAL_PERMISSIONS = [
+  'access.control',
+  'access.doors.manage',
+  'settings.permissions',
+  'roles.manage'
 ];
 
 const DEFAULT_ROLE_PERMISSIONS = {
+  monitoreo: [
+    'entries.create',
+    'entries.view',
+    'reports.export',
+    'master.vehicles.read',
+    'master.vehicles.quick_authorize',
+    'monitoring.vehicles.manage',
+    'monitoring.doors.panel'
+  ],
   guardia: [
     'entries.create',
     'entries.view',
@@ -38,11 +61,12 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'master.citaciones.read',
     'master.citaciones.preregister',
     'master.vehicles.read',
-    'master.vehicles.quick_authorize',
     'access.kiosk',
+    'access.manual_open',
     'access.exceptional_entry',
     'fleet.gps.read',
-    'attendance.alerts.read'
+    'attendance.alerts.read',
+    'guard.doors.panel'
   ],
   supervisor: [
     'entries.create',
@@ -52,16 +76,26 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'master.personal.write',
     'master.citaciones.read',
     'master.citaciones.write',
+    'master.citaciones.preregister',
     'master.nomina.read',
     'master.nomina.write',
     'master.vehicles.read',
     'master.vehicles.write',
     'master.vehicles.quick_authorize',
+    'monitoring.vehicles.manage',
+    'monitoring.doors.panel',
+    'guard.doors.panel',
     'fleet.upload',
+    'fleet.gps.read',
     'users.view',
+    'users.create',
     'users.edit',
     'users.delete',
+    'roles.view',
     'access.manual_override',
+    'access.manual_open',
+    'access.kiosk',
+    'access.exceptional_entry',
     'attendance.alerts.read'
   ],
   admin: PERMISSION_KEYS.slice()
@@ -78,6 +112,7 @@ const resolvePermissions = (role, customPermissions = [], roleTemplates = null) 
 
 module.exports = {
   PERMISSION_KEYS,
+  TECHNICAL_PERMISSIONS,
   DEFAULT_ROLE_PERMISSIONS,
   normalizeIdNumber,
   normalizePlate,

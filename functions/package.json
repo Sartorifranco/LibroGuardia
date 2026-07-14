@@ -7,7 +7,7 @@
   },
   "scripts": {
     "create-admin": "node create-admin.js",
-    "test": "node --test test/accessValidation.test.js test/accessControl.test.js test/fleetGps.test.js test/nomina.test.js test/centroCostoGroups.test.js"
+    "test": "node --test test/accessValidation.test.js test/accessControl.test.js test/fleetGps.test.js test/geofence.test.js test/nomina.test.js test/centroCostoGroups.test.js test/personMatch.test.js test/transportCsvParser.test.js test/sr201.test.js test/doorController.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

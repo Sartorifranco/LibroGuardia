@@ -27,13 +27,11 @@ test('buildAttendanceAreaSummary incluye todas las areas de nomina', () => {
     { areaKey: 'transporte', centroCosto: 'BACAR SA - Transporte', status: 'present' }
   ];
   const areas = buildAttendanceAreaSummary(all, roster);
-  assert.equal(areas.length, 2);
+  assert.equal(areas.length, 1);
   const transporte = areas.find((a) => a.label === 'Transporte');
-  const sistemas = areas.find((a) => a.label === 'Sistemas');
   assert.equal(transporte.totalInNomina, 1);
   assert.equal(transporte.expectedToday, 1);
-  assert.equal(sistemas.totalInNomina, 2);
-  assert.equal(sistemas.expectedToday, 0);
+  assert.equal(areas.find((a) => a.label === 'Sistemas'), undefined);
 });
 
 test('extractAreaShort corrige administracion truncada', () => {

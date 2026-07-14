@@ -12,12 +12,38 @@ const {
   resolvePermissions
 } = require('./permissions');
 const {
+  listRoles,
+  getRoleById,
+  createRole,
+  updateRole,
+  deleteRole,
+  listValidRoleIds,
+  getRoleTemplatesFromFirestore,
+  canManageTargetRole
+} = require('./roles');
+const {
   DEFAULT_ACCESS_CONTROL,
   getAccessControlConfig,
+  logAccessEvent,
+  saveGlobalAccessSettings
+} = require('./lib/accessControlStore');
+const {
+  getDoorsConfig,
+  saveDoorsConfig,
+  AUTH_METHODS,
+  getDoorsConfigMeta
+} = require('./lib/doorsConfig');
+const {
+  openDoor,
+  listActiveDoors,
+  getAirlockState,
+  resetAirlockState
+} = require('./doorController');
+const {
   evaluatePersonalAccess,
   triggerAccessIfAuthorized,
   triggerRelay,
-  logAccessEvent,
+  manualOpenDoor,
   processKioskScan,
   validarAcceso
 } = require('./accessControl');
@@ -26,6 +52,7 @@ const {
   listAuthorizationsByDate,
   listAuthorizationsInRange,
   listPlannedCitacionDates,
+  listExternalAuthorizations,
   resolveAuthorization,
   getAuthorizationLabel,
   AUTHORIZATION_TYPES
@@ -36,6 +63,8 @@ const {
   saveCitacionesBridgeConfig,
   verifyCitacionesBridgeRequest,
   syncAuthorizationsFromBridge,
+  relinkCitacionesWithNomina,
+  reprocessImportBatch,
   listCitacionesImports,
   getCitacionesImportById
 } = require('./citacionesBridge');
@@ -49,7 +78,9 @@ const {
   getFleetGpsConfig,
   publicFleetGpsConfig,
   saveFleetGpsConfig,
-  fetchNearbyFleetAlerts
+  saveFleetGpsGeofence,
+  fetchNearbyFleetAlerts,
+  fetchFleetLiveSnapshot
 } = require('./fleetGps');
 const { importNominaRows, listNominaPersonal } = require('./nominaImport');
 const {
@@ -57,6 +88,8 @@ const {
   dismissAttendanceAlert,
   bulkDismissAttendance
 } = require('./attendanceAlerts');
+const { seedInitialUsers, isBootstrapCompleted, INITIAL_USERS } = require('./seedUsers');
+const { getCitadosToday } = require('./citadosToday');
 
 const app = express();
 
@@ -87,11 +120,7 @@ const getJwtSecret = () => {
   return secret;
 };
 
-const getRoleTemplates = async () => {
-  const snap = await db.collection('settings').doc('rolePermissions').get();
-  if (!snap.exists) return DEFAULT_ROLE_PERMISSIONS;
-  return { ...DEFAULT_ROLE_PERMISSIONS, ...snap.data() };
-};
+const getRoleTemplates = async () => getRoleTemplatesFromFirestore();
 
 const getUserPermissions = async (userData) => {
   const roleTemplates = await getRoleTemplates();
@@ -168,6 +197,30 @@ const requirePermission = (permission) => async (req, res, next) => {
   }
 };
 
+const requireAnyPermission = (permissionList = []) => async (req, res, next) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: 'No token, autorización denegada' });
+    }
+    if (req.user.role === 'admin') return next();
+
+    const snap = await db.collection('users').doc(req.user.id).get();
+    if (!snap.exists) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+
+    const permissions = await getUserPermissions(snap.data());
+    const allowed = permissionList.some((permission) => permissions.includes(permission));
+    if (!allowed) {
+      return res.status(403).json({ message: 'Acceso denegado: permiso insuficiente' });
+    }
+    req.userPermissions = permissions;
+    next();
+  } catch (err) {
+    res.status(500).json({ message: 'Error al validar permisos', error: err.message });
+  }
+};
+
 const todayDateString = () => new Date().toISOString().slice(0, 10);
 
 const validateEntryPayload = (type, body) => {
@@ -218,42 +271,53 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/setup/initial-users', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username?.trim() || !password) {
-      return res.status(400).json({ message: 'Usuario y contraseña son obligatorios' });
+    const setupKey = req.headers['x-setup-key'] || req.body?.setupKey;
+    const expectedKey = process.env.SETUP_KEY || 'bacar-lg-setup-2026';
+    if (!setupKey || setupKey !== expectedKey) {
+      return res.status(403).json({ message: 'Clave de setup inválida' });
     }
 
-    const normalizedUsername = username.trim();
-    const userRef = db.collection('users').doc(normalizedUsername);
-    const existing = await userRef.get();
-    if (existing.exists) {
-      return res.status(400).json({ message: 'El nombre de usuario ya existe' });
+    const force = req.body?.force === true;
+    if (!force && await isBootstrapCompleted()) {
+      return res.status(403).json({
+        message: 'Bootstrap ya ejecutado. Use force: true para actualizar usuarios iniciales.'
+      });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-    const userData = {
-      username: normalizedUsername,
-      password: passwordHash,
-      role: 'guardia',
-      active: true,
-      createdAt: FieldValue.serverTimestamp()
-    };
-    await userRef.set(userData);
+    const results = await seedInitialUsers();
+    const testUsers = INITIAL_USERS
+      .filter((user) => user.username.startsWith('prueba.'))
+      .map(({ username, password, role, label }) => ({ username, password, role, label }));
 
-    res.status(201).json({
-      message: 'Usuario registrado exitosamente',
-      user: { id: userRef.id, username: normalizedUsername, role: 'guardia', active: true }
+    res.json({
+      message: force ? 'Usuarios iniciales actualizados' : 'Usuarios iniciales cargados',
+      results,
+      admins: INITIAL_USERS
+        .filter((user) => user.role === 'admin')
+        .map(({ username, role }) => ({ username, role })),
+      testUsers
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al registrar usuario', error: err.message });
+    res.status(500).json({ message: 'Error en bootstrap de usuarios', error: err.message });
   }
+});
+
+app.post('/api/auth/register', (_req, res) => {
+  res.status(403).json({
+    message: 'El registro público está deshabilitado. Solicite a un administrador que cree su usuario.'
+  });
 });
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const username = String(req.body?.username || '').trim().toLowerCase();
+    const password = req.body?.password;
+    if (!username || !password) {
+      return res.status(400).json({ message: 'Usuario y contraseña son obligatorios' });
+    }
+
     const userRef = db.collection('users').doc(username);
     const snap = await userRef.get();
 
@@ -272,6 +336,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const permissions = await getUserPermissions(user);
+    const roleMeta = await getRoleById(user.role);
     const token = jwt.sign({ id: snap.id, role: user.role, permissions }, getJwtSecret(), { expiresIn: '8h' });
     res.json({
       token,
@@ -279,6 +344,8 @@ app.post('/api/auth/login', async (req, res) => {
         id: snap.id,
         username: user.username,
         role: user.role,
+        roleLabel: roleMeta?.label || user.role,
+        dashboardProfile: roleMeta?.dashboardProfile || user.role,
         active: user.active !== false,
         permissions,
         customPermissions: user.permissions || []
@@ -296,7 +363,14 @@ app.get('/api/auth/me', auth, async (req, res) => {
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
     const permissions = await getUserPermissions(snap.data());
-    res.json({ user: userToJSON(snap, permissions) });
+    const roleMeta = await getRoleById(snap.data().role);
+    res.json({
+      user: {
+        ...userToJSON(snap, permissions),
+        roleLabel: roleMeta?.label || snap.data().role,
+        dashboardProfile: roleMeta?.dashboardProfile || snap.data().role
+      }
+    });
   } catch (err) {
     res.status(500).json({ message: 'Error al obtener datos del usuario', error: err.message });
   }
@@ -319,15 +393,58 @@ app.put('/api/admin/permissions/roles', auth, requirePermission('settings.permis
     }
 
     const sanitized = {};
-    Object.entries(roles).forEach(([role, permissions]) => {
+    const batch = db.batch();
+    Object.entries(roles).forEach(([roleId, permissions]) => {
       if (!Array.isArray(permissions)) return;
-      sanitized[role] = permissions.filter((perm) => PERMISSION_KEYS.includes(perm));
+      sanitized[roleId] = permissions.filter((perm) => PERMISSION_KEYS.includes(perm));
+      const ref = db.collection('roles').doc(roleId);
+      batch.set(ref, {
+        permissions: sanitized[roleId],
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
     });
 
+    await batch.commit();
     await db.collection('settings').doc('rolePermissions').set(sanitized, { merge: true });
     res.json({ message: 'Permisos por rol actualizados', roles: sanitized });
   } catch (err) {
     res.status(500).json({ message: 'Error al actualizar permisos por rol', error: err.message });
+  }
+});
+
+app.get('/api/admin/roles', auth, requireAnyPermission(['roles.view', 'roles.manage', 'settings.permissions']), async (_req, res) => {
+  try {
+    const roles = await listRoles();
+    res.json({ roles, permissionKeys: PERMISSION_KEYS });
+  } catch (err) {
+    res.status(500).json({ message: 'Error al obtener roles', error: err.message });
+  }
+});
+
+app.post('/api/admin/roles', auth, requirePermission('roles.manage'), async (req, res) => {
+  try {
+    const role = await createRole(req.body || {});
+    res.status(201).json({ message: 'Rol creado exitosamente', role });
+  } catch (err) {
+    res.status(400).json({ message: err.message || 'Error al crear rol' });
+  }
+});
+
+app.put('/api/admin/roles/:id', auth, requirePermission('roles.manage'), async (req, res) => {
+  try {
+    const role = await updateRole(req.params.id, req.body || {});
+    res.json({ message: 'Rol actualizado', role });
+  } catch (err) {
+    res.status(400).json({ message: err.message || 'Error al actualizar rol' });
+  }
+});
+
+app.delete('/api/admin/roles/:id', auth, requirePermission('roles.manage'), async (req, res) => {
+  try {
+    const result = await deleteRole(req.params.id);
+    res.json({ message: 'Rol eliminado', role: result });
+  } catch (err) {
+    res.status(400).json({ message: err.message || 'Error al eliminar rol' });
   }
 });
 
@@ -355,17 +472,23 @@ app.put('/api/admin/users/:id/permissions', auth, requirePermission('settings.pe
   }
 });
 
-app.post('/api/admin/users', auth, authorize('admin'), async (req, res) => {
+app.post('/api/admin/users', auth, requirePermission('users.create'), async (req, res) => {
   try {
     const { username, password, role } = req.body;
     if (!username?.trim() || !password) {
       return res.status(400).json({ message: 'Usuario y contraseña son obligatorios' });
     }
-    if (!['guardia', 'admin', 'supervisor'].includes(role)) {
+
+    const validRoles = await listValidRoleIds();
+    if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Rol inválido especificado.' });
     }
 
-    const normalizedUsername = username.trim();
+    if (!(await canManageTargetRole(req.user.role, role))) {
+      return res.status(403).json({ message: 'No tiene permisos para asignar ese rol.' });
+    }
+
+    const normalizedUsername = String(username || '').trim().toLowerCase();
     const userRef = db.collection('users').doc(normalizedUsername);
     if ((await userRef.get()).exists) {
       return res.status(400).json({ message: 'El nombre de usuario ya existe' });
@@ -389,7 +512,7 @@ app.post('/api/admin/users', auth, authorize('admin'), async (req, res) => {
   }
 });
 
-app.get('/api/admin/users', auth, authorize(['admin', 'supervisor']), async (req, res) => {
+app.get('/api/admin/users', auth, requirePermission('users.view'), async (req, res) => {
   try {
     const snap = await db.collection('users').orderBy('username').get();
     res.json({ users: snap.docs.map(userToJSON) });
@@ -398,7 +521,7 @@ app.get('/api/admin/users', auth, authorize(['admin', 'supervisor']), async (req
   }
 });
 
-app.put('/api/admin/users/:id', auth, authorize(['admin', 'supervisor']), async (req, res) => {
+app.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async (req, res) => {
   try {
     const { id } = req.params;
     const { role, password, active } = req.body;
@@ -410,29 +533,25 @@ app.put('/api/admin/users/:id', auth, authorize(['admin', 'supervisor']), async 
     }
 
     const userToUpdate = snap.data();
+    if (!(await canManageTargetRole(req.user.role, userToUpdate.role))) {
+      return res.status(403).json({ message: 'Acceso denegado: no puede editar usuarios con ese rol.' });
+    }
+
     const updates = {};
 
-    if (req.user.role === 'admin') {
-      if (role) {
-        if (!['guardia', 'admin', 'supervisor'].includes(role)) {
-          return res.status(400).json({ message: 'Rol inválido' });
-        }
-        updates.role = role;
+    if (role) {
+      const validRoles = await listValidRoleIds();
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ message: 'Rol inválido' });
       }
-      if (password) updates.password = await bcrypt.hash(password, 10);
-      if (typeof active === 'boolean') updates.active = active;
-    } else if (req.user.role === 'supervisor') {
-      if (userToUpdate.role !== 'guardia') {
-        return res.status(403).json({ message: 'Acceso denegado: Un supervisor solo puede editar usuarios con rol "guardia".' });
+      if (!(await canManageTargetRole(req.user.role, role))) {
+        return res.status(403).json({ message: 'No tiene permisos para asignar ese rol.' });
       }
-      if (role && userToUpdate.role !== role) {
-        return res.status(403).json({ message: 'Acceso denegado: Un supervisor no puede cambiar el rol de un usuario.' });
-      }
-      if (password) updates.password = await bcrypt.hash(password, 10);
-      if (typeof active === 'boolean') updates.active = active;
-    } else {
-      return res.status(403).json({ message: 'Acceso denegado: No tiene permisos para editar usuarios.' });
+      updates.role = role;
     }
+
+    if (password) updates.password = await bcrypt.hash(password, 10);
+    if (typeof active === 'boolean' && req.user.id !== id) updates.active = active;
 
     await userRef.update(updates);
     const updated = await userRef.get();
@@ -442,7 +561,7 @@ app.put('/api/admin/users/:id', auth, authorize(['admin', 'supervisor']), async 
   }
 });
 
-app.delete('/api/admin/users/:id', auth, authorize(['admin', 'supervisor']), async (req, res) => {
+app.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), async (req, res) => {
   try {
     const { id } = req.params;
     if (req.user.id === id) {
@@ -456,17 +575,11 @@ app.delete('/api/admin/users/:id', auth, authorize(['admin', 'supervisor']), asy
     }
 
     const userToDelete = snap.data();
-    if (req.user.role === 'admin') {
-      await userRef.delete();
-    } else if (req.user.role === 'supervisor') {
-      if (userToDelete.role !== 'guardia') {
-        return res.status(403).json({ message: 'Acceso denegado: Un supervisor solo puede eliminar usuarios con rol "guardia".' });
-      }
-      await userRef.delete();
-    } else {
-      return res.status(403).json({ message: 'Acceso denegado: No tiene permisos para eliminar usuarios.' });
+    if (!(await canManageTargetRole(req.user.role, userToDelete.role))) {
+      return res.status(403).json({ message: 'Acceso denegado: no puede eliminar usuarios con ese rol.' });
     }
 
+    await userRef.delete();
     res.json({ message: 'Usuario eliminado exitosamente' });
   } catch (err) {
     res.status(500).json({ message: 'Error al eliminar usuario', error: err.message });
@@ -648,6 +761,12 @@ const listAuthorizationsHandler = async (req, res) => {
     }
 
     const targetDate = date || todayDateString();
+
+    if (req.query.scope === 'external') {
+      const authorizations = await listExternalAuthorizations(targetDate);
+      return res.json({ authorizations, date: targetDate, mode: 'external' });
+    }
+
     const authorizations = await listAuthorizationsByDate(targetDate, type || null);
     res.json({ authorizations, date: targetDate, mode: 'day' });
   } catch (err) {
@@ -677,6 +796,49 @@ app.get('/api/admin/citaciones-imports/:id', auth, requirePermission('master.cit
     res.json({ import: batch });
   } catch (err) {
     res.status(500).json({ message: 'Error al obtener importación', error: err.message });
+  }
+});
+
+app.post('/api/admin/citaciones/relink-nomina', auth, requirePermission('master.citaciones.write'), async (req, res) => {
+  try {
+    const dateString = req.body?.date || req.query?.date || undefined;
+    const result = await relinkCitacionesWithNomina({ dateString });
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error al vincular citaciones con nómina',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/admin/citaciones/sync-upload', auth, requirePermission('master.citaciones.write'), async (req, res) => {
+  try {
+    const { data, sourceFile, force } = req.body || {};
+    const result = await syncAuthorizationsFromBridge({
+      data,
+      sourceFile: sourceFile || 'manual-upload.xlsx',
+      force: force !== false,
+      defaults: { importedBy: 'admin-upload' }
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error al importar citaciones',
+      details: err.details || undefined
+    });
+  }
+});
+
+app.post('/api/admin/citaciones-imports/:id/reprocess', auth, requirePermission('master.citaciones.write'), async (req, res) => {
+  try {
+    const result = await reprocessImportBatch(req.params.id, { force: req.body?.force !== false });
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error al reprocesar importación',
+      error: err.message
+    });
   }
 });
 
@@ -939,16 +1101,107 @@ app.put('/api/admin/access-control', auth, requirePermission('access.control'), 
   }
 });
 
-app.post('/api/access/test-relay', auth, requirePermission('access.control'), async (_req, res) => {
+app.post('/api/access/test-relay', auth, requireAnyPermission(['access.control', 'access.doors.manage']), async (req, res) => {
   try {
-    const config = await getAccessControlConfig();
-    if (!config.enabled) {
-      return res.status(400).json({ message: 'Habilite el control de acceso antes de probar el relevador' });
+    const doorsConfig = await getDoorsConfig();
+    const doorId = req.body?.doorId || doorsConfig.defaultDoorId || doorsConfig.doors?.[0]?.id;
+    if (!doorId) {
+      return res.status(400).json({ message: 'No hay puertas configuradas para probar' });
     }
-    const relay = await triggerRelay(config);
-    res.json({ message: 'Pulso de prueba enviado al SR201', relay });
+    const result = await openDoor({
+      doorId,
+      username: req.user?.username,
+      manual: true,
+      bypassAirlock: true,
+      force: true,
+      reason: 'test_relay'
+    });
+    res.json({ message: 'Pulso de prueba enviado', ...result });
   } catch (err) {
     res.status(500).json({ message: 'Error al probar relevador SR201', error: err.message });
+  }
+});
+
+app.post('/api/guard/open-door', auth, requirePermission('access.manual_open'), async (req, res) => {
+  try {
+    const result = await manualOpenDoor({
+      username: req.user?.username || req.user?.id,
+      userId: req.user?.id || null,
+      reason: req.body?.reason || 'apertura_manual_guardia',
+      doorId: req.body?.doorId || null,
+      bypassAirlock: req.body?.bypassAirlock === true
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error al abrir la puerta',
+      error: err.message,
+      airlock: err.airlock || undefined
+    });
+  }
+});
+
+app.get('/api/guard/doors', auth, requirePermission('access.manual_open'), async (_req, res) => {
+  try {
+    res.json(await listActiveDoors());
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.manage', 'access.control']), async (_req, res) => {
+  try {
+    const [config, globalAccess, meta] = await Promise.all([
+      getDoorsConfig(),
+      getAccessControlConfig(),
+      getDoorsConfigMeta()
+    ]);
+    res.json({
+      config,
+      globalAccess,
+      authMethods: AUTH_METHODS,
+      meta: {
+        ...meta,
+        legacyFallback: !meta.hasStoredDoors
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.manage', 'access.control']), async (req, res) => {
+  try {
+    const { globalAccess, ...doorsPayload } = req.body || {};
+    const config = await saveDoorsConfig(doorsPayload);
+    let savedGlobalAccess = null;
+    if (globalAccess && typeof globalAccess === 'object') {
+      savedGlobalAccess = await saveGlobalAccessSettings(globalAccess);
+    }
+    res.json({
+      message: 'Configuración de puertas y acceso guardada',
+      config,
+      globalAccess: savedGlobalAccess || await getAccessControlConfig()
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get('/api/guard/airlock/:groupId', auth, requirePermission('access.manual_open'), async (req, res) => {
+  try {
+    res.json({ state: await getAirlockState(req.params.groupId) });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post('/api/guard/airlock/:groupId/reset', auth, requirePermission('access.doors.manage'), async (req, res) => {
+  try {
+    await resetAirlockState(req.params.groupId, req.body?.reason || 'manual_reset');
+    res.json({ message: 'Estanco reiniciado', state: await getAirlockState(req.params.groupId) });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -1016,7 +1269,10 @@ app.post('/api/guard/exceptional-entry', auth, requirePermission('access.excepti
 
 app.get('/api/guard/fleet-gps/alerts', auth, requirePermission('fleet.gps.read'), async (req, res) => {
   try {
-    const result = await fetchNearbyFleetAlerts(db, FieldValue, { userId: req.user.id });
+    const result = await fetchNearbyFleetAlerts(db, FieldValue, {
+      userId: req.user.id,
+      username: req.user.username
+    });
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: 'Error al consultar GPS de flota', error: err.message });
@@ -1041,17 +1297,63 @@ app.put('/api/admin/fleet-gps', auth, requirePermission('access.control'), async
   }
 });
 
+app.put('/api/admin/fleet-gps/geofence', auth, requirePermission('access.control'), async (req, res) => {
+  try {
+    const config = await saveFleetGpsGeofence(db, FieldValue, req.body || {});
+    res.json({ message: 'Geocercas del mapa guardadas', config: publicFleetGpsConfig(config) });
+  } catch (err) {
+    res.status(500).json({ message: 'Error al guardar geocercas', error: err.message });
+  }
+});
+
 app.post('/api/admin/fleet-gps/test', auth, requirePermission('access.control'), async (req, res) => {
   try {
     const result = await fetchNearbyFleetAlerts(db, FieldValue, {
       force: true,
       includeNearest: true,
       userId: req.user.id,
+      username: req.user.username,
       skipAutoRegister: req.body?.skipAutoRegister !== false
     });
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: 'Error al probar GPS UBIKA', error: err.message });
+  }
+});
+
+app.get('/api/admin/fleet-gps/live', auth, requirePermission('access.control'), async (req, res) => {
+  try {
+    const parseQueryNumber = (value) => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const num = Number(value);
+      return Number.isNaN(num) ? undefined : num;
+    };
+    const parseQueryJson = (value) => {
+      if (!value) return undefined;
+      try {
+        return JSON.parse(value);
+      } catch (_err) {
+        return undefined;
+      }
+    };
+    const result = await fetchFleetLiveSnapshot(db, {
+      guardiaLat: parseQueryNumber(req.query.guardiaLat),
+      guardiaLng: parseQueryNumber(req.query.guardiaLng),
+      geofenceMode: req.query.geofenceMode,
+      gatePolygons: parseQueryJson(req.query.gatePolygons),
+      plantPolygon: parseQueryJson(req.query.plantPolygon),
+      gateRadiusMeters: parseQueryNumber(req.query.gateRadiusMeters),
+      plantRadiusMeters: parseQueryNumber(req.query.plantRadiusMeters),
+      minSpeedKnots: parseQueryNumber(req.query.minSpeedKnots),
+      requireMotion: req.query.requireMotion === 'false'
+        ? false
+        : req.query.requireMotion === 'true'
+          ? true
+          : undefined
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: 'Error al obtener mapa GPS', error: err.message });
   }
 });
 
@@ -1093,6 +1395,15 @@ app.get('/api/guard/attendance/missing', auth, requirePermission('attendance.ale
     res.json(result);
   } catch (err) {
     res.status(500).json({ message: 'Error al consultar faltantes de ingreso', error: err.message });
+  }
+});
+
+app.get('/api/guard/citados/today', auth, requirePermission('attendance.alerts.read'), async (_req, res) => {
+  try {
+    const result = await getCitadosToday();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: 'Error al consultar citados del día', error: err.message });
   }
 });
 
@@ -1250,7 +1561,9 @@ app.post('/api/access/kiosk-scan', auth, async (req, res) => {
 
     const result = await processKioskScan({
       rawData,
-      username: req.user.id
+      username: req.user.id,
+      doorId: req.body?.doorId || null,
+      readerId: req.body?.readerId || 'default'
     });
 
     res.json(result);
@@ -1451,9 +1764,9 @@ app.post('/api/master-data/vehicles', auth, requirePermission('master.vehicles.w
   }
 });
 
-app.post('/api/master-data/vehicles/quick-authorize', auth, requirePermission('master.vehicles.quick_authorize'), async (req, res) => {
+app.post('/api/master-data/vehicles/quick-authorize', auth, requireAnyPermission(['master.vehicles.quick_authorize', 'monitoring.vehicles.manage']), async (req, res) => {
   try {
-    const { plate, brand, company, driver } = req.body;
+    const { plate, brand, company, driver, driverDni, companions, notes, gateProfile } = req.body;
     const plateNormalized = normalizePlate(plate);
     if (!plateNormalized) {
       return res.status(400).json({ message: 'La patente es obligatoria' });
@@ -1464,16 +1777,28 @@ app.post('/api/master-data/vehicles/quick-authorize', auth, requirePermission('m
       .limit(1)
       .get();
 
+    const normalizedCompanions = Array.isArray(companions)
+      ? companions
+        .map((item) => ({
+          name: String(item?.name || item || '').trim(),
+          dni: String(item?.dni || '').trim()
+        }))
+        .filter((item) => item.name)
+      : [];
+
     const vehicleData = {
       plate: plate.trim(),
       plateNormalized,
       brand: brand?.trim() || '',
       company: company?.trim() || '',
       driver: driver?.trim() || '',
+      driverDni: driverDni?.trim() || '',
+      companions: normalizedCompanions,
+      gateProfile: gateProfile?.trim() || 'monitoreo',
       authorized: true,
       authorizedBy: req.user.id,
       authorizedAt: FieldValue.serverTimestamp(),
-      notes: 'Autorización rápida en guardia'
+      notes: notes?.trim() || 'Autorización rápida en puesto'
     };
 
     let vehicleRef;

@@ -81,6 +81,25 @@ const isWithinTimeWindow = (timeWindow, toleranceMinutes = 0, referenceDate = ne
     && nowMinutes <= (toMinutes + toleranceMinutes);
 };
 
+/** Tolerancia asimétrica: minutos antes del ingreso y minutos después del egreso. */
+const isWithinShiftAccessWindow = (
+  timeWindow,
+  referenceDate = new Date(),
+  { earlyMinutes = 30, lateMinutes = 15 } = {}
+) => {
+  if (!timeWindow?.from || !timeWindow?.to) return true;
+
+  const { timeString } = getArgentinaDateParts(referenceDate);
+  const nowMinutes = timeToMinutes(timeString);
+  const fromMinutes = timeToMinutes(timeWindow.from);
+  const toMinutes = timeToMinutes(timeWindow.to);
+
+  if (nowMinutes === null || fromMinutes === null || toMinutes === null) return true;
+
+  return nowMinutes >= (fromMinutes - earlyMinutes)
+    && nowMinutes <= (toMinutes + lateMinutes);
+};
+
 module.exports = {
   stripAccents,
   normalizeDni,
@@ -90,5 +109,6 @@ module.exports = {
   getArgentinaDateParts,
   getArgentinaDateString,
   timeToMinutes,
-  isWithinTimeWindow
+  isWithinTimeWindow,
+  isWithinShiftAccessWindow
 };

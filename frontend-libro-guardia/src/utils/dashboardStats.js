@@ -1,3 +1,5 @@
+import { getEffectiveEntryType, isGpsFleetEntry } from './entryDisplay';
+
 function isSameLocalDay(dateA, dateB) {
   return (
     dateA.getFullYear() === dateB.getFullYear()
@@ -18,8 +20,8 @@ export function getDashboardStats(entries, referenceDate = new Date()) {
     totalToday: todayEntries.length,
     personalIngresos: countBy((e) => e.type === 'personal' && e.movementType === 'ingreso'),
     personalEgresos: countBy((e) => e.type === 'personal' && e.movementType === 'egreso'),
-    vehiculos: countBy((e) => e.type === 'vehiculo'),
-    flota: countBy((e) => e.type === 'flota'),
+    vehiculos: countBy((e) => getEffectiveEntryType(e) === 'vehiculo'),
+    flota: countBy((e) => getEffectiveEntryType(e) === 'flota'),
     novedades: countBy((e) => e.type === 'novedad'),
     recentEntries: (entries || []).slice(0, 8),
   };
@@ -33,15 +35,13 @@ export function formatEntryRow(entry) {
   if (entry.type === 'personal') {
     typeDisplay = entry.movementType === 'ingreso' ? 'Ingreso personal' : 'Egreso personal';
     mainDetail = entry.name;
-  } else if (entry.type === 'vehiculo') {
-    const gpsTag = entry.gpsAuto || entry.entrySource === 'gps_ubika' ? ' GPS' : '';
-    typeDisplay = entry.movementType === 'ingreso'
-      ? `Ingreso vehículo${gpsTag}`
-      : `Egreso vehículo${gpsTag}`;
-    mainDetail = entry.gpsName || entry.plate;
-  } else if (entry.type === 'flota') {
-    typeDisplay = entry.movementType || 'Movimiento flota';
-    mainDetail = `${entry.mobile || '—'} / ${entry.flotaDriver || '—'}`;
+  } else if (getEffectiveEntryType(entry) === 'vehiculo') {
+    typeDisplay = entry.movementType === 'ingreso' ? 'Ingreso vehículo externo' : 'Egreso vehículo externo';
+    mainDetail = entry.plate || '—';
+  } else if (getEffectiveEntryType(entry) === 'flota') {
+    const gpsTag = isGpsFleetEntry(entry) ? ' (GPS)' : '';
+    typeDisplay = `${entry.movementType || 'Movimiento flota'}${gpsTag}`;
+    mainDetail = `${entry.mobile || entry.gpsName || '—'} / ${entry.flotaDriver || entry.driver || '—'}`;
   } else if (entry.type === 'novedad') {
     typeDisplay = 'Novedad';
     const desc = entry.description || '';

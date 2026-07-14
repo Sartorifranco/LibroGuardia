@@ -29,8 +29,31 @@ const parseShift = (turnoRaw = '') => {
   };
 };
 
+const resolveShiftSchedule = (employee = {}) => {
+  const saved = employee.shiftSchedule;
+  if (saved?.daysOfWeek?.length) {
+    return {
+      daysOfWeek: saved.daysOfWeek,
+      timeWindow: saved.timeWindow || null
+    };
+  }
+
+  const parsed = parseShift(employee.turnoRaw || '');
+  if (!parsed.valid || !parsed.daysOfWeek?.length) {
+    return saved?.timeWindow
+      ? { daysOfWeek: null, timeWindow: saved.timeWindow }
+      : null;
+  }
+
+  return {
+    daysOfWeek: parsed.daysOfWeek,
+    timeWindow: parsed.timeWindow
+  };
+};
+
 module.exports = {
   DAY_CODES,
   normalizeTime,
-  parseShift
+  parseShift,
+  resolveShiftSchedule
 };

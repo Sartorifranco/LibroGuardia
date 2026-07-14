@@ -1,6 +1,15 @@
 const { db, FieldValue } = require('./firestore');
 const { parseImportRows, buildMasterLookups } = require('./citacionesImport');
 const { resolveOrCreatePerson } = require('./people');
+const { todayDateString } = require('./authorizations');
+const { normalizeIdNumber } = require('./dniParser');
+const { buildNameTokens } = require('./lib/nameUtils');
+const {
+  buildNominaEmployeeIndex,
+  matchCitacionToEmployee,
+  normalizeLegajo
+} = require('./lib/personMatch');
+const { applyTransportParseToCitacion } = require('./lib/transportCsvParser');
 const {
   hashPayload,
   findBatchByFileAndHash,
@@ -245,21 +254,167 @@ const getCitacionesImportById = async (importId) => {
   };
 };
 
-const syncAuthorizationsFromBridge = async (payload = {}) => {  const { data, sourceFile, defaults } = payload;
+const importRowsToBridgePayload = (rows = []) =>
+  rows.map((row) => ({
+    per__des: row.nombre || row.name || '',
+    legajo: row.legajo || '',
+    diacitacioningreso: row.appointmentDate || row.startDate || '',
+    sector__des: row.destination || '',
+    tarcon__des: row.role || '',
+    observaciones: row.notes || ''
+  }));
+
+const relinkCitacionesWithNomina = async ({ dateString } = {}) => {
+  const targetDate = dateString || todayDateString();
+
+  const personalSnap = await db.collection('personalMaster').where('source', '==', 'nomina').get();
+  const employees = personalSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((employee) => employee.active !== false);
+  const index = buildNominaEmployeeIndex(employees);
+
+  const snap = await db.collection('authorizations')
+    .where('active', '==', true)
+    .where('type', '==', 'citacion')
+    .get();
+
+  let linked = 0;
+  let unchanged = 0;
+  let unmatched = 0;
+  let matchedNomina = 0;
+  let processed = 0;
+  const unmatchedSample = [];
+  let parsedCsv = 0;
+
+  for (const doc of snap.docs) {
+    const raw = { id: doc.id, ...doc.data() };
+    if ((raw.appointmentDate || raw.startDate) !== targetDate) continue;
+
+    processed += 1;
+    const citacion = applyTransportParseToCitacion(raw);
+    const parsedChanged = citacion.name !== raw.name
+      || citacion.legajo !== raw.legajo
+      || citacion.destination !== raw.destination;
+
+    const employee = matchCitacionToEmployee(citacion, index);
+
+    const legajoNormalized = employee
+      ? normalizeLegajo(employee.legajoNormalized || employee.legajo)
+      : normalizeLegajo(citacion.legajoNormalized || citacion.legajo);
+    const idNumberNormalized = employee
+      ? (employee.idNumberNormalized || normalizeIdNumber(employee.idNumber))
+      : (citacion.idNumberNormalized || normalizeIdNumber(citacion.idNumber));
+    const resolvedName = employee?.name || citacion.name;
+    const nameKey = employee?.nameKey || buildNameTokens(resolvedName);
+
+    const updates = {
+      legajo: employee?.legajoNormalized || employee?.legajo || citacion.legajo,
+      legajoNormalized,
+      idNumber: idNumberNormalized || citacion.idNumber || '',
+      idNumberNormalized: idNumberNormalized || '',
+      name: resolvedName,
+      nameKey,
+      destination: citacion.destination || raw.destination || '',
+      company: citacion.company || raw.company || '',
+      role: citacion.role || raw.role || '',
+      appointmentTime: citacion.appointmentTime || raw.appointmentTime || null,
+      updatedAt: FieldValue.serverTimestamp()
+    };
+
+    const alreadyOk = raw.legajoNormalized === legajoNormalized
+      && raw.name === resolvedName
+      && raw.destination === updates.destination
+      && (raw.appointmentTime || null) === (updates.appointmentTime || null)
+      && (employee ? raw.idNumberNormalized === idNumberNormalized : true);
+
+    if (alreadyOk) {
+      if (employee) matchedNomina += 1;
+      else unmatched += 1;
+      unchanged += 1;
+      continue;
+    }
+
+    if (parsedChanged && !employee) parsedCsv += 1;
+
+    if (employee) {
+      updates.personId = employee.personId || citacion.personId || null;
+      matchedNomina += 1;
+    } else {
+      unmatched += 1;
+      if (unmatchedSample.length < 8) {
+        unmatchedSample.push({
+          name: resolvedName || '',
+          legajo: legajoNormalized || ''
+        });
+      }
+    }
+
+    await doc.ref.update({
+      ...updates,
+      relinkedAt: FieldValue.serverTimestamp()
+    });
+    linked += 1;
+  }
+
+  return {
+    date: targetDate,
+    processed,
+    linked,
+    unchanged,
+    unmatched,
+    parsedCsv,
+    matchedNomina,
+    totalNomina: employees.length,
+    unmatchedSample,
+    message: linked
+      ? `${linked} citación(es) actualizada(s)${parsedCsv ? ` (${parsedCsv} parseadas desde CSV)` : ''}`
+      : unmatched
+        ? `${unmatched} citación(es) sin match en nómina (${processed} procesadas)`
+        : `${unchanged} citación(es) ya estaban vinculadas`
+  };
+};
+
+const reprocessImportBatch = async (batchId, { force = true } = {}) => {
+  const batch = await getImportBatchById(batchId);
+  const rows = batch?.rows?.length
+    ? batch.rows
+    : (await getCitacionesImportById(batchId))?.rows;
+
+  if (!rows?.length) {
+    const error = new Error('Importación sin filas para reprocesar');
+    error.status = 404;
+    throw error;
+  }
+
+  const sourceFile = batch?.sourceFile
+    || (await getCitacionesImportById(batchId))?.sourceFile
+    || `reprocess-${batchId}.xlsx`;
+
+  return syncAuthorizationsFromBridge({
+    data: importRowsToBridgePayload(rows),
+    sourceFile,
+    force
+  });
+};
+
+const syncAuthorizationsFromBridge = async (payload = {}) => {
+  const { data, sourceFile, defaults, force = false } = payload;
   if (!Array.isArray(data) || data.length === 0) {
     const error = new Error('Se espera un array no vacío de filas');
     error.status = 400;
     throw error;
   }
 
-  const masterSnap = await db.collection('personalMaster').get();
-  const { masterByLegajo, masterByName } = buildMasterLookups(masterSnap.docs);
+  const masterSnap = await db.collection('personalMaster').where('source', '==', 'nomina').get();
+  const { masterByLegajo, masterByName, masterByNameKey, masterList } = buildMasterLookups(masterSnap.docs);
 
   const mergedDefaults = {
     ...(defaults || {}),
     sourceFile,
     masterByLegajo,
-    masterByName
+    masterByName,
+    masterByNameKey,
+    masterList
   };
 
   const { parsed, errors: parseErrors } = parseImportRows(data, mergedDefaults);
@@ -274,7 +429,7 @@ const syncAuthorizationsFromBridge = async (payload = {}) => {  const { data, so
   }
 
   const sourceHash = hashPayload({ sourceFile, data });
-  const existingBatch = sourceFile
+  const existingBatch = !force && sourceFile
     ? await findBatchByFileAndHash(sourceFile, sourceHash)
     : null;
 
@@ -363,6 +518,8 @@ module.exports = {
   saveCitacionesBridgeConfig,
   verifyCitacionesBridgeRequest,
   syncAuthorizationsFromBridge,
+  relinkCitacionesWithNomina,
+  reprocessImportBatch,
   listCitacionesImports,
   getCitacionesImportById,
   parseImportRows,

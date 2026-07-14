@@ -1,5 +1,15 @@
 const { stripAccents } = require('./normalize');
 
+/** Áreas donde la planilla diaria de citaciones define quién ingresa. */
+const CITACION_REQUIRED_AREA_KEYS = new Set(['transporte', 'tesoreria']);
+
+const isCitacionRequiredArea = (centroCosto = '') =>
+  CITACION_REQUIRED_AREA_KEYS.has(getAreaKey(centroCosto));
+
+const isSistemasArea = (centroCosto = '') => getAreaKey(centroCosto) === 'sistemas';
+
+const isGruasArea = (centroCosto = '') => getAreaKey(centroCosto) === 'gruas';
+
 const AREA_ALIASES = {
   transporte: 'Transporte',
   tesoreria: 'Tesorería',
@@ -120,21 +130,23 @@ const buildAttendanceAreaSummary = (allEmployees = [], roster = []) => {
     rosterStats.set(key, bucket);
   });
 
-  return nominaGroups.map((group) => {
-    const stats = rosterStats.get(group.key) || {
-      expectedToday: 0,
-      presentToday: 0,
-      missingToday: 0
-    };
-    return {
-      key: group.key,
-      label: group.label,
-      totalInNomina: group.count,
-      expectedToday: stats.expectedToday,
-      presentToday: stats.presentToday,
-      missingToday: stats.missingToday
-    };
-  });
+  return nominaGroups
+    .map((group) => {
+      const stats = rosterStats.get(group.key) || {
+        expectedToday: 0,
+        presentToday: 0,
+        missingToday: 0
+      };
+      return {
+        key: group.key,
+        label: group.label,
+        totalInNomina: group.count,
+        expectedToday: stats.expectedToday,
+        presentToday: stats.presentToday,
+        missingToday: stats.missingToday
+      };
+    })
+    .filter((area) => area.expectedToday > 0);
 };
 
 module.exports = {
@@ -143,5 +155,9 @@ module.exports = {
   normalizeAreaKey,
   buildAreaGroups,
   buildAttendanceAreaSummary,
+  isCitacionRequiredArea,
+  isSistemasArea,
+  isGruasArea,
+  CITACION_REQUIRED_AREA_KEYS,
   AREA_ALIASES
 };

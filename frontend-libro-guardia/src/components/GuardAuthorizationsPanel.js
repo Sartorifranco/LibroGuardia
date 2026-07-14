@@ -57,7 +57,7 @@ function GuardAuthorizationsPanel({
     setLoading(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/guard/authorizations?planned=true&date=${viewDate}`,
+        `${API_BASE_URL}/guard/authorizations?scope=external&date=${viewDate}`,
         { headers: { Authorization: `Bearer ${authToken}` } }
       );
       const data = await response.json();
@@ -134,15 +134,15 @@ function GuardAuthorizationsPanel({
   return (
     <div className="space-y-6">
       <div className="section-heading">
-        <h2 className="text-2xl font-semibold text-red-700">Personal autorizado</h2>
+        <h2 className="text-2xl font-semibold text-red-700">Personal autorizado externo</h2>
         <p className="text-sm text-gray-600">
-          Consulta de solo lectura. Podés pre-registrar visitas esperadas; no podés modificar citaciones del transporte.
+          Visitas, contratistas y accesos temporales ajenos a la nómina. El personal citado de Transporte/Tesorería está en el módulo Citados.
         </p>
       </div>
 
       {canPreRegister && (
-        <form onSubmit={handlePreRegister} className="rounded-lg border border-amber-200 bg-amber-50 p-4 space-y-3">
-          <h3 className="font-medium text-gray-800 flex items-center gap-2">
+        <form onSubmit={handlePreRegister} className="theme-callout-warn space-y-3">
+          <h3 className="theme-section-title flex items-center gap-2" style={{ fontSize: '1rem', marginBottom: 0 }}>
             <UserPlus size={18} /> Pre-registrar visita esperada
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">

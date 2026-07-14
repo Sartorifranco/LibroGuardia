@@ -55,7 +55,7 @@ function FleetGpsVehicleTable({
   }
 
   return (
-    <div className={`${maxHeightClass} overflow-x-auto border border-gray-200 rounded-md bg-white`}>
+    <div className={`${maxHeightClass} overflow-x-auto theme-panel-nested`}>
       <table className={`fleet-gps-table${compact ? ' fleet-gps-table--compact' : ''}`}>
         <thead>
           <tr>

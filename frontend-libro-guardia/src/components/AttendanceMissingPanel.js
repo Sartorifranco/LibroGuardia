@@ -11,9 +11,9 @@ import {
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
 
 const STATUS_LABELS = {
-  present: 'Presente',
+  present: 'En planta',
   missing: 'Sin ingreso',
-  absent: 'Ausente',
+  absent: 'Fuera de planta',
   pending: 'Pendiente',
 };
 
@@ -154,15 +154,19 @@ function AttendanceMissingPanel({ authToken, enabled = true, pollSeconds = 60, o
     <section className={`attendance-panel${missingCount ? ' attendance-panel--alert' : ''}`}>
       <div className="attendance-panel__header">
         <div>
-          <p className="attendance-panel__kicker">Asistencia del día</p>
-          <h3 className="attendance-panel__title">Control de ingreso por área</h3>
+          <p className="attendance-panel__kicker">Personal en planta</p>
+          <h3 className="attendance-panel__title">Ingresos del día (por turno)</h3>
           {data && (
             <p className="attendance-panel__subtitle">
-              {data.presentCount}/{data.expectedCount} presentes
-              {data.absentCount ? ` · ${data.absentCount} ausentes` : ''}
+              {data.presentCount}/{data.expectedCount} en planta
+              {data.absentCount ? ` · ${data.absentCount} fuera de planta` : ''}
               {data.pendingCount ? ` · ${data.pendingCount} pendientes` : ''}
-              {data.nominaTotal != null ? ` · ${data.nominaTotal} en nómina` : ''}
-              {data.citacionesHoy != null ? ` · ${data.citacionesHoy} citaciones hoy` : ''}
+              {data.plantNominaTotal != null
+                ? ` · ${data.plantNominaTotal} en nómina (plantas por turno)`
+                : data.nominaTotal != null
+                  ? ` · ${data.nominaTotal} en nómina`
+                  : ''}
+              {data.citacionNominaTotal ? ` · ${data.citacionNominaTotal} Transporte/Tesorería (ver Citados)` : ''}
               {data.time ? ` · ${data.time}` : ''}
             </p>
           )}
@@ -210,7 +214,7 @@ function AttendanceMissingPanel({ authToken, enabled = true, pollSeconds = 60, o
                 disabled={acting || selectableItems.length === 0}
                 onClick={markAllFilteredPresent}
               >
-                Marcar todos presentes
+                Marcar todos en planta
                 {areaFilter !== 'all' ? ' (filtro)' : ''}
               </button>
               <button
@@ -219,7 +223,7 @@ function AttendanceMissingPanel({ authToken, enabled = true, pollSeconds = 60, o
                 disabled={acting || selectedItems.filter((i) => i.status !== 'present').length === 0}
                 onClick={() => bulkPresent(selectedItems.filter((i) => i.status !== 'present'))}
               >
-                Presente ({selectedItems.filter((i) => i.status !== 'present').length})
+                En planta ({selectedItems.filter((i) => i.status !== 'present').length})
               </button>
               <button
                 type="button"
@@ -227,7 +231,7 @@ function AttendanceMissingPanel({ authToken, enabled = true, pollSeconds = 60, o
                 disabled={acting || selectedItems.filter((i) => i.status !== 'absent' && i.status !== 'present').length === 0}
                 onClick={() => bulkAbsent(selectedItems.filter((i) => i.status !== 'absent' && i.status !== 'present'))}
               >
-                Ausente ({selectedItems.filter((i) => i.status !== 'absent' && i.status !== 'present').length})
+                Fuera de planta ({selectedItems.filter((i) => i.status !== 'absent' && i.status !== 'present').length})
               </button>
             </div>
           </div>
@@ -288,7 +292,7 @@ function AttendanceMissingPanel({ authToken, enabled = true, pollSeconds = 60, o
                           className="btn btn-primary btn-sm"
                           disabled={acting}
                           onClick={() => registerEntry(item)}
-                          title="Marcar presente"
+                          title="Marcar en planta"
                         >
                           <UserCheck size={14} />
                         </button>
@@ -299,7 +303,7 @@ function AttendanceMissingPanel({ authToken, enabled = true, pollSeconds = 60, o
                           className="btn btn-secondary btn-sm"
                           disabled={acting}
                           onClick={() => dismissAlert(item)}
-                          title="Marcar ausente"
+                          title="Marcar fuera de planta"
                         >
                           <UserX size={14} />
                         </button>

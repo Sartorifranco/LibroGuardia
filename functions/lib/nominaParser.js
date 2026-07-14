@@ -1,5 +1,6 @@
 const { stripAccents } = require('./normalize');
 const { parseShift } = require('./shiftParser');
+const { isCitacionRequiredArea } = require('./centroCostoGroups');
 const { normalizeIdNumber } = require('../dniParser');
 
 const INVALID_TIPO_MARKERS = ['eliminar', 'descargar archivos', 'onboarding', 'dar de baja', 'no hay templates'];
@@ -127,8 +128,11 @@ const parseNominaRow = (row = {}) => {
     return { valid: false, reason: 'tipo_autorizacion_invalido', name };
   }
 
-  const requiresCitacion = authMeta.requiresCitacion
+  let requiresCitacion = authMeta.requiresCitacion
     || (authMeta.policy === 'citacion_shift');
+  if (!isCitacionRequiredArea(centroCosto)) {
+    requiresCitacion = false;
+  }
 
   return {
     valid: true,
