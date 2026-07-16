@@ -30,6 +30,8 @@ import NovedadPage from './pages/Novedad/NovedadPage';
 import HistorialPage from './pages/Historial/HistorialPage';
 import AdminPage from './pages/Admin/AdminPage';
 import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
+import { AccessScanProvider } from './components/GlobalAccessScanner';
+import { saveAuthManualPrefill } from './utils/authPrefill';
 
 import './App.css';
 
@@ -51,6 +53,8 @@ function AppShell() {
   const [activeTab, setActiveTab] = useState('inicio');
   const [lastOperationalTab, setLastOperationalTab] = useState('inicio');
   const [adminSection, setAdminSection] = useState('users');
+  const [authPrefillKey, setAuthPrefillKey] = useState(0);
+  const [personalPrefillKey, setPersonalPrefillKey] = useState(0);
   const [tourOpen, setTourOpen] = useState(false);
   const [tourAuto, setTourAuto] = useState(false);
 
@@ -91,6 +95,23 @@ function AppShell() {
   const exitAdminPanel = useCallback(() => {
     setActiveTab(lastOperationalTab || 'inicio');
   }, [lastOperationalTab]);
+
+  const handleAuthorizeFromScan = useCallback((prefill) => {
+    saveAuthManualPrefill(prefill);
+    if (prefill?.exceptional) {
+      setPersonalPrefillKey((key) => key + 1);
+      setActiveTab('personal');
+      showSuccess('Completá el ingreso excepcional con el DNI escaneado.');
+      return;
+    }
+    setAuthPrefillKey((key) => key + 1);
+    if (activeTab !== 'adminPanel') {
+      setLastOperationalTab(activeTab);
+    }
+    setAdminSection('citaciones');
+    setActiveTab('adminPanel');
+    showSuccess('Completá la autorización manual con los datos del escaneo.');
+  }, [activeTab, showSuccess]);
 
   const navigateToTab = useCallback((tab, timeValue) => {
     if (tab === 'kiosk') {
@@ -150,16 +171,31 @@ function AppShell() {
 
   if (activeTab === 'kiosk') {
     return (
-      <AccessKiosk
+      <AccessScanProvider
         authToken={authToken}
         currentUser={currentUser}
-        onExit={() => setActiveTab('inicio')}
-        canExceptionalEntry={hasPermission(currentUser, 'access.exceptional_entry')}
-      />
+        paused
+        onReloadEntries={() => reloadEntries(true)}
+        onAuthorizeManual={handleAuthorizeFromScan}
+      >
+        <AccessKiosk
+          authToken={authToken}
+          currentUser={currentUser}
+          onExit={() => setActiveTab('inicio')}
+          canExceptionalEntry={hasPermission(currentUser, 'access.exceptional_entry')}
+        />
+      </AccessScanProvider>
     );
   }
 
   return (
+    <AccessScanProvider
+      authToken={authToken}
+      currentUser={currentUser}
+      paused={false}
+      onReloadEntries={() => reloadEntries(true)}
+      onAuthorizeManual={handleAuthorizeFromScan}
+    >
     <div className={`app-shell${isAdminMode ? ' app-shell--admin' : ' app-shell--with-nav'}`}>
       <ToastStack
         error={error}
@@ -353,7 +389,7 @@ function AppShell() {
                 </div>
               )}
 
-              {activeTab === 'personal' && <PersonalPage />}
+              {activeTab === 'personal' && <PersonalPage key={personalPrefillKey} />}
               {activeTab === 'vehiculo' && <VehiculosExternosPage />}
               {activeTab === 'flota' && <FlotaInternaPage />}
               {activeTab === 'novedad' && <NovedadPage />}
@@ -366,6 +402,7 @@ function AppShell() {
                   adminSection={adminSection}
                   onSectionChange={setAdminSection}
                   onExit={exitAdminPanel}
+                  authPrefillKey={authPrefillKey}
                 />
               )}
             </main>
@@ -373,6 +410,7 @@ function AppShell() {
         </div>
       </div>
     </div>
+    </AccessScanProvider>
   );
 }
 

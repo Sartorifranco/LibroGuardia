@@ -1,9 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScanLine } from 'lucide-react';
 
-function ContinuousScanner({ onScan, scannerId = 'continuous-scanner', paused = false }) {
+function ContinuousScanner({
+  onScan,
+  scannerId = 'continuous-scanner',
+  paused = false,
+  enableCamera = false
+}) {
   const scannerRef = useRef(null);
   const html5QrCodeRef = useRef(null);
+  const cameraRunningRef = useRef(false);
   const usbInputRef = useRef(null);
   const usbBufferRef = useRef('');
   const lastScanRef = useRef({ value: '', at: 0 });
@@ -22,8 +28,35 @@ function ContinuousScanner({ onScan, scannerId = 'continuous-scanner', paused = 
     onScan(trimmed);
   }, [onScan]);
 
+  const stopCamera = useCallback(async () => {
+    const scanner = html5QrCodeRef.current;
+    if (!scanner || !cameraRunningRef.current) {
+      html5QrCodeRef.current = null;
+      cameraRunningRef.current = false;
+      return;
+    }
+
+    html5QrCodeRef.current = null;
+    cameraRunningRef.current = false;
+
+    try {
+      const state = scanner.getState?.();
+      if (state === 2 || state === 3) {
+        await scanner.stop();
+      }
+    } catch {
+      // Scanner no iniciado o ya detenido.
+    }
+
+    try {
+      await scanner.clear();
+    } catch {
+      // Ignorar error de clear.
+    }
+  }, []);
+
   useEffect(() => {
-    if (paused) return undefined;
+    if (paused || !enableCamera) return undefined;
 
     let mounted = true;
 
@@ -47,9 +80,13 @@ function ContinuousScanner({ onScan, scannerId = 'continuous-scanner', paused = 
           },
           () => {}
         );
+        cameraRunningRef.current = true;
         setCameraError(null);
-      } catch (err) {
-        setCameraError('Cámara no disponible. El lector USB sigue activo.');
+      } catch {
+        if (mounted) {
+          setCameraError('Cámara no disponible. El lector USB sigue activo.');
+        }
+        await stopCamera();
       }
     };
 
@@ -57,13 +94,9 @@ function ContinuousScanner({ onScan, scannerId = 'continuous-scanner', paused = 
 
     return () => {
       mounted = false;
-      if (html5QrCodeRef.current) {
-        html5QrCodeRef.current.stop().catch(() => {});
-        html5QrCodeRef.current.clear().catch(() => {});
-        html5QrCodeRef.current = null;
-      }
+      stopCamera();
     };
-  }, [emitScan, paused, scannerId]);
+  }, [emitScan, paused, scannerId, enableCamera, stopCamera]);
 
   useEffect(() => {
     if (paused) return undefined;
@@ -100,8 +133,14 @@ function ContinuousScanner({ onScan, scannerId = 'continuous-scanner', paused = 
         <span>Lector activo — acerque su DNI o QR de ingreso</span>
       </div>
 
-      {!paused && (
+      {enableCamera && !paused && (
         <div id={scannerId} ref={scannerRef} className="continuous-scanner-camera" />
+      )}
+
+      {!enableCamera && (
+        <div className="continuous-scanner-note continuous-scanner-note--usb">
+          Lector USB conectado. Escanee el DNI o credencial QR.
+        </div>
       )}
 
       {cameraError && (

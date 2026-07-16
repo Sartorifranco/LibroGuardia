@@ -105,6 +105,18 @@ const filterAlertsByScopes = (alerts = [], scopes = {}) => {
   return (Array.isArray(alerts) ? alerts : []).filter((item) => allowed.has(item?.kind));
 };
 
+/**
+ * Citaciones diarias (startDate = endDate por diseño) no son alertas de vencimiento:
+ * al pasar el día quedan "vencidas" pero ya cumplieron su función. Historial ≠ banner.
+ * Permanent/visit solo alertan si tienen endDate explícito (sin fallback a startDate):
+ * las permanentes de nómina suelen no tener fin y no deben parecer "vencidas".
+ */
+const shouldAlertAuthorizationExpiry = (authorization = {}) => {
+  const type = String(authorization.type || '').toLowerCase().trim();
+  if (!type || type === 'citacion') return false;
+  return Boolean(normalizeExpiryYmd(authorization.endDate));
+};
+
 module.exports = {
   normalizeExpiryYmd,
   daysBetweenYmd,
@@ -114,5 +126,6 @@ module.exports = {
   KIND_LABELS,
   resolveExpirationAlertScopes,
   kindsAllowedByScopes,
-  filterAlertsByScopes
+  filterAlertsByScopes,
+  shouldAlertAuthorizationExpiry
 };

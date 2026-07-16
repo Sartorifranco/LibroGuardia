@@ -116,12 +116,16 @@ export async function apiFetch(path, options = {}) {
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
+  // Evitar HTML cacheado del SPA cuando /api/** quedó mal rewriteado en Hosting.
+  if (!headers['Cache-Control']) headers['Cache-Control'] = 'no-cache';
+  if (!headers.Pragma) headers.Pragma = 'no-cache';
 
   let response;
   try {
     response = await fetch(`${API_BASE_URL}${normalized}`, {
       method,
       headers,
+      cache: 'no-store',
       body: body === undefined
         ? undefined
         : (isFormData || typeof body === 'string' ? body : JSON.stringify(body))
@@ -137,8 +141,20 @@ export async function apiFetch(path, options = {}) {
     throw error;
   }
 
+  const contentType = response.headers.get('content-type') || '';
   const data = await parseBody(response);
   const skipExpiry = skipSessionExpiry || isLoginPath(normalized);
+
+  // Respuesta HTML (a menudo index.html cacheado) nunca es API válida.
+  const looksLikeHtml = contentType.includes('text/html')
+    || (data && typeof data._raw === 'string' && /<!doctype html/i.test(data._raw));
+  if (looksLikeHtml) {
+    const err = new Error('No se pudo hablar con el servidor API. Probá Ctrl+F5; si sigue, avisá a Sistemas.');
+    err.status = 502;
+    err.isNetworkError = true;
+    err.isHtmlInsteadOfApi = true;
+    throw err;
+  }
 
   if (!response.ok) {
     const status = response.status;

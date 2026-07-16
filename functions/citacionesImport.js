@@ -61,25 +61,6 @@ const fuzzyPickByKey = (row, fragments) => {
   return null;
 };
 
-const findIdNumberInRow = (row) => {
-  const preferred = fuzzyPickByKey(row, ['dni', 'documento', 'doc', 'cuil', 'cedula']);
-  if (preferred) return preferred;
-
-  for (const [key, value] of Object.entries(row || {})) {
-    if (value === undefined || value === null || cleanCell(value) === '') continue;
-    const normalizedKey = normalizeHeader(key);
-    if (normalizedKey === 'legajo' || normalizedKey.includes('legajo')) continue;
-    if (['telefono', 'celular', 'patente', 'dominio', 'interno', 'hora'].some((skip) => normalizedKey.includes(skip))) {
-      continue;
-    }
-    const digits = normalizeIdNumber(value);
-    if (digits.length >= 7 && digits.length <= 8) {
-      return value;
-    }
-  }
-  return null;
-};
-
 const buildPersonName = (row, get) => {
   const transportName = pickValue(row, ['per__des', 'per_des']);
   if (transportName) return transportName;
@@ -140,6 +121,44 @@ const excelDateToIso = (value) => {
   return null;
 };
 
+/**
+ * Fechas ISO / dd-mm-yyyy se normalizan a 8 dígitos (ej. 2026-07-16 → 20260716)
+ * y se confunden con un DNI. No usarlas como documento.
+ */
+const looksLikeDateAsIdNumber = (value) => {
+  const raw = cleanCell(value);
+  if (!raw) return false;
+  return Boolean(excelDateToIso(raw));
+};
+
+const sanitizeIdNumberCandidate = (value) => {
+  if (value === undefined || value === null || cleanCell(value) === '') return null;
+  if (looksLikeDateAsIdNumber(value)) return null;
+  return cleanCell(value);
+};
+
+const findIdNumberInRow = (row) => {
+  const preferred = sanitizeIdNumberCandidate(
+    fuzzyPickByKey(row, ['dni', 'documento', 'doc', 'cuil', 'cedula'])
+  );
+  if (preferred) return preferred;
+
+  for (const [key, value] of Object.entries(row || {})) {
+    if (value === undefined || value === null || cleanCell(value) === '') continue;
+    const normalizedKey = normalizeHeader(key);
+    if (normalizedKey === 'legajo' || normalizedKey.includes('legajo')) continue;
+    if (['telefono', 'celular', 'patente', 'dominio', 'interno', 'hora', 'fecha', 'dia', 'date', 'citacion'].some((skip) => normalizedKey.includes(skip))) {
+      continue;
+    }
+    if (looksLikeDateAsIdNumber(value)) continue;
+    const digits = normalizeIdNumber(value);
+    if (digits.length >= 7 && digits.length <= 8) {
+      return cleanCell(value);
+    }
+  }
+  return null;
+};
+
 const normalizeRowKeys = (row) => {
   const normalized = {};
   Object.entries(row || {}).forEach(([key, value]) => {
@@ -172,7 +191,7 @@ const normalizeImportRow = (rawRow, defaults = {}) => {
 
   const legajo = get('legajo') || fuzzyPickByKey(row, ['legajo']);
   const name = buildPersonName(row, get);
-  let idNumber = get('idNumber') || findIdNumberInRow(row);
+  let idNumber = sanitizeIdNumberCandidate(get('idNumber')) || findIdNumberInRow(row);
   if (!idNumber) {
     idNumber = resolveIdNumberFromMaster(legajo, name, defaults);
   }
@@ -182,6 +201,11 @@ const normalizeImportRow = (rawRow, defaults = {}) => {
     || inferDateFromSourceFile(defaults.sourceFile)
     || todayDateString();
   const endDate = excelDateToIso(get('endDate')) || (type === 'citacion' ? startDate : defaults.endDate);
+
+  // Defensa: si el "DNI" es la fecha de citación sin guiones (20260716), descartarlo.
+  if (idNumber && normalizeIdNumber(idNumber) === normalizeIdNumber(startDate)) {
+    idNumber = null;
+  }
 
   const destination = pickValue(row, ['sector__des', 'sector_des'])
     || get('destination')
@@ -288,5 +312,7 @@ module.exports = {
   parseImportRows,
   excelDateToIso,
   inferDateFromSourceFile,
+  looksLikeDateAsIdNumber,
+  findIdNumberInRow,
   buildMasterLookups
 };

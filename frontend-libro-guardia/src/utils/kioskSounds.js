@@ -45,7 +45,7 @@ export function stopKioskSound() {
 }
 
 /**
- * @param {'authorized' | 'denied'} kind
+ * @param {'authorized' | 'denied' | 'connection_error'} kind
  */
 export async function playKioskSound(kind) {
   stopKioskSound();
@@ -82,6 +82,9 @@ export async function playKioskSound(kind) {
   if (kind === 'authorized') {
     scheduleTone({ frequency: 880, start: 0, duration: 0.11, peak: 0.9 });
     scheduleTone({ frequency: 1320, start: 0.11, duration: 0.16, peak: 0.85 });
+  } else if (kind === 'connection_error') {
+    // Tono neutro breve (ni OK ni denegado)
+    scheduleTone({ frequency: 520, start: 0, duration: 0.14, type: 'sine', peak: 0.55 });
   } else {
     scheduleTone({ frequency: 320, start: 0, duration: 0.16, type: 'triangle', peak: 0.75 });
     scheduleTone({ frequency: 180, start: 0.16, duration: 0.22, type: 'triangle', peak: 0.7 });

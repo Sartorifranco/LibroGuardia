@@ -77,9 +77,14 @@ export function AuthProvider({ children }) {
         setCurrentUser(data.user);
       } catch (err) {
         console.error('Error al obtener usuario actual:', err);
-        // 401/403 ya disparan logout vía apiFetch; otros errores también cierran sesión local
+        // 401/403: apiFetch ya disparó session-expired / logout.
+        // Errores de red o HTML cacheado de Hosting NO deben tumbar una sesión
+        // recién creada por /auth/login (el user ya viene en esa respuesta).
         if (!cancelled && !err.isSessionExpired) {
-          logout();
+          const keepSession = Boolean(err.isNetworkError || err.isHtmlInsteadOfApi || err.status === 0 || err.status === 502);
+          if (!keepSession) {
+            logout();
+          }
         }
       } finally {
         if (!cancelled) setAuthLoading(false);

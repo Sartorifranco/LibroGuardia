@@ -65,6 +65,12 @@ const verifyCitacionesBridgeRequest = async (req) => {
   return config;
 };
 
+const isPollutedDateIdNumber = (idNumberNormalized, startDate) => {
+  const dni = String(idNumberNormalized || '').replace(/\D/g, '');
+  const dateDigits = String(startDate || '').replace(/\D/g, '');
+  return Boolean(dni && dateDigits && dni === dateDigits);
+};
+
 const findExistingAuthorization = async (record) => {
   if (record.legajoNormalized) {
     const byLegajo = await db.collection('authorizations')
@@ -77,7 +83,8 @@ const findExistingAuthorization = async (record) => {
     if (!byLegajo.empty) return byLegajo.docs[0];
   }
 
-  if (record.idNumberNormalized) {
+  // No matchear por DNI si es la fecha de citación (bug histórico: 2026-07-16 → 20260716).
+  if (record.idNumberNormalized && !isPollutedDateIdNumber(record.idNumberNormalized, record.startDate)) {
     const byDni = await db.collection('authorizations')
       .where('idNumberNormalized', '==', record.idNumberNormalized)
       .where('type', '==', record.type)

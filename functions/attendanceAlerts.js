@@ -5,6 +5,7 @@ const { buildNameTokens } = require('./lib/nameUtils');
 const { normalizeLegajo, matchCitacionToEmployee, buildNominaEmployeeIndex } = require('./lib/personMatch');
 const { extractAreaShort, getAreaKey, buildAttendanceAreaSummary, isCitacionRequiredArea } = require('./lib/centroCostoGroups');
 const { resolveShiftSchedule } = require('./lib/shiftParser');
+const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
 
 const DEFAULT_TOLERANCE_MINUTES = 30;
 const DISMISSALS_COLLECTION = 'attendanceDismissals';
@@ -39,7 +40,7 @@ const loadCitacionesToday = async (dateString) => {
     .get();
 
   return snap.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .map((doc) => hydrateAuthorizationForRead({ id: doc.id, ...doc.data() }))
     .filter((item) => (item.appointmentDate || item.startDate) === dateString);
 };
 

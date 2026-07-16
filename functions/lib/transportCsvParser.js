@@ -1,3 +1,6 @@
+const { buildNameTokens } = require('./nameUtils');
+const { normalizeLegajo } = require('./personMatch');
+
 const SPANISH_MONTHS = {
   ene: '01', feb: '02', mar: '03', abr: '04', may: '05', jun: '06',
   jul: '07', ago: '08', sep: '09', oct: '10', nov: '11', dic: '12'
@@ -172,34 +175,85 @@ const parseTransportFromStoredCitacion = (citacion = {}) => {
   return null;
 };
 
+const looksLikeBrokenTransportCitacion = (citacion = {}) => {
+  const candidates = [
+    citacion.name,
+    citacion.legajo,
+    citacion.legajoNormalized,
+    citacion.notes
+  ].filter(Boolean);
+  return candidates.some((value) => looksLikeTransportCsvLine(value)
+    || String(value).includes(',"')
+    || /^Legajo\s+\d{3,5},/i.test(String(value)));
+};
+
+/**
+ * Indica si se puede reconstruir con confianza (campos mínimos claros).
+ * No adivina fechas/nombres si el parseo falla o queda ambiguo.
+ */
+const canConfidentlyRepairCitacion = (citacion = {}) => {
+  if (!looksLikeBrokenTransportCitacion(citacion)) return false;
+  const parsed = parseTransportFromStoredCitacion(citacion);
+  if (!parsed) return false;
+  if (!parsed.name || parsed.name.includes(',') || looksLikeTransportCsvLine(parsed.name)) {
+    return false;
+  }
+  const legajoDigits = String(parsed.legajo || '').replace(/\D/g, '');
+  if (!/^\d{3,5}$/.test(legajoDigits)) return false;
+  if (!parsed.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.startDate)) return false;
+  if (!parsed.role && !parsed.destination) return false;
+  return true;
+};
+
 const applyTransportParseToCitacion = (citacion = {}) => {
   const parsed = parseTransportFromStoredCitacion(citacion);
   if (!parsed) return citacion;
 
   const appointmentTime = parsed.appointmentTime
     || militaryTimeToHHMM(citacion.notes?.match(/hora ingreso:\s*(\S+)/i)?.[1]);
+  const legajoDigits = String(parsed.legajo || '').replace(/\D/g, '') || String(parsed.legajo || '');
+  const legajoNormalized = normalizeLegajo(legajoDigits) || legajoDigits;
+  const name = parsed.name;
+  const nameKey = buildNameTokens(name);
 
   return {
     ...citacion,
-    legajo: parsed.legajo,
-    legajoNormalized: parsed.legajo.replace(/^0+/, '') || parsed.legajo,
-    name: parsed.name,
+    legajo: legajoDigits,
+    legajoNormalized,
+    name,
+    nameKey: nameKey || citacion.nameKey,
+    nameTokens: nameKey || citacion.nameTokens,
     destination: parsed.destination || citacion.destination,
     company: parsed.company || citacion.company,
     role: parsed.role || citacion.role,
     startDate: parsed.startDate || citacion.startDate,
-    appointmentDate: parsed.startDate || citacion.appointmentDate,
-    appointmentTime: appointmentTime || citacion.appointmentTime
+    appointmentDate: parsed.startDate || citacion.appointmentDate || citacion.startDate,
+    appointmentTime: appointmentTime || citacion.appointmentTime,
+    endDate: citacion.endDate || parsed.startDate || citacion.startDate
   };
+};
+
+/** Hidrata citaciones para lectura (listados / matching). Permanent/visit se dejan igual. */
+const hydrateAuthorizationForRead = (authorization = {}) => {
+  if (!authorization || typeof authorization !== 'object') return authorization;
+  const type = String(authorization.type || '').toLowerCase();
+  if (type && type !== 'citacion' && !looksLikeBrokenTransportCitacion(authorization)) {
+    return authorization;
+  }
+  if (!looksLikeBrokenTransportCitacion(authorization)) return authorization;
+  return applyTransportParseToCitacion(authorization);
 };
 
 module.exports = {
   parseCsvFields,
   militaryTimeToHHMM,
   looksLikeTransportCsvLine,
+  looksLikeBrokenTransportCitacion,
+  canConfidentlyRepairCitacion,
   parseTransportCsvLine,
   extractTransportCsvLine,
   expandTransportRow,
   parseTransportFromStoredCitacion,
-  applyTransportParseToCitacion
+  applyTransportParseToCitacion,
+  hydrateAuthorizationForRead
 };

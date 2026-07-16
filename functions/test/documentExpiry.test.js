@@ -5,7 +5,8 @@ const {
   evaluateExpiry,
   buildExpiryMessage,
   resolveExpirationAlertScopes,
-  filterAlertsByScopes
+  filterAlertsByScopes,
+  shouldAlertAuthorizationExpiry
 } = require('../lib/documentExpiry');
 
 test('normalizeExpiryYmd ignora vacíos e inválidos', () => {
@@ -102,4 +103,24 @@ test('scopes: admin ve todos los dominios aunque la lista de permisos venga vac�
     personal: true,
     vehicles: true
   });
+});
+
+test('shouldAlertAuthorizationExpiry excluye citaciones y permanente sin endDate', () => {
+  assert.equal(shouldAlertAuthorizationExpiry({ type: 'citacion', endDate: '2026-07-10' }), false);
+  assert.equal(shouldAlertAuthorizationExpiry({ type: 'Citacion' }), false);
+  assert.equal(shouldAlertAuthorizationExpiry({}), false);
+  assert.equal(shouldAlertAuthorizationExpiry({ type: 'permanent' }), false);
+  assert.equal(shouldAlertAuthorizationExpiry({
+    type: 'permanent',
+    startDate: '2026-01-01',
+    endDate: null
+  }), false);
+  assert.equal(shouldAlertAuthorizationExpiry({
+    type: 'permanent',
+    endDate: '2026-08-01'
+  }), true);
+  assert.equal(shouldAlertAuthorizationExpiry({
+    type: 'visit',
+    endDate: '2026-07-20'
+  }), true);
 });

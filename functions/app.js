@@ -103,7 +103,8 @@ const {
   normalizeExpiryYmd,
   evaluateExpiry,
   buildExpiryMessage,
-  resolveExpirationAlertScopes
+  resolveExpirationAlertScopes,
+  shouldAlertAuthorizationExpiry
 } = require('./lib/documentExpiry');
 
 const app = express();
@@ -2332,11 +2333,9 @@ app.get(
 
       (byKey.authorizations?.docs || []).forEach((doc) => {
         const data = doc.data() || {};
-        if (data.type === 'permanent') return;
-        const evaluated = evaluateExpiry(
-          data.endDate || data.startDate || data.appointmentDate,
-          today
-        );
+        // Citaciones fuera. Permanent/visit solo con endDate real (no startDate).
+        if (!shouldAlertAuthorizationExpiry(data)) return;
+        const evaluated = evaluateExpiry(data.endDate, today);
         if (!evaluated) return;
         const subject = data.name || data.idNumber || 'autorización';
         pushAlert({

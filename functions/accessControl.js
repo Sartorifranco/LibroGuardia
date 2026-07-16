@@ -18,6 +18,7 @@ const {
   evaluateAuthorizationCandidates
 } = require('./lib/accessValidation');
 const { buildNominaAccessMessage } = require('./lib/accessNominaMessages');
+const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
 
 const findPersonalMaster = async (idNumber) => {
   const idNumberNormalized = normalizeIdNumber(idNumber);
@@ -110,7 +111,7 @@ const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
 };
 
 const mapAuthorizationDocs = (snap) =>
-  snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  snap.docs.map((doc) => hydrateAuthorizationForRead({ id: doc.id, ...doc.data() }));
 
 const fetchPrimaryAuthorizations = async (personId, today) => {
   const col = db.collection('authorizations');
@@ -523,8 +524,13 @@ const triggerAccessIfAuthorized = async ({
 const processKioskScan = async ({ rawData, username, doorId = null, readerId = 'default' }) => {
   const { openDoor, resolveDoorContext } = require('./doorController');
   const { resolveScanContext } = require('./lib/accessAuthMethods');
+  const { inferMovementTypeForToday } = require('./lib/inferMovementType');
+  const isGuardDesk = readerId === 'guard-desk';
 
-  const { door, airlockState } = await resolveDoorContext({ doorId, readerId });
+  const [{ door, airlockState }, config] = await Promise.all([
+    resolveDoorContext({ doorId, readerId }),
+    getAccessControlConfig()
+  ]);
   const scan = await resolveScanContext({ rawData, door });
 
   if (!scan.ok) {
@@ -575,6 +581,17 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     };
   }
 
+  const resolvedPerson = await resolvePersonForValidarAcceso({
+    dni: idNumber,
+    nombre: firstName,
+    apellido: lastName
+  });
+
+  const movementType = await inferMovementTypeForToday({
+    personId: resolvedPerson.personId,
+    dniNormalized: idNumber || resolvedPerson.dniNormalized
+  });
+
   let result;
   if (scan.authMethod === 'credential' && scan.authorization && !scan.person) {
     result = {
@@ -585,6 +602,15 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       denialReason: null,
       entryId: null
     };
+  } else if (movementType === 'egreso') {
+    result = await validarAcceso({
+      dni: idNumber,
+      nombre: firstName,
+      apellido: lastName,
+      tipoMovimiento: 'egreso',
+      channel: 'molinete',
+      guardId: username
+    });
   } else {
     result = await validarAcceso({
       dni: idNumber,
@@ -596,29 +622,66 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     });
   }
 
-  const config = await getAccessControlConfig();
-  let authorized = result.authorized;
-  let message = result.authorized
-    ? `${getAuthorizationLabel(result.authorizationType)}${result.personName ? `: ${result.personName}` : ''}`
-    : config.denyMessage;
+  let authorized = movementType === 'egreso' ? true : result.authorized;
+  let denialReason = result.denialReason;
+  let message = movementType === 'egreso'
+    ? (result.personName ? `Egreso registrado: ${result.personName}` : 'Egreso registrado')
+    : (result.authorized
+      ? `${getAuthorizationLabel(result.authorizationType)}${result.personName ? `: ${result.personName}` : ''}`
+      : config.denyMessage);
 
-  const nominaAccess = await buildNominaAccessMessage({
-    personId: result.personId,
-    dniNormalized: idNumber,
-    personName: result.personName
-  });
+  if (movementType === 'ingreso') {
+    const nominaAccess = await buildNominaAccessMessage({
+      personId: result.personId,
+      dniNormalized: idNumber,
+      personName: result.personName
+    });
 
-  if (nominaAccess) {
-    message = nominaAccess.message;
-    if (nominaAccess.authorized === true) authorized = true;
-    else if (nominaAccess.authorized === false) authorized = false;
+    if (nominaAccess) {
+      message = nominaAccess.message;
+      if (nominaAccess.authorized === true) authorized = true;
+      else if (nominaAccess.authorized === false) {
+        authorized = false;
+        denialReason = nominaAccess.reason || denialReason;
+      }
+    }
   }
 
   let relayTriggered = false;
   let relayError = null;
   let airlock = airlockState ? { groupId: door.airlockGroupId, state: airlockState } : null;
 
-  if (authorized && config.enabled && config.triggerOn === 'ingreso' && door.autoOpenOnAuth !== false) {
+  const responsePayload = {
+    ok: true,
+    authorized,
+    movementType,
+    movementLabel: movementType === 'egreso' ? 'Egreso' : 'Ingreso',
+    message,
+    authorizationLabel: movementType === 'egreso'
+      ? 'Egreso'
+      : getAuthorizationLabel(authorized ? (result.authorizationType || null) : null),
+    authorizationType: movementType === 'egreso' ? 'egreso' : (authorized ? result.authorizationType : result.authorizationType),
+    name: result.personName,
+    idNumber,
+    denialReason: authorized ? null : denialReason,
+    personId: result.personId,
+    scanFormat,
+    authMethod: scan.authMethod,
+    relayTriggered,
+    relayError,
+    entryId: result.entryId,
+    door: { id: door.id, name: door.name, airlockRole: door.airlockRole },
+    airlock
+  };
+
+  const shouldTryRelay = !isGuardDesk
+    && movementType === 'ingreso'
+    && authorized
+    && config.enabled
+    && config.triggerOn === 'ingreso'
+    && door.autoOpenOnAuth !== false;
+
+  if (shouldTryRelay) {
     try {
       const openResult = await openDoor({
         doorId: door.id,
@@ -630,9 +693,12 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       });
       relayTriggered = true;
       airlock = openResult.airlock || airlock;
+      responsePayload.relayTriggered = true;
+      responsePayload.airlock = airlock;
     } catch (err) {
       relayError = err.message;
-      await logAccessEvent({
+      responsePayload.relayError = err.message;
+      logAccessEvent({
         type: 'authorized',
         movementType: 'ingreso',
         idNumber,
@@ -646,10 +712,10 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
         relayError: err.message,
         doorId: door.id,
         authMethod: scan.authMethod
-      });
+      }).catch(() => {});
     }
-  } else if (!authorized) {
-    await logAccessEvent({
+  } else if (movementType === 'ingreso' && !authorized) {
+    logAccessEvent({
       type: 'denied',
       movementType: 'ingreso',
       idNumber,
@@ -657,16 +723,16 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       entrySource: 'kiosk',
       entryId: result.entryId,
       username,
-      reason: result.denialReason,
+      reason: denialReason,
       authorizationType: null,
       relayTriggered: false,
       doorId: door.id,
       authMethod: scan.authMethod
-    });
+    }).catch(() => {});
   }
 
   if (result.entryId) {
-    await db.collection('entries').doc(result.entryId).update({
+    db.collection('entries').doc(result.entryId).update({
       relayTriggered,
       relayError,
       doorId: door.id,
@@ -674,28 +740,14 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       authMethod: scan.authMethod,
       company: parsed.company || '',
       destination: parsed.destination || '',
-      scanFormat
+      scanFormat,
+      movementType
+    }).catch((err) => {
+      console.error('[accessControl] No se pudo actualizar entry de kiosk', err.message);
     });
   }
 
-  return {
-    ok: true,
-    authorized,
-    message,
-    authorizationLabel: getAuthorizationLabel(authorized ? (result.authorizationType || nominaAccess?.reason) : null),
-    authorizationType: authorized ? (result.authorizationType || nominaAccess?.reason) : result.authorizationType,
-    name: result.personName,
-    idNumber,
-    denialReason: authorized ? null : (nominaAccess?.reason || result.denialReason),
-    personId: result.personId,
-    scanFormat,
-    authMethod: scan.authMethod,
-    relayTriggered,
-    relayError,
-    entryId: result.entryId,
-    door: { id: door.id, name: door.name, airlockRole: door.airlockRole },
-    airlock
-  };
+  return responsePayload;
 };
 
 const manualOpenDoor = async ({

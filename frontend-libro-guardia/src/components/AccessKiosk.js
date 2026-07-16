@@ -1,11 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ShieldCheck, ShieldX, User, LogOut, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, ShieldX, User, LogOut, AlertTriangle, WifiOff, RefreshCw } from 'lucide-react';
 
 import ContinuousScanner from './ContinuousScanner';
 import ManualDoorButton from './ManualDoorButton';
 import { apiFetch } from '../services/api';
 import { playKioskSound, stopKioskSound, unlockKioskAudio } from '../utils/kioskSounds';
+
+const isConnectionFailure = (err) => Boolean(err?.isNetworkError || err?.status === 0);
+
+const CONNECTION_ERROR_MESSAGE = 'No se pudo verificar — sin conexión. Volvé a escanear.';
 
 const REASON_LABELS = {
 
@@ -77,6 +81,7 @@ function AccessKiosk({
 
   const resetTimerRef = useRef(null);
   const wakeLockRef = useRef(null);
+  const lastRawDataRef = useRef('');
 
 
 
@@ -190,6 +195,7 @@ function AccessKiosk({
   useEffect(() => {
     if (status === 'authorized') playKioskSound('authorized');
     else if (status === 'denied') playKioskSound('denied');
+    else if (status === 'connection_error') playKioskSound('connection_error');
   }, [status]);
 
   const scheduleReset = useCallback((seconds, denied = false) => {
@@ -212,6 +218,8 @@ function AccessKiosk({
 
     if (processing || status === 'processing') return;
 
+    lastRawDataRef.current = rawData;
+
     await unlockKioskAudio();
 
     setProcessing(true);
@@ -224,7 +232,25 @@ function AccessKiosk({
 
     setExceptionalReason('');
 
+    const showConnectionError = () => {
+      setResult({
+        authorized: false,
+        connectionError: true,
+        message: CONNECTION_ERROR_MESSAGE,
+        name: '',
+        idNumber: ''
+      });
+      setStatus('connection_error');
+      scheduleReset(Math.max(resetSeconds, 8), false);
+    };
 
+    // navigator.onLine=false es definitivo; si dice true, el scan real confirma
+    // (incluye wifi local sin salida a internet → isNetworkError).
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      showConnectionError();
+      setProcessing(false);
+      return;
+    }
 
     try {
 
@@ -254,21 +280,18 @@ function AccessKiosk({
 
     } catch (err) {
 
-      setResult({
-
-        authorized: false,
-
-        message: err.message || 'Error al validar acceso',
-
-        name: '',
-
-        idNumber: ''
-
-      });
-
-      setStatus('denied');
-
-      scheduleReset(resetSeconds, true);
+      if (isConnectionFailure(err)) {
+        showConnectionError();
+      } else {
+        setResult({
+          authorized: false,
+          message: err.message || 'Error al validar acceso',
+          name: '',
+          idNumber: ''
+        });
+        setStatus('denied');
+        scheduleReset(resetSeconds, true);
+      }
 
     } finally {
 
@@ -276,6 +299,21 @@ function AccessKiosk({
 
     }
 
+  };
+
+  const handleRetryScan = () => {
+    const raw = lastRawDataRef.current;
+    if (!raw) {
+      resetToListening();
+      return;
+    }
+    clearResetTimer();
+    setStatus('listening');
+    setResult(null);
+    // Reintentar con el último escaneo (el guardia no necesita pasar el DNI de nuevo)
+    setTimeout(() => {
+      handleScan(raw);
+    }, 0);
   };
 
 
@@ -367,7 +405,7 @@ function AccessKiosk({
 
           <div>
 
-            <h1>Control de acceso</h1>
+            <h1>Control de Acceso</h1>
 
             <p>Escanee su DNI o QR para ingresar</p>
 
@@ -401,13 +439,10 @@ function AccessKiosk({
         <div className="kiosk-scanner-panel">
 
           <ContinuousScanner
-
             onScan={handleScan}
-
             scannerId="kiosk-continuous-scanner"
-
             paused={status === 'processing' || showExceptionalForm}
-
+            enableCamera={false}
           />
 
         </div>
@@ -481,6 +516,30 @@ function AccessKiosk({
           )}
 
 
+
+          {status === 'connection_error' && result && (
+            <div className="kiosk-result kiosk-result-connection">
+              <WifiOff size={72} />
+              <h2>NO SE PUDO VERIFICAR</h2>
+              <p className="kiosk-deny-message">
+                {result.message || CONNECTION_ERROR_MESSAGE}
+              </p>
+              <span className="kiosk-auth-badge warning">Sin conexión / error de red</span>
+              <div className="kiosk-exceptional-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary kiosk-exceptional-btn"
+                  onClick={handleRetryScan}
+                  disabled={processing}
+                >
+                  <RefreshCw size={18} /> Reintentar
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={resetToListening}>
+                  Escanear otro documento
+                </button>
+              </div>
+            </div>
+          )}
 
           {status === 'denied' && result && (
 

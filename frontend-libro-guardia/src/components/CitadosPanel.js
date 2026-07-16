@@ -129,8 +129,11 @@ function CitadosPanel({ authToken, enabled = true, pollSeconds = 60, onRegistere
     <section className={`attendance-panel citados-panel${missingCount ? ' attendance-panel--alert' : ''}`}>
       <div className="attendance-panel__header">
         <div>
-          <p className="attendance-panel__kicker">Citados del día</p>
+          <p className="attendance-panel__kicker">Citados</p>
           <h3 className="attendance-panel__title">Transporte, Tesorería y Grúas</h3>
+          <p className="attendance-panel__purpose">
+            Control de asistencia — quién llegó hoy de lo esperado.
+          </p>
           {data && (
             <p className="attendance-panel__subtitle">
               {data.presentCount}/{data.expectedCount} en planta

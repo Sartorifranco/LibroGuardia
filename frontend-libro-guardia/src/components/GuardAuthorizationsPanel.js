@@ -126,9 +126,12 @@ function GuardAuthorizationsPanel({
   return (
     <div className="space-y-6">
       <div className="section-heading">
-        <h2 className="text-2xl font-semibold text-red-700">Personal autorizado externo</h2>
+        <h2 className="text-2xl font-semibold text-red-700">Autorizados</h2>
+        <p className="attendance-panel__purpose" style={{ marginTop: '0.35rem' }}>
+          Permisos de acceso — quién está autorizado a entrar.
+        </p>
         <p className="text-sm text-gray-600">
-          Visitas, contratistas y accesos temporales ajenos a la nómina. El personal citado de Transporte/Tesorería está en el módulo Citados.
+          Visitas, contratistas, temporales y pre-registro. La asistencia de citaciones del día está en Citados.
         </p>
       </div>
 

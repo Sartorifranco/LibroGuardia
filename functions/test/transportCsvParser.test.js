@@ -4,7 +4,9 @@ const {
   parseTransportCsvLine,
   militaryTimeToHHMM,
   expandTransportRow,
-  applyTransportParseToCitacion
+  applyTransportParseToCitacion,
+  canConfidentlyRepairCitacion,
+  hydrateAuthorizationForRead
 } = require('../lib/transportCsvParser');
 
 describe('transportCsvParser', () => {
@@ -42,5 +44,29 @@ describe('transportCsvParser', () => {
     assert.equal(fixed.legajo, '0026');
     assert.equal(fixed.destination, 'Operaciones');
     assert.equal(fixed.appointmentTime, '06:40');
+    assert.equal(fixed.nameKey, 'ariel franco sosa');
+  });
+
+  it('canConfidentlyRepairCitacion acepta CSV transporte y rechaza basura', () => {
+    assert.equal(canConfidentlyRepairCitacion({
+      type: 'citacion',
+      name: `Legajo ${sample}`,
+      legajo: sample
+    }), true);
+    assert.equal(canConfidentlyRepairCitacion({
+      type: 'citacion',
+      name: 'Brizuela Hector Daniel',
+      legajo: '174'
+    }), false);
+    assert.equal(canConfidentlyRepairCitacion({
+      type: 'citacion',
+      name: 'texto sin formato csv',
+      legajo: '??'
+    }), false);
+  });
+
+  it('hydrateAuthorizationForRead no toca permanent limpia', () => {
+    const permanent = { type: 'permanent', name: 'CORDOBA Omar', legajo: '100' };
+    assert.equal(hydrateAuthorizationForRead(permanent), permanent);
   });
 });

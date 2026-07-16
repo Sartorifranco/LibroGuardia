@@ -1,6 +1,7 @@
 const { normalizeIdNumber, parseScanData } = require('../dniParser');
 const { db } = require('../firestore');
 const { buildNameTokens } = require('./nameUtils');
+const { hydrateAuthorizationForRead } = require('./transportCsvParser');
 
 const CREDENTIAL_PREFIX = /^(CARD|CRED|TARJETA|RFID)[:#\s-]*/i;
 
@@ -48,7 +49,7 @@ const findPersonByCredential = async (credentialCode = '') => {
     .get();
 
   if (!authSnap.empty) {
-    const auth = { id: authSnap.docs[0].id, ...authSnap.docs[0].data() };
+    const auth = hydrateAuthorizationForRead({ id: authSnap.docs[0].id, ...authSnap.docs[0].data() });
     if (auth.personId) {
       const personSnap = await db.collection('people').doc(auth.personId).get();
       if (personSnap.exists) {

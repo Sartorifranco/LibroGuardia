@@ -8,9 +8,27 @@ const {
 } = require('../attendanceAlerts');
 const { isCitacionRequiredArea, isSistemasArea } = require('./centroCostoGroups');
 const { resolveShiftSchedule } = require('./shiftParser');
+const { hydrateAuthorizationForRead } = require('./transportCsvParser');
 
 const SHIFT_EARLY_MINUTES = 30;
 const SHIFT_LATE_MINUTES = 15;
+
+let citacionesTodayCache = { date: null, data: null, at: 0 };
+const CITACIONES_CACHE_MS = 45_000;
+
+const getCitacionesTodayCached = async (dateString) => {
+  const now = Date.now();
+  if (
+    citacionesTodayCache.date === dateString
+    && citacionesTodayCache.data
+    && now - citacionesTodayCache.at < CITACIONES_CACHE_MS
+  ) {
+    return citacionesTodayCache.data;
+  }
+  const data = await loadCitacionesToday(dateString);
+  citacionesTodayCache = { date: dateString, data, at: now };
+  return data;
+};
 
 const DAY_LABELS = {
   Lu: 'lunes',
@@ -63,7 +81,7 @@ const findNextCitacionDate = async (employee, afterDate) => {
     .get();
 
   const future = snap.docs
-    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .map((doc) => hydrateAuthorizationForRead({ id: doc.id, ...doc.data() }))
     .filter((item) => {
       const date = item.appointmentDate || item.startDate;
       if (!date || date <= afterDate) return false;
@@ -133,7 +151,7 @@ const buildNominaAccessMessage = async ({
   if (!employee || employee.active === false) return null;
 
   const { dateString, dayCode, timeString } = getArgentinaDateParts(referenceDate);
-  const citacionesToday = await loadCitacionesToday(dateString);
+  const citacionesToday = await getCitacionesTodayCached(dateString);
   const shift = resolveShiftSchedule(employee);
   const name = personName || employee.name || 'Esta persona';
   const centro = employee.centroCosto || employee.company || '';

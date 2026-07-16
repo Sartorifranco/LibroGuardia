@@ -2,6 +2,7 @@ const { db, FieldValue } = require('./firestore');
 const { normalizeIdNumber } = require('./dniParser');
 const { normalizeLegajo } = require('./lib/personMatch');
 const { normalizePersonName, buildNameTokens, namesMatch } = require('./lib/nameUtils');
+const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
 
 const AUTHORIZATION_TYPES = ['citacion', 'visit', 'visita', 'temporal', 'permanent'];
 
@@ -36,7 +37,7 @@ const dateInRange = (date, startDate, endDate) => {
   return date >= startDate && date <= end;
 };
 
-const authorizationToJSON = (doc) => ({ id: doc.id, ...doc.data() });
+const authorizationToJSON = (doc) => hydrateAuthorizationForRead({ id: doc.id, ...doc.data() });
 
 const buildAuthorizationRecord = ({
   type,
@@ -58,7 +59,7 @@ const buildAuthorizationRecord = ({
   appointmentTime = null
 }) => {
   const authType = normalizeAuthorizationType(type);
-  const idNumberNormalized = normalizeIdNumber(idNumber);
+  let idNumberNormalized = normalizeIdNumber(idNumber);
   const legajoNormalized = normalizeLegajo(legajo) || String(legajo || '').trim();
   let resolvedName = String(name || '').trim();
   if (!resolvedName && legajoNormalized) {
@@ -67,6 +68,13 @@ const buildAuthorizationRecord = ({
   if (!resolvedName) {
     throw new Error('Nombre es obligatorio');
   }
+
+  const normalizedStart = startDate || todayDateString();
+  // Evitar DNI = fecha de citación (2026-07-16 → 20260716).
+  if (idNumberNormalized && idNumberNormalized === String(normalizedStart).replace(/\D/g, '')) {
+    idNumberNormalized = '';
+  }
+
   if (!idNumberNormalized && !legajoNormalized) {
     throw new Error('Se requiere DNI o legajo');
   }
@@ -74,7 +82,6 @@ const buildAuthorizationRecord = ({
     throw new Error('Tipo de autorización inválido');
   }
 
-  const normalizedStart = startDate || todayDateString();
   let normalizedEnd = endDate || null;
 
   if (authType === 'citacion') {
@@ -172,7 +179,7 @@ const pickBestAuthorization = (docs, referenceDate) => {
     }
 
     if (valid && (!match || priority > match.priority)) {
-      match = { ...auth, reason, priority };
+      match = { ...hydrateAuthorizationForRead(auth), reason, priority };
     }
   });
 

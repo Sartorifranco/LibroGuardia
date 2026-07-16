@@ -1,5 +1,15 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { X, ChevronRight, ChevronLeft, MonitorSmartphone, FilePlus2, History, LayoutDashboard } from 'lucide-react';
+import {
+  X,
+  ChevronRight,
+  ChevronLeft,
+  MonitorSmartphone,
+  FilePlus2,
+  History,
+  LayoutDashboard,
+  ClipboardList,
+  BadgeCheck
+} from 'lucide-react';
 
 const STORAGE_KEY = 'onboardingDone';
 
@@ -11,10 +21,22 @@ const STEPS = [
     body: 'Desde Inicio ves el estado del día: movimientos, GPS, citados y accesos. Es el centro de operación de la guardia.'
   },
   {
-    id: 'kiosco',
+    id: 'acceso',
     icon: MonitorSmartphone,
-    title: 'Kiosco de acceso',
-    body: 'El kiosco sirve para escanear o validar ingresos en pantalla completa. Ideal en mesa de acceso sin distracciones del panel completo.'
+    title: 'Control de Acceso',
+    body: 'El Control de Acceso sirve para escanear o validar ingresos en pantalla completa. Ideal en mesa de acceso sin distracciones del panel completo.'
+  },
+  {
+    id: 'citados',
+    icon: ClipboardList,
+    title: 'Citados',
+    body: 'Control de asistencia: quién llegó hoy de lo esperado según las citaciones del día (por ejemplo Transporte, Tesorería y Grúas).'
+  },
+  {
+    id: 'autorizados',
+    icon: BadgeCheck,
+    title: 'Autorizados',
+    body: 'Permisos de acceso: quién está autorizado a entrar (visitas, temporales y pre-registro). Es distinto de la asistencia de Citados.'
   },
   {
     id: 'novedad',

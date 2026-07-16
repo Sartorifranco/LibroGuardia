@@ -7,6 +7,7 @@ import { useEntries } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
 import { hasPermission } from '../../utils/permissions';
+import { consumeAuthManualPrefill } from '../../utils/authPrefill';
 
 function PersonalPage() {
   const { authToken, currentUser } = useAuth();
@@ -34,6 +35,14 @@ function PersonalPage() {
     const time = consumePrefill('personal');
     if (time) setPersonalEventTime(time);
   }, [prefill, consumePrefill]);
+
+  useEffect(() => {
+    const scanPrefill = consumeAuthManualPrefill();
+    if (!scanPrefill?.exceptional) return;
+    if (scanPrefill.dni) setPersonalId(String(scanPrefill.dni));
+    if (scanPrefill.name) setPersonalName(String(scanPrefill.name));
+    setPersonalType('ingreso');
+  }, []);
 
   useEffect(() => {
     const fetchPersonalMasterData = async () => {

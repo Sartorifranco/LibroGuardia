@@ -2,7 +2,7 @@ export const ADMIN_SECTION_META = {
   users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
   access: { title: 'GPS flota UBIKA', description: 'Monitoreo de móviles en portón y registro automático.' },
   doors: { title: 'Puertas y acceso', description: 'SR201, multi-puerta, autenticación y estancos en un solo lugar.' },
-  citaciones: { title: 'Autorizaciones', description: 'Citaciones del día, visitas y accesos permanentes.' },
+  citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
   nomina: { title: 'Nómina de personal', description: 'Base de empleados, turnos y tipos de autorización.' },
   vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },
   fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },

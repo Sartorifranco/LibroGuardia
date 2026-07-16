@@ -8,6 +8,7 @@ import React, {
   useState
 } from 'react';
 import { apiFetch } from '../services/api';
+import { checkBackendConnectivity } from '../utils/connectivity';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import * as offlineQueue from '../utils/offlineQueue';
@@ -41,9 +42,24 @@ export function OfflineQueueProvider({ children }) {
     await refreshCount();
   }, [refreshCount]);
 
+  const probeConnectivity = useCallback(async () => {
+    const result = await checkBackendConnectivity({
+      timeoutMs: 2500,
+      token: authToken || undefined
+    });
+    setIsOnline(result.online);
+    return result.online;
+  }, [authToken]);
+
   const flushQueue = useCallback(async () => {
     if (!authToken || !currentUser || flushingRef.current) return;
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setIsOnline(false);
+      return;
+    }
+
+    const reallyOnline = await probeConnectivity();
+    if (!reallyOnline) return;
 
     flushingRef.current = true;
     try {
@@ -66,7 +82,10 @@ export function OfflineQueueProvider({ children }) {
           await offlineQueue.remove(item.id);
           sent += 1;
         } catch (err) {
-          if (err.isNetworkError || err.status === 0) break;
+          if (err.isNetworkError || err.status === 0) {
+            setIsOnline(false);
+            break;
+          }
           // Ítem inválido o error definitivo: eliminar para no bloquear la cola
           console.error('Error al reenviar ítem offline:', err);
           await offlineQueue.remove(item.id);
@@ -89,7 +108,7 @@ export function OfflineQueueProvider({ children }) {
     } finally {
       flushingRef.current = false;
     }
-  }, [authToken, currentUser, refreshCount, showError, showSuccess]);
+  }, [authToken, currentUser, probeConnectivity, refreshCount, showError, showSuccess]);
 
   useEffect(() => {
     refreshCount();
@@ -97,8 +116,10 @@ export function OfflineQueueProvider({ children }) {
 
   useEffect(() => {
     const onOnline = () => {
-      setIsOnline(true);
-      flushQueue();
+      // No confiar solo en el evento del navegador: validar contra el backend.
+      probeConnectivity().then((ok) => {
+        if (ok) flushQueue();
+      });
     };
     const onOffline = () => setIsOnline(false);
     window.addEventListener('online', onOnline);
@@ -107,11 +128,11 @@ export function OfflineQueueProvider({ children }) {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
     };
-  }, [flushQueue]);
+  }, [flushQueue, probeConnectivity]);
 
-  // Al recuperar sesión con ítems pendientes e internet, intentar flush una vez.
+  // Al recuperar sesión con ítems pendientes, verificar conectividad real y flush.
   useEffect(() => {
-    if (!authToken || !currentUser || !isOnline) return undefined;
+    if (!authToken || !currentUser) return undefined;
     if (pendingCount <= 0) return undefined;
     const t = setTimeout(() => { flushQueue(); }, 400);
     return () => clearTimeout(t);
@@ -123,8 +144,9 @@ export function OfflineQueueProvider({ children }) {
     isOnline,
     enqueueEntry,
     flushQueue,
-    refreshCount
-  }), [pendingCount, isOnline, enqueueEntry, flushQueue, refreshCount]);
+    refreshCount,
+    probeConnectivity
+  }), [pendingCount, isOnline, enqueueEntry, flushQueue, refreshCount, probeConnectivity]);
 
   return (
     <OfflineQueueContext.Provider value={value}>
