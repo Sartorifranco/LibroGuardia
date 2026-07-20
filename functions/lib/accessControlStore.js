@@ -26,6 +26,13 @@ const logAccessEvent = async (event) => {
     ...event,
     createdAt: FieldValue.serverTimestamp()
   });
+  // Notificaciones: fire-and-forget (no afecta el flujo de acceso).
+  try {
+    const { onAccessEventLogged } = require('./notifications');
+    onAccessEventLogged(event);
+  } catch (err) {
+    console.error('[accessControlStore] notify hook', err.message);
+  }
 };
 
 const GLOBAL_ACCESS_KEYS = [

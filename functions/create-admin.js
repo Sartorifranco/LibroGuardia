@@ -45,16 +45,21 @@ const db = admin.firestore();
 async function main() {
   const userRef = db.collection('users').doc(username);
   const passwordHash = await bcrypt.hash(password, 10);
+  const existing = await userRef.get();
+  const passwordVersion = existing.exists
+    ? (Number(existing.data().passwordVersion) || 1) + 1
+    : 1;
 
   await userRef.set({
     username,
     password: passwordHash,
     role: 'admin',
     active: true,
+    passwordVersion,
     createdAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 
-  console.log(`Admin "${username}" creado/actualizado en Firestore.`);
+  console.log(`Admin "${username}" creado/actualizado en Firestore (passwordVersion=${passwordVersion}).`);
   process.exit(0);
 }
 

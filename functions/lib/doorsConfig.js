@@ -4,16 +4,22 @@ const DOORS_SETTINGS_DOC = 'doorsConfig';
 
 const AUTH_METHODS = ['dni', 'face', 'credential', 'manual'];
 
+const DOOR_DRIVERS = ['sr201', 'generic_http'];
+
 const DEFAULT_DOOR = {
   id: '',
   name: '',
   active: true,
   device: {
+    driver: 'sr201',
     bridgeUrl: '',
     bridgeSecret: '',
     host: '',
     port: 6722,
-    channel: 1
+    channel: 1,
+    httpUrl: '',
+    httpMethod: 'POST',
+    httpAuthToken: ''
   },
   pulseMode: 'inherit',
   pulseSeconds: 3,
@@ -62,6 +68,27 @@ const normalizeAuthMethods = (methods = []) => {
   return normalized.length ? normalized : ['dni'];
 };
 
+const normalizeDevice = (device = {}) => {
+  const merged = {
+    ...DEFAULT_DOOR.device,
+    ...(device || {})
+  };
+  const driver = DOOR_DRIVERS.includes(merged.driver) ? merged.driver : 'sr201';
+  const httpMethod = String(merged.httpMethod || 'POST').toUpperCase();
+  return {
+    ...merged,
+    driver,
+    bridgeUrl: String(merged.bridgeUrl || '').trim(),
+    bridgeSecret: String(merged.bridgeSecret || ''),
+    host: String(merged.host || '').trim(),
+    port: Number(merged.port) || DEFAULT_DOOR.device.port,
+    channel: Number(merged.channel) || DEFAULT_DOOR.device.channel,
+    httpUrl: String(merged.httpUrl || '').trim(),
+    httpMethod: ['POST', 'PUT', 'GET'].includes(httpMethod) ? httpMethod : 'POST',
+    httpAuthToken: String(merged.httpAuthToken || '')
+  };
+};
+
 const normalizeDoor = (door = {}, index = 0) => {
   const id = slugifyDoorId(door.id || door.name) || `puerta-${index + 1}`;
   return {
@@ -70,10 +97,7 @@ const normalizeDoor = (door = {}, index = 0) => {
     id,
     name: String(door.name || id).trim(),
     active: door.active !== false,
-    device: {
-      ...DEFAULT_DOOR.device,
-      ...(door.device || {})
-    },
+    device: normalizeDevice(door.device),
     pulseMode: ['inherit', 'jog', 'timed'].includes(door.pulseMode) ? door.pulseMode : 'inherit',
     pulseSeconds: Number(door.pulseSeconds) || DEFAULT_DOOR.pulseSeconds,
     authMethods: normalizeAuthMethods(door.authMethods),
@@ -110,6 +134,7 @@ const buildLegacyDefaultDoor = (accessControl = {}) => normalizeDoor({
   id: 'puerta-principal',
   name: 'Puerta principal',
   device: {
+    driver: 'sr201',
     bridgeUrl: accessControl.bridgeUrl || '',
     bridgeSecret: accessControl.bridgeSecret || '',
     host: accessControl.host || '',
@@ -204,6 +229,7 @@ const getAirlockDoors = (config, groupId) => {
 
 module.exports = {
   AUTH_METHODS,
+  DOOR_DRIVERS,
   DEFAULT_DOOR,
   DEFAULT_AIRLOCK_GROUP,
   DEFAULT_DOORS_CONFIG,

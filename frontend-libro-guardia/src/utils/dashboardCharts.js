@@ -1,10 +1,11 @@
 import { getEffectiveEntryType } from './entryDisplay';
 import { getDashboardStats } from './dashboardStats';
+import brand from '../config/brand';
 
 const TYPE_META = [
   { key: 'personal', label: 'Personal', color: '#2563eb' },
   { key: 'vehiculo', label: 'Vehículos ext.', color: '#7c3aed' },
-  { key: 'flota', label: 'Flota / blindados', color: '#dc2626' },
+  { key: 'flota', label: 'Flota / blindados', color: brand.primaryColor },
   { key: 'novedad', label: 'Novedades', color: '#d97706' }
 ];
 

@@ -74,7 +74,17 @@ const emptyDoor = () => ({
   id: '',
   name: '',
   active: true,
-  device: { bridgeUrl: '', bridgeSecret: '', host: '', port: 6722, channel: 1 },
+  device: {
+    driver: 'sr201',
+    bridgeUrl: '',
+    bridgeSecret: '',
+    host: '',
+    port: 6722,
+    channel: 1,
+    httpUrl: '',
+    httpMethod: 'POST',
+    httpAuthToken: ''
+  },
   pulseMode: 'inherit',
   pulseSeconds: 3,
   authMethods: ['dni', 'credential'],
@@ -188,10 +198,11 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
 
   return (
     <div className="admin-sub-section">
-      <h3 className="theme-section-title">Puertas y acceso SR201</h3>
+      <h3 className="theme-section-title">Puertas y acceso</h3>
       <p className="theme-section-desc">
-        Configure aquí <strong>todas</strong> las puertas, dispositivos SR201, métodos de autenticación
-        y estancos. Los valores por defecto del dispositivo se aplican a cada puerta que deje IP o puente vacíos.
+        Configure aquí <strong>todas</strong> las puertas, controladoras (SR201 o HTTP genérico),
+        métodos de autenticación y estancos. Los valores por defecto del dispositivo se aplican
+        a cada puerta SR201 que deje IP o puente vacíos.
       </p>
 
       {legacyFallback && (
@@ -316,13 +327,50 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               <input className="input-field" placeholder="ID (slug)" value={door.id || ''} onChange={(e) => updateDoor(index, 'id', e.target.value)} />
               <input className="input-field" placeholder="Nombre visible" value={door.name || ''} onChange={(e) => updateDoor(index, 'name', e.target.value)} />
-              <input className="input-field" type="number" min="1" max="8" placeholder="Canal SR201" value={door.device?.channel || 1} onChange={(e) => updateDoor(index, 'device.channel', Number(e.target.value))} />
-              <input className="input-field" placeholder="IP SR201 (vacío = hereda)" value={door.device?.host || ''} onChange={(e) => updateDoor(index, 'device.host', e.target.value)} />
-              <input className="input-field" placeholder="URL puente (vacío = hereda)" value={door.device?.bridgeUrl || ''} onChange={(e) => updateDoor(index, 'device.bridgeUrl', e.target.value)} />
+              <select
+                className="input-field"
+                value={door.device?.driver || 'sr201'}
+                onChange={(e) => updateDoor(index, 'device.driver', e.target.value)}
+              >
+                <option value="sr201">Controladora SR201</option>
+                <option value="generic_http">Relé genérico HTTP</option>
+              </select>
+              {(door.device?.driver || 'sr201') === 'sr201' ? (
+                <>
+                  <input className="input-field" type="number" min="1" max="8" placeholder="Canal SR201" value={door.device?.channel || 1} onChange={(e) => updateDoor(index, 'device.channel', Number(e.target.value))} />
+                  <input className="input-field" placeholder="IP SR201 (vacío = hereda)" value={door.device?.host || ''} onChange={(e) => updateDoor(index, 'device.host', e.target.value)} />
+                  <input className="input-field" placeholder="URL puente (vacío = hereda)" value={door.device?.bridgeUrl || ''} onChange={(e) => updateDoor(index, 'device.bridgeUrl', e.target.value)} />
+                </>
+              ) : (
+                <>
+                  <input
+                    className="input-field md:col-span-2"
+                    placeholder="URL del webhook (ej. https://relay.local/open)"
+                    value={door.device?.httpUrl || ''}
+                    onChange={(e) => updateDoor(index, 'device.httpUrl', e.target.value)}
+                  />
+                  <select
+                    className="input-field"
+                    value={door.device?.httpMethod || 'POST'}
+                    onChange={(e) => updateDoor(index, 'device.httpMethod', e.target.value)}
+                  >
+                    <option value="POST">Método POST</option>
+                    <option value="PUT">Método PUT</option>
+                    <option value="GET">Método GET</option>
+                  </select>
+                  <input
+                    className="input-field"
+                    type="password"
+                    placeholder="Bearer token (opcional)"
+                    value={door.device?.httpAuthToken || ''}
+                    onChange={(e) => updateDoor(index, 'device.httpAuthToken', e.target.value)}
+                  />
+                </>
+              )}
               <input className="input-field" placeholder="Lectores (ids separados por coma)" value={door.readerIdsText || (door.readerIds || []).join(', ')} onChange={(e) => updateDoor(index, 'readerIdsText', e.target.value)} />
               <select className="input-field" value={door.pulseMode || 'inherit'} onChange={(e) => updateDoor(index, 'pulseMode', e.target.value)}>
                 <option value="inherit">Pulso: heredar global</option>
-                <option value="jog">Pulso jog</option>
+                <option value="jog">Pulso jog / open</option>
                 <option value="timed">Pulso temporizado</option>
               </select>
               <input className="input-field" type="number" min="1" max="99" placeholder="Segundos pulso" value={door.pulseSeconds || 3} onChange={(e) => updateDoor(index, 'pulseSeconds', Number(e.target.value))} />

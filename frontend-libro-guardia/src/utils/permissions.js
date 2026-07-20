@@ -17,6 +17,8 @@ export const PERMISSION_LABELS = {
   'roles.view': 'Ver roles',
   'roles.manage': 'Gestionar roles',
   'settings.permissions': 'Configurar permisos',
+  'audit.view': 'Ver auditoría administrativa',
+  'notifications.config': 'Configurar alertas por email',
   'access.control': 'Configurar GPS flota UBIKA',
   'access.doors.manage': 'Configurar puertas, estancos y dispositivos',
   'access.manual_open': 'Abrir puerta manualmente (SR201)',
@@ -88,7 +90,9 @@ export const PERMISSION_CATEGORIES = [
       'users.delete',
       'roles.view',
       'roles.manage',
-      'settings.permissions'
+      'settings.permissions',
+      'audit.view',
+      'notifications.config'
     ]
   },
   {
@@ -241,7 +245,9 @@ export const canAccessAdmin = (user) =>
   hasPermission(user, 'fleet.upload') ||
   hasPermission(user, 'settings.permissions') ||
   hasPermission(user, 'access.control') ||
-  hasPermission(user, 'access.doors.manage');
+  hasPermission(user, 'access.doors.manage') ||
+  hasPermission(user, 'audit.view') ||
+  hasPermission(user, 'notifications.config');
 
 export const canManageUsers = (user) =>
   hasPermission(user, 'users.create') ||

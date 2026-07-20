@@ -58,6 +58,26 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  const refreshCurrentUser = useCallback(async () => {
+    if (!authToken) return null;
+    const data = await apiFetch('/auth/me', { token: authToken });
+    setCurrentUser(data.user);
+    return data.user;
+  }, [authToken]);
+
+  const changePassword = useCallback(async (currentPassword, newPassword) => {
+    if (!authToken) {
+      throw new Error('No hay sesión activa');
+    }
+    await apiFetch('/auth/change-password', {
+      method: 'POST',
+      token: authToken,
+      body: { currentPassword, newPassword }
+    });
+    const user = await refreshCurrentUser();
+    return user;
+  }, [authToken, refreshCurrentUser]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -130,6 +150,8 @@ export function AuthProvider({ children }) {
     authLoading,
     login,
     logout,
+    changePassword,
+    refreshCurrentUser,
     isAuthenticated: Boolean(currentUser && authToken)
   }), [
     authToken,
@@ -137,7 +159,9 @@ export function AuthProvider({ children }) {
     systemRoles,
     authLoading,
     login,
-    logout
+    logout,
+    changePassword,
+    refreshCurrentUser
   ]);
 
   return (

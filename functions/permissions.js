@@ -19,6 +19,8 @@ const PERMISSION_KEYS = [
   'roles.view',
   'roles.manage',
   'settings.permissions',
+  'audit.view',
+  'notifications.config',
   'access.control',
   'access.doors.manage',
   'access.manual_open',

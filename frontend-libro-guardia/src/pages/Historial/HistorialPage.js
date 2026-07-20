@@ -13,6 +13,7 @@ import {
   toLocalYmd
 } from '../../utils/historialFilters';
 import { hasPermission } from '../../utils/permissions';
+import brand from '../../config/brand';
 
 const TYPE_OPTIONS = [
   { value: 'todos', label: 'Todos los tipos' },
@@ -209,7 +210,7 @@ function HistorialPage() {
       } else if (kind === 'pdf') {
         const doc = new jsPDF('landscape');
         doc.setFontSize(12);
-        doc.text('Historial — Libro de Guardia Bacar S.A.', 14, 16);
+        doc.text(brand.pdfReportTitle, 14, 16);
         doc.setFontSize(9);
         doc.text(filterLabel(), 14, 22);
         doc.autoTable({

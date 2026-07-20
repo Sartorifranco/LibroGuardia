@@ -1,8 +1,16 @@
-/* Libro de Guardia ? temas Bacar (dark / light) */
+/* Libro de Guardia — temas (dark / light).
+   Colores de marca: --brand-* los inyecta applyBrandTheme desde src/config/brand.js */
+
+:root {
+  --brand-primary: #dc2626;
+  --brand-primary-hover: #b91c1c;
+  --brand-background: #0a0a0a;
+  --brand-primary-rgb: 220, 38, 38;
+}
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0a0a0a;
+  --bg: var(--brand-background);
   --surface: #141414;
   --card: #1a1a1a;
   --card-hover: #222222;
@@ -12,13 +20,13 @@
   --text-secondary: #d4d4d4;
   --text-muted: #a3a3a3;
   --text-faint: #737373;
-  --accent: #dc2626;
-  --accent-hover: #b91c1c;
-  --accent-soft: rgba(220, 38, 38, 0.12);
+  --accent: var(--brand-primary);
+  --accent-hover: var(--brand-primary-hover);
+  --accent-soft: rgba(var(--brand-primary-rgb), 0.12);
   --success-bg: rgba(34, 197, 94, 0.16);
   --success-text: #86efac;
   --success-border: rgba(74, 222, 128, 0.35);
-  --danger-bg: rgba(220, 38, 38, 0.15);
+  --danger-bg: rgba(var(--brand-primary-rgb), 0.15);
   --danger-text: #f87171;
   --info-bg: rgba(56, 189, 248, 0.12);
   --info-text: #38bdf8;
@@ -29,7 +37,7 @@
   --warn-soft-text: #fcd34d;
   --admin-bg: #120808;
   --admin-sidebar: #1a1010;
-  --admin-accent-line: #dc2626;
+  --admin-accent-line: var(--brand-primary);
   --shadow-card: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
   --panel: #1a1a1a;
   --panel-muted: #1c1c1c;
@@ -57,9 +65,9 @@
   --text-secondary: #374151;
   --text-muted: #6b7280;
   --text-faint: #9ca3af;
-  --accent: #dc2626;
-  --accent-hover: #b91c1c;
-  --accent-soft: rgba(220, 38, 38, 0.08);
+  --accent: var(--brand-primary);
+  --accent-hover: var(--brand-primary-hover);
+  --accent-soft: rgba(var(--brand-primary-rgb), 0.08);
   --success-bg: #ecfdf5;
   --success-text: #047857;
   --success-border: #6ee7b7;
@@ -74,7 +82,7 @@
   --warn-soft-text: #92400e;
   --admin-bg: #f1f5f9;
   --admin-sidebar: #ffffff;
-  --admin-accent-line: #dc2626;
+  --admin-accent-line: var(--brand-primary);
   --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06);
   --panel: #ffffff;
   --panel-muted: #f8fafc;
@@ -1468,7 +1476,7 @@
   color: #fff;
   font-size: 0.6875rem;
   font-weight: 700;
-  border: 2px solid #dc2626;
+  border: 2px solid var(--brand-primary);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
@@ -1812,6 +1820,27 @@ input[type="datetime-local"].input-field {
   color: var(--text);
 }
 
+.change-password-overlay {
+  z-index: 80;
+}
+
+.change-password-modal {
+  width: min(100%, 26rem);
+  max-width: 26rem;
+}
+
+.change-password-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.change-password-form .field-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 /* ?? File inputs ?? */
 
 .app-shell input[type="file"] {
@@ -1845,7 +1874,7 @@ input[type="datetime-local"].input-field {
 }
 
 .kiosk-screen-listening {
-  background: linear-gradient(180deg, #0a0a0a 0%, #141414 100%);
+  background: linear-gradient(180deg, var(--brand-background) 0%, #141414 100%);
 }
 
 .kiosk-screen-authorized {
@@ -2991,7 +3020,7 @@ input[type="datetime-local"].input-field {
 }
 
 .access-scan-icon-deny {
-  color: #dc2626;
+  color: var(--brand-primary);
 }
 
 .access-scan-close {
@@ -3551,8 +3580,8 @@ body {
 }
 
 .roles-templates__btn--active {
-  border-color: var(--accent, #dc2626) !important;
-  color: var(--accent, #dc2626) !important;
+  border-color: var(--accent, var(--brand-primary)) !important;
+  color: var(--accent, var(--brand-primary)) !important;
 }
 
 .roles-generated-id {
@@ -3986,12 +4015,12 @@ body {
 }
 
 .historial-preset-btn:hover {
-  border-color: var(--accent, #dc2626);
+  border-color: var(--accent, var(--brand-primary));
 }
 
 .historial-preset-btn.is-active {
-  background: var(--accent, #dc2626);
-  border-color: var(--accent, #dc2626);
+  background: var(--accent, var(--brand-primary));
+  border-color: var(--accent, var(--brand-primary));
   color: #fff;
   font-weight: 600;
 }
@@ -4066,7 +4095,7 @@ body {
 }
 
 .confirm-dialog__btn-danger {
-  background: var(--accent, #dc2626);
+  background: var(--accent, var(--brand-primary));
   color: #fff;
   border: 1px solid transparent;
 }
@@ -4386,7 +4415,7 @@ body {
   align-items: center;
   justify-content: center;
   background: rgba(220, 38, 38, 0.1);
-  color: var(--accent, #dc2626);
+  color: var(--accent, var(--brand-primary));
   margin-bottom: 0.85rem;
 }
 
@@ -4422,7 +4451,7 @@ body {
 }
 
 .onboarding-modal__dots span.is-active {
-  background: var(--accent, #dc2626);
+  background: var(--accent, var(--brand-primary));
   width: 1rem;
 }
 
@@ -4451,4 +4480,116 @@ body {
   color: var(--info-text, #0c4a6e);
   font-size: 0.95rem;
   font-weight: 600;
+}
+
+/* Reportes gerenciales */
+.reportes-date-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.reportes-date-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted, #737373);
+}
+
+.reportes-date-row input[type='date'] {
+  border: 1px solid var(--border, #d4d4d4);
+  background: var(--input-bg, #fff);
+  color: var(--text, #171717);
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.65rem;
+}
+
+.reportes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.reportes-toolbar .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.reportes-totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.reportes-total-card {
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 0.65rem;
+  padding: 0.85rem 1rem;
+  background: var(--card-bg, var(--input-bg, #fff));
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.reportes-total-card strong {
+  font-size: 1.35rem;
+  color: var(--text, #171717);
+}
+
+.reportes-total-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted, #737373);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.reportes-total-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted, #a3a3a3);
+}
+
+.reportes-total-card--warn {
+  border-color: rgba(234, 179, 8, 0.45);
+}
+
+.reportes-chart-wrap {
+  margin-bottom: 1.75rem;
+}
+
+.reportes-chart {
+  width: 100%;
+  min-height: 320px;
+}
+
+.reportes-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+}
+
+.reportes-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.reportes-table th,
+.reportes-table td {
+  border-bottom: 1px solid var(--border, #e5e5e5);
+  padding: 0.55rem 0.4rem;
+  text-align: left;
+}
+
+.reportes-table th {
+  font-size: 0.8rem;
+  color: var(--text-muted, #737373);
 }

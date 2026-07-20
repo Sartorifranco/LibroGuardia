@@ -9,6 +9,8 @@ export const ADMIN_SECTION_META = {
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
   activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },
+  audit: { title: 'Auditoría', description: 'Trazabilidad de cambios administrativos (usuarios, roles, permisos, puertas).' },
+  notifications: { title: 'Notificaciones', description: 'Alertas SMTP ante ingresos excepcionales, denegados repetidos y fallas de puerta.' },
 };
 
 export const AUTH_WEEKDAYS = [

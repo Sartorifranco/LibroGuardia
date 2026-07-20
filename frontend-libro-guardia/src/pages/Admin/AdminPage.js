@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Car, ClipboardList, Settings, KeyRound, Truck, ShieldCheck, QrCode, DoorOpen, Activity, Loader2 } from 'lucide-react';
+import { Car, ClipboardList, Settings, KeyRound, Truck, ShieldCheck, QrCode, DoorOpen, Activity, Loader2, ScrollText, Bell } from 'lucide-react';
 import { hasPermission } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../services/api';
@@ -15,6 +15,8 @@ import PermissionsAdminSection from './PermissionsAdmin/PermissionsAdminSection'
 import DoorsAdminSection from './DoorsAdmin/DoorsAdminSection';
 import RolesAdminSection from './RolesAdmin/RolesAdminSection';
 import ActivityAdminSection from './ActivityAdmin/ActivityAdminSection';
+import AuditAdminSection from './AuditAdmin/AuditAdminSection';
+import NotificationsAdminSection from './NotificationsAdmin/NotificationsAdminSection';
 
 /**
  * Panel de administración completo.
@@ -57,6 +59,12 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
       hasPermission(currentUser, 'settings.permissions')
     ) {
       items.push({ id: 'activity', label: 'Actividad', icon: Activity });
+    }
+    if (hasPermission(currentUser, 'audit.view')) {
+      items.push({ id: 'audit', label: 'Auditoría', icon: ScrollText });
+    }
+    if (hasPermission(currentUser, 'notifications.config')) {
+      items.push({ id: 'notifications', label: 'Notificaciones', icon: Bell });
     }
     if (hasPermission(currentUser, 'access.doors.manage') || hasPermission(currentUser, 'access.control')) {
       items.push({ id: 'doors', label: 'Puertas y acceso', icon: DoorOpen });
@@ -154,6 +162,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
               && (
                 <ActivityAdminSection />
               )}
+
+            {adminSection === 'audit' && hasPermission(currentUser, 'audit.view') && (
+              <AuditAdminSection />
+            )}
+
+            {adminSection === 'notifications' && hasPermission(currentUser, 'notifications.config') && (
+              <NotificationsAdminSection pendingAction={pendingAction} runAction={runAction} />
+            )}
 
             {adminSection === 'permissions' && hasPermission(currentUser, 'settings.permissions') && (
               <PermissionsAdminSection pendingAction={pendingAction} runAction={runAction} onPermissionKeysChange={setPermissionKeys} />

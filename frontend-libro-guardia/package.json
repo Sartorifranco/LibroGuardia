@@ -14,10 +14,15 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
+    "recharts": "^3.9.2",
     "web-vitals": "^2.1.4",
     "xlsx": "^0.18.5"
   },
   "scripts": {
+    "apply-brand": "node scripts/apply-brand.js",
+    "prestart": "node scripts/apply-brand.js",
+    "prebuild": "node scripts/apply-brand.js",
+    "pretest": "node scripts/apply-brand.js",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",

@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+const brand = require('./src/config/brand');
+
 module.exports = {
   content: [
     './src/**/*.{js,jsx,ts,tsx}',
@@ -11,14 +13,15 @@ module.exports = {
         sans: ['Inter', 'sans-serif'],
       },
       colors: {
+        // Alias histórico "bacar"; valores desde src/config/brand.js
         bacar: {
-          bg: '#0a0a0a',
+          bg: brand.backgroundColor,
           surface: '#141414',
           card: '#1a1a1a',
           border: '#2a2a2a',
           muted: '#a3a3a3',
-          red: '#dc2626',
-          'red-hover': '#b91c1c',
+          red: brand.primaryColor,
+          'red-hover': brand.primaryColorHover,
         },
       },
       borderRadius: {

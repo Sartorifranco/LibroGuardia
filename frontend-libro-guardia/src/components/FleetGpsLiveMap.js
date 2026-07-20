@@ -16,6 +16,7 @@ import {
   buildGatePolygonPatch
 } from '../utils/fleetGpsGeofence';
 import { apiFetch } from '../services/api';
+import brand from '../config/brand';
 import 'leaflet/dist/leaflet.css';
 
 const ZONE_LABELS = {
@@ -26,7 +27,7 @@ const ZONE_LABELS = {
 };
 
 const markerColor = (vehicle) => {
-  if (vehicle.zone === 'gate') return vehicle.moving ? '#dc2626' : '#f97316';
+  if (vehicle.zone === 'gate') return vehicle.moving ? brand.primaryColor : '#f97316';
   if (vehicle.zone === 'plant') return vehicle.moving ? '#2563eb' : '#16a34a';
   return vehicle.moving ? '#0891b2' : '#6b7280';
 };
@@ -271,9 +272,9 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       queryConfig.gatePolygons.forEach((gate, index) => {
         if (!gate.points || gate.points.length < 3) return;
         const layer = L.polygon(gate.points, {
-          color: index === 0 ? '#dc2626' : '#ea580c',
+          color: index === 0 ? brand.primaryColor : '#ea580c',
           weight: 2,
-          fillColor: index === 0 ? '#dc2626' : '#ea580c',
+          fillColor: index === 0 ? brand.primaryColor : '#ea580c',
           fillOpacity: 0.14,
           interactive: !passthrough
         }).bindPopup(`<strong>${gate.name}</strong><div>Zona de tr?nsito / port?n</div>`);
@@ -307,9 +308,9 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
 
       layersRef.current.gate = L.circle(center, {
         radius: queryConfig.gateRadiusMeters,
-        color: '#dc2626',
+        color: brand.primaryColor,
         weight: 2,
-        fillColor: '#dc2626',
+        fillColor: brand.primaryColor,
         fillOpacity: 0.1,
         dashArray: '4 4',
         interactive: !passthrough
@@ -660,7 +661,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       </div>
 
       <div className="fleet-gps-live-map__legend">
-        <span><i style={{ background: '#dc2626' }} /> Port?n en movimiento</span>
+        <span><i style={{ background: brand.primaryColor }} /> Port?n en movimiento</span>
         <span><i style={{ background: '#f97316' }} /> Port?n detenido</span>
         <span><i style={{ background: '#16a34a' }} /> Planta detenido</span>
         <span><i style={{ background: '#2563eb' }} /> Planta en movimiento</span>

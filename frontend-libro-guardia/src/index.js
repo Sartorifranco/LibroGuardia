@@ -3,6 +3,10 @@ import ReactDOM from 'react-dom/client';
 import './index.css'; // Estilos globales de Tailwind
 import App from './App';
 import reportWebVitals from './reportWebVitals'; // Archivo generado por create-react-app para métricas
+import brand from './config/brand';
+import { applyBrandTheme } from './config/applyBrandTheme';
+
+applyBrandTheme(brand);
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

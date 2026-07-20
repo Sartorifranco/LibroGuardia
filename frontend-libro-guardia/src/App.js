@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Settings, LogOut, Sun, Moon, ArrowLeft, Loader2, CloudOff, CircleHelp } from 'lucide-react';
+import { Settings, LogOut, Sun, Moon, ArrowLeft, Loader2, CloudOff, CircleHelp, KeyRound } from 'lucide-react';
 import AccessKiosk from './components/AccessKiosk';
 import ToastStack from './components/ToastStack';
 import AppSidebar from './components/AppSidebar';
@@ -12,6 +12,8 @@ import MonitoringVehiclesPanel from './components/MonitoringVehiclesPanel';
 import DigitalDoorPanel from './components/DigitalDoorPanel';
 import GlobalSearch from './components/GlobalSearch';
 import OnboardingTour, { isOnboardingDone } from './components/OnboardingTour';
+import ForceChangePasswordModal from './components/ForceChangePasswordModal';
+import ChangePasswordForm from './components/ChangePasswordForm';
 import { hasPermission, canAccessAdmin } from './utils/permissions';
 import { buildSidebarItems } from './utils/navigation';
 import { useTheme } from './hooks/useTheme';
@@ -21,6 +23,7 @@ import { ConfirmProvider } from './context/ConfirmContext';
 import { OfflineQueueProvider, useOfflineQueue } from './context/OfflineQueueContext';
 import { EntriesProvider, useEntries } from './context/EntriesContext';
 import { ClockPrefillProvider, useClockPrefill } from './context/ClockPrefillContext';
+import brand from './config/brand';
 import LoginPage from './pages/Login/LoginPage';
 import HomePage from './pages/Home/HomePage';
 import PersonalPage from './pages/Personal/PersonalPage';
@@ -28,6 +31,7 @@ import VehiculosExternosPage from './pages/VehiculosExternos/VehiculosExternosPa
 import FlotaInternaPage from './pages/FlotaInterna/FlotaInternaPage';
 import NovedadPage from './pages/Novedad/NovedadPage';
 import HistorialPage from './pages/Historial/HistorialPage';
+import ReportesPage from './pages/Reportes/ReportesPage';
 import AdminPage from './pages/Admin/AdminPage';
 import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
@@ -43,10 +47,11 @@ import './App.css';
  * Sin formularios ni fetches de dominio.
  */
 function AppShell() {
-  const { authToken, currentUser, authLoading, logout } = useAuth();
+  const { authToken, currentUser, authLoading, logout, changePassword } = useAuth();
   const { error, successMessage, showSuccess, showError, setError, setSuccessMessage } = useToast();
   const { reloadEntries } = useEntries();
   const { pendingCount } = useOfflineQueue();
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const { setClockPrefill } = useClockPrefill();
   const { toggleTheme, isDark } = useTheme();
 
@@ -61,7 +66,16 @@ function AppShell() {
   const handleLogout = useCallback(() => {
     logout();
     setActiveTab('inicio');
+    setChangePasswordOpen(false);
   }, [logout]);
+
+  const handleChangePassword = useCallback(async (currentPassword, newPassword) => {
+    await changePassword(currentPassword, newPassword);
+    setChangePasswordOpen(false);
+    showSuccess('Contraseña actualizada');
+  }, [changePassword, showSuccess]);
+
+  const mustChangePassword = currentUser?.mustChangePassword === true;
 
   const handleAttendanceRegistered = useCallback((item) => {
     showSuccess(`Ingreso registrado: ${item?.name || 'personal'}`);
@@ -169,6 +183,23 @@ function AppShell() {
     return <LoginPage />;
   }
 
+  if (mustChangePassword) {
+    return (
+      <>
+        <ToastStack
+          error={error}
+          successMessage={successMessage}
+          onDismissError={() => setError(null)}
+          onDismissSuccess={() => setSuccessMessage(null)}
+        />
+        <ForceChangePasswordModal
+          username={currentUser.username}
+          onSubmit={handleChangePassword}
+        />
+      </>
+    );
+  }
+
   if (activeTab === 'kiosk') {
     return (
       <AccessScanProvider
@@ -215,13 +246,13 @@ function AppShell() {
         <header className="app-header app-header-modern">
           <div className="app-header-content">
             <div className="app-header-brand">
-              <img src="B roja.png" alt="Logo Bacar" className="auth-logo" />
+              <img src={brand.logoPath} alt={brand.logoAlt} className="auth-logo" />
               <div>
-                <h1>Libro de Guardia</h1>
+                <h1>{brand.appTitle}</h1>
                 <p className="header-subtitle">
                   {isAdminMode
                     ? 'Modo administración — configuración del sistema'
-                    : 'Bacar S.A. — Control de accesos y novedades'}
+                    : brand.headerSubtitle}
                 </p>
               </div>
             </div>
@@ -269,6 +300,17 @@ function AppShell() {
               <span className="user-info-tag">
                 {currentUser.username} · {currentUser.roleLabel || currentUser.role}
               </span>
+              <button
+                type="button"
+                className="btn-onboarding-link"
+                onClick={() => setChangePasswordOpen(true)}
+                title="Cambiar mi contraseña"
+                aria-label="Cambiar mi contraseña"
+                disabled={mustChangePassword}
+              >
+                <KeyRound size={16} />
+                <span className="btn-onboarding-link__label">Mi contraseña</span>
+              </button>
               {canAccessAdmin(currentUser) && (
                 <button
                   type="button"
@@ -393,9 +435,10 @@ function AppShell() {
               {activeTab === 'vehiculo' && <VehiculosExternosPage />}
               {activeTab === 'flota' && <FlotaInternaPage />}
               {activeTab === 'novedad' && <NovedadPage />}
-              {(activeTab === 'historial' || activeTab === 'reportes' || activeTab === 'allRecords') && (
+              {(activeTab === 'historial' || activeTab === 'allRecords') && (
                 <HistorialPage />
               )}
+              {activeTab === 'reportes' && <ReportesPage />}
 
               {isAdminMode && canAccessAdmin(currentUser) && (
                 <AdminPage
@@ -410,6 +453,19 @@ function AppShell() {
         </div>
       </div>
     </div>
+    {changePasswordOpen && (
+      <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
+        <div className="modal-content change-password-modal">
+          <h2 id="change-password-title" className="auth-title" style={{ fontSize: '1.2rem', marginTop: 0 }}>
+            Cambiar mi contraseña
+          </h2>
+          <ChangePasswordForm
+            onSubmit={handleChangePassword}
+            onCancel={() => setChangePasswordOpen(false)}
+          />
+        </div>
+      </div>
+    )}
     </AccessScanProvider>
   );
 }

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "create-admin": "node create-admin.js",
-    "test": "node --test test/accessValidation.test.js test/accessControl.test.js test/fleetGps.test.js test/geofence.test.js test/nomina.test.js test/centroCostoGroups.test.js test/personMatch.test.js test/transportCsvParser.test.js test/sr201.test.js test/doorController.test.js test/loginRateLimit.test.js test/documentExpiry.test.js"
+    "test": "node --test test/accessValidation.test.js test/accessControl.test.js test/fleetGps.test.js test/geofence.test.js test/nomina.test.js test/centroCostoGroups.test.js test/personMatch.test.js test/transportCsvParser.test.js test/sr201.test.js test/doorController.test.js test/doorDriverRegistry.test.js test/auditLog.test.js test/changePassword.test.js test/passwordVersion.test.js test/notifications.test.js test/loginRateLimit.test.js test/documentExpiry.test.js test/reportsSummary.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -15,7 +15,8 @@
     "express": "^4.19.2",
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^6.3.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^6.9.16"
   },
   "private": true
 }

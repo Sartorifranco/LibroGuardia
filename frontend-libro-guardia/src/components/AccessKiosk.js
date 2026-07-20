@@ -6,6 +6,7 @@ import ContinuousScanner from './ContinuousScanner';
 import ManualDoorButton from './ManualDoorButton';
 import { apiFetch } from '../services/api';
 import { playKioskSound, stopKioskSound, unlockKioskAudio } from '../utils/kioskSounds';
+import brand from '../config/brand';
 
 const isConnectionFailure = (err) => Boolean(err?.isNetworkError || err?.status === 0);
 
@@ -401,13 +402,13 @@ function AccessKiosk({
 
         <div className="kiosk-brand">
 
-          <img src="B roja.png" alt="Bacar" className="auth-logo" />
+          <img src={brand.logoPath} alt={brand.logoAlt} className="auth-logo" />
 
           <div>
 
-            <h1>Control de Acceso</h1>
+            <h1>{brand.kioskTitle}</h1>
 
-            <p>Escanee su DNI o QR para ingresar</p>
+            <p>{brand.kioskSubtitle}</p>
 
           </div>
 
@@ -683,7 +684,7 @@ function AccessKiosk({
 
       <div className="kiosk-footer">
 
-        Operador: {currentUser?.username} · Bacar S.A.
+        Operador: {currentUser?.username} · {brand.footerText}
 
       </div>
 

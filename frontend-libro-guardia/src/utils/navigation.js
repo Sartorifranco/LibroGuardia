@@ -9,13 +9,17 @@ import {
   ShieldCheck,
   CalendarCheck,
   DoorOpen,
-  Radio
+  Radio,
+  BarChart3
 } from 'lucide-react';
 import { hasPermission } from './permissions';
 
 /** Acceso a la pantalla unificada Historial (ver y/o exportar). */
 export const canAccessHistorial = (user) =>
   hasPermission(user, 'entries.view') || hasPermission(user, 'reports.export');
+
+/** Panel gerencial de reportes agregados (solo reports.export). */
+export const canAccessReportes = (user) => hasPermission(user, 'reports.export');
 
 export const buildSidebarItems = (user) => {
   if (!user) return [];
@@ -127,11 +131,18 @@ export const buildSidebarItems = (user) => {
     });
   }
 
-  // Unifica Reportes (reports.export) + Todos los registros (entries.view)
+  // Historial operativo (detalle de movimientos)
   addIf(canAccessHistorial(user), {
     id: 'historial',
     label: 'Historial',
     icon: History
+  });
+
+  // Panel gerencial (agregados por rango; distinto del dashboard del día)
+  addIf(canAccessReportes(user), {
+    id: 'reportes',
+    label: 'Reportes',
+    icon: BarChart3
   });
 
   return items;

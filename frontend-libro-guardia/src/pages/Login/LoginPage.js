@@ -4,6 +4,7 @@ import ToastStack from '../../components/ToastStack';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useTheme } from '../../hooks/useTheme';
+import brand from '../../config/brand';
 
 function LoginPage() {
   const { login } = useAuth();
@@ -48,10 +49,10 @@ function LoginPage() {
       />
       <div className="auth-card auth-card-modern">
         <div className="auth-brand">
-          <img src="B roja.png" alt="Logo Bacar" className="auth-logo" />
+          <img src={brand.logoPath} alt={brand.logoAlt} className="auth-logo" />
           <div>
-            <h1 className="auth-title">Libro de Novedades</h1>
-            <p className="auth-subtitle">Bacar S.A. — Control de accesos</p>
+            <h1 className="auth-title">{brand.loginTitle}</h1>
+            <p className="auth-subtitle">{brand.loginSubtitle}</p>
           </div>
         </div>
 
@@ -81,7 +82,7 @@ function LoginPage() {
               value={loginUsername}
               onChange={(e) => setLoginUsername(e.target.value)}
               className="input-field"
-              placeholder="Ingrese su usuario (ej: sistemas.ti@bacarsa.com.ar)"
+              placeholder={brand.loginUsernamePlaceholder}
               autoComplete="username"
               autoCapitalize="none"
               autoCorrect="off"

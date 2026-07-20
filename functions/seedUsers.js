@@ -42,11 +42,15 @@ const upsertUser = async (user) => {
   const passwordHash = await bcrypt.hash(user.password, 10);
   const ref = db.collection('users').doc(username);
   const existing = await ref.get();
+  const passwordVersion = existing.exists
+    ? (Number(existing.data().passwordVersion) || 1) + 1
+    : 1;
   await ref.set({
     username,
     password: passwordHash,
     role: user.role,
     active: true,
+    passwordVersion,
     displayName: user.label || username,
     updatedAt: FieldValue.serverTimestamp(),
     ...(existing.exists ? {} : { createdAt: FieldValue.serverTimestamp() })

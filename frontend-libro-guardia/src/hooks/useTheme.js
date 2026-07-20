@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import brand from '../config/brand';
 
-const STORAGE_KEY = 'bacar-theme';
+const STORAGE_KEY = brand.themeStorageKey || 'lg-theme';
 
 export function getInitialTheme() {
   if (typeof window === 'undefined') return 'dark';

@@ -1,5 +1,5 @@
 const { db, FieldValue } = require('./firestore');
-const { triggerRelay } = require('./sr201');
+const { triggerRelay, resolveDriverId } = require('./lib/doorDrivers');
 const { getAccessControlConfig } = require('./lib/accessControlStore');
 const {
   getDoorsConfig,
@@ -21,18 +21,29 @@ const logDoorEvent = async (event) => {
   });
 };
 
-const buildRelayConfigForDoor = (door, globalConfig = {}) => ({
-  enabled: globalConfig.enabled !== false,
-  host: door.device?.host || globalConfig.host || '192.168.1.100',
-  port: Number(door.device?.port || globalConfig.port || 6722),
-  bridgeUrl: door.device?.bridgeUrl || globalConfig.bridgeUrl || '',
-  bridgeSecret: door.device?.bridgeSecret || globalConfig.bridgeSecret || '',
-  relayChannel: Number(door.device?.channel || globalConfig.relayChannel || 1),
-  pulseMode: door.pulseMode === 'inherit' ? (globalConfig.pulseMode || 'jog') : door.pulseMode,
-  pulseSeconds: Number(door.pulseSeconds || globalConfig.pulseSeconds || 3)
-});
+const buildRelayConfigForDoor = (door, globalConfig = {}) => {
+  const driver = resolveDriverId(door.device?.driver);
+  return {
+    enabled: globalConfig.enabled !== false,
+    driver,
+    host: door.device?.host || globalConfig.host || '192.168.1.100',
+    port: Number(door.device?.port || globalConfig.port || 6722),
+    bridgeUrl: door.device?.bridgeUrl || globalConfig.bridgeUrl || '',
+    bridgeSecret: door.device?.bridgeSecret || globalConfig.bridgeSecret || '',
+    relayChannel: Number(door.device?.channel || globalConfig.relayChannel || 1),
+    httpUrl: door.device?.httpUrl || '',
+    httpMethod: door.device?.httpMethod || 'POST',
+    httpAuthToken: door.device?.httpAuthToken || '',
+    pulseMode: door.pulseMode === 'inherit' ? (globalConfig.pulseMode || 'jog') : door.pulseMode,
+    pulseSeconds: Number(door.pulseSeconds || globalConfig.pulseSeconds || 3)
+  };
+};
 
 const isDoorRelayConfigured = (door, globalConfig = {}) => {
+  const driver = resolveDriverId(door.device?.driver);
+  if (driver === 'generic_http') {
+    return Boolean(String(door.device?.httpUrl || '').trim());
+  }
   const relay = buildRelayConfigForDoor(door, globalConfig);
   return Boolean(String(relay.bridgeUrl || '').trim()) || Boolean(String(relay.host || '').trim());
 };
@@ -195,7 +206,7 @@ const afterInnerDoorOpened = async ({ group }) => {
 const pulseDoorRelay = async (door, globalConfig, { force = false } = {}) => {
   const relayConfig = buildRelayConfigForDoor(door, globalConfig);
   if (!isDoorRelayConfigured(door, globalConfig)) {
-    const error = new Error(`Puerta "${door.name}" sin dispositivo SR201 configurado`);
+    const error = new Error(`Puerta "${door.name}" sin dispositivo configurado`);
     error.status = 503;
     throw error;
   }
@@ -314,6 +325,18 @@ const openDoor = async ({
       relayTriggered: false,
       relayError: err.message
     });
+    try {
+      const { notifySafe } = require('./lib/notifications');
+      notifySafe('door_relay_failure', {
+        doorId: door.id,
+        doorName: door.name,
+        error: err.message,
+        username,
+        driver: door.device?.driver || 'sr201'
+      });
+    } catch (notifyErr) {
+      console.error('[doorController] notify hook', notifyErr.message);
+    }
     throw err;
   }
 };
