@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Bell, Loader2, Save } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
+import { AdminLoading } from './admin/AdminUi';
 import { apiFetch } from '../services/api';
 
 const EVENT_META = [
@@ -139,21 +140,12 @@ function NotificationsAdminPanel({ authToken, pendingAction, onPending, onSucces
   };
 
   if (loading) {
-    return (
-      <div className="activity-panel__loading">
-        <Loader2 className="animate-spin" size={28} />
-        <span>Cargando notificaciones…</span>
-      </div>
-    );
+    return <AdminLoading label="Cargando notificaciones…" />;
   }
 
   return (
     <div className="admin-sub-section">
-      <h3 className="theme-section-title">
-        <Bell size={18} style={{ display: 'inline', marginRight: 8 }} />
-        Alertas por email
-      </h3>
-      <p className="theme-section-desc">
+      <p className="theme-section-desc" style={{ marginTop: 0 }}>
         Avisos SMTP ante eventos de seguridad. El envío es en segundo plano y no bloquea
         el molinete ni la operación de guardia si el correo falla.
       </p>
@@ -168,7 +160,7 @@ function NotificationsAdminPanel({ authToken, pendingAction, onPending, onSucces
           Activar notificaciones
         </label>
 
-        <h4 className="theme-section-title" style={{ fontSize: '1rem' }}>SMTP</h4>
+        <h4 className="admin-block__title" style={{ marginBottom: '0.65rem' }}>SMTP</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           <input
             className="input-field"
@@ -214,7 +206,7 @@ function NotificationsAdminPanel({ authToken, pendingAction, onPending, onSucces
         </div>
       </div>
 
-      <h4 className="theme-section-title" style={{ fontSize: '1.05rem' }}>Eventos</h4>
+        <h4 className="admin-block__title" style={{ marginBottom: '0.65rem' }}>Eventos</h4>
       <div className="theme-stack">
         {EVENT_META.map((meta) => {
           const event = config.events[meta.key] || { enabled: false, recipients: [] };

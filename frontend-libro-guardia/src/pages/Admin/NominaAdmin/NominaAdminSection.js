@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload } from 'lucide-react';
+import { Upload, ClipboardList } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
+import { AdminBlock, AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -120,12 +121,10 @@ function NominaAdminSection({ pendingAction, setPendingAction }) {
 
   return (
     <>
-      <div className="admin-sub-section">
-        <h3 className="text-xl font-medium text-gray-800 mb-3">Importar nómina de personal</h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Cargue el Excel de nómina (columnas Usuario, DNI, Legajo, Rol, C. Costo, Turno, Con citacion, Tipo de autorización).
-          Actualiza la base de empleados, turnos y autorizaciones permanentes.
-        </p>
+      <AdminBlock
+        title="Importar nómina de personal"
+        description="Excel con columnas Usuario, DNI, Legajo, Rol, C. Costo, Turno, Con citacion, Tipo de autorización. Actualiza empleados, turnos y autorizaciones permanentes."
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label htmlFor="uploadNomina" className="block text-sm font-medium text-gray-700 mb-1">Archivo XLSX</label>
@@ -149,15 +148,16 @@ function NominaAdminSection({ pendingAction, setPendingAction }) {
             </PendingButton>
           </div>
         </div>
-      </div>
-      <div className="admin-sub-section">
-        <h3 className="text-xl font-medium text-gray-800 mb-3">
-          Empleados en nómina ({nominaData.length})
-        </h3>
+      </AdminBlock>
+      <AdminBlock title={`Empleados en nómina (${nominaData.length})`}>
         {loading ? (
-          <p className="text-sm text-gray-500">Cargando...</p>
+          <AdminLoading label="Cargando nómina…" />
         ) : nominaData.length === 0 ? (
-          <p className="text-sm text-gray-500">Sin empleados cargados. Importe la planilla de nómina.</p>
+          <AdminEmpty
+            icon={ClipboardList}
+            title="Sin empleados cargados"
+            description="Importá la planilla de nómina para ver el listado acá."
+          />
         ) : (
           <div className="scroll-panel-max overflow-x-auto border border-gray-200 rounded-md">
             <table className="min-w-full text-sm">
@@ -190,7 +190,7 @@ function NominaAdminSection({ pendingAction, setPendingAction }) {
             </table>
           </div>
         )}
-      </div>
+      </AdminBlock>
     </>
   );
 }

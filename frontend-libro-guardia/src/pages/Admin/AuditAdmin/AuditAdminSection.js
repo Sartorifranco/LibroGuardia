@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ClipboardList, ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from 'lucide-react';
+import { AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
 import { apiFetch } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { hasPermission } from '../../../utils/permissions';
@@ -117,25 +118,23 @@ function AuditAdminSection() {
       {error && <div className="activity-panel__error">{error}</div>}
 
       {loading && !items.length ? (
-        <div className="activity-panel__loading">
-          <Loader2 className="animate-spin" size={28} />
-          <span>Cargando auditoría…</span>
-        </div>
+        <AdminLoading label="Cargando auditoría…" />
       ) : !items.length && !error ? (
-        <div className="activity-panel__empty">
-          <ClipboardList size={22} aria-hidden />
-          <span>Todavía no hay eventos de auditoría.</span>
-        </div>
+        <AdminEmpty
+          icon={ClipboardList}
+          title="Todavía no hay eventos de auditoría"
+          description="Los cambios administrativos (usuarios, roles, permisos, puertas) van a aparecer acá."
+        />
       ) : (
         <div className="theme-panel-nested" style={{ overflowX: 'auto' }}>
-          <table className="theme-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table className="admin-table theme-table">
             <thead>
               <tr>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }} />
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>Fecha</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>Usuario</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>Acción</th>
-                <th style={{ textAlign: 'left', padding: '0.5rem' }}>Entidad</th>
+                <th />
+                <th>Fecha</th>
+                <th>Usuario</th>
+                <th>Acción</th>
+                <th>Entidad</th>
               </tr>
             </thead>
             <tbody>
@@ -143,8 +142,8 @@ function AuditAdminSection() {
                 const open = expandedId === item.id;
                 return (
                   <React.Fragment key={item.id}>
-                    <tr style={{ borderTop: '1px solid var(--border)' }}>
-                      <td style={{ padding: '0.5rem' }}>
+                    <tr>
+                      <td>
                         <button
                           type="button"
                           className="btn btn-secondary-small"
@@ -154,10 +153,10 @@ function AuditAdminSection() {
                           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         </button>
                       </td>
-                      <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>{formatWhen(item.createdAt)}</td>
-                      <td style={{ padding: '0.5rem' }}>{item.actorUsername || item.actorId || '—'}</td>
-                      <td style={{ padding: '0.5rem' }}><code>{item.action}</code></td>
-                      <td style={{ padding: '0.5rem' }}>{entityLabel(item)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatWhen(item.createdAt)}</td>
+                      <td>{item.actorUsername || item.actorId || '—'}</td>
+                      <td><code>{item.action}</code></td>
+                      <td>{entityLabel(item)}</td>
                     </tr>
                     {open && (
                       <tr>

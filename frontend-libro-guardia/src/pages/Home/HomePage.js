@@ -3,6 +3,7 @@ import ExecutiveDashboard from '../../components/dashboards/ExecutiveDashboard';
 import GuardiaDashboard from '../../components/dashboards/GuardiaDashboard';
 import MonitoreoDashboard from '../../components/dashboards/MonitoreoDashboard';
 import ExpirationAlertsBanner from '../../components/ExpirationAlertsBanner';
+import GuardiaControlCenter from '../../components/GuardiaControlCenter';
 import { useAuth } from '../../context/AuthContext';
 import { useEntries } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
@@ -33,6 +34,10 @@ function HomePage({ onNavigate, onEnterAdmin }) {
   const dashboardProfile = getDashboardProfile(currentUser);
   const showExpirationAlerts = ['guardia', 'supervisor', 'admin'].includes(dashboardProfile)
     || ['guardia', 'supervisor', 'admin'].includes(currentUser?.role);
+
+  const showControlCenter = ['guardia', 'supervisor', 'admin', 'operational'].includes(dashboardProfile)
+    || hasPermission(currentUser, 'access.manual_open')
+    || hasPermission(currentUser, 'entries.create');
 
   let dashboard = null;
   if (dashboardProfile === 'monitoreo') {
@@ -88,6 +93,7 @@ function HomePage({ onNavigate, onEnterAdmin }) {
   return (
     <>
       {showExpirationAlerts && <ExpirationAlertsBanner />}
+      {showControlCenter && <GuardiaControlCenter />}
       {dashboard}
     </>
   );

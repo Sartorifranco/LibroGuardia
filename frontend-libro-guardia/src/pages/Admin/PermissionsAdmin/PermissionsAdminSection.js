@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Save, Loader2 } from 'lucide-react';
+import { Save } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
+import { AdminBlock, AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
 import { hasPermission, PERMISSION_LABELS } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -73,16 +74,21 @@ function PermissionsAdminSection({ pendingAction, runAction, onPermissionKeysCha
   if (!hasPermission(currentUser, 'settings.permissions')) return null;
 
   return (
-    <div className="admin-sub-section">
-      <h3 className="text-xl font-medium text-gray-800 mb-3">Permisos por rol</h3>
-
-      {loading && (
-        <div className="admin-section-loading">
-          <Loader2 className="animate-spin" size={32} />
-          <span>Cargando sección…</span>
-        </div>
+    <AdminBlock
+      title="Matriz de permisos"
+      description="Marcá qué puede hacer cada rol. Los cambios se aplican al guardar."
+      action={(
+        <PendingButton type="button" actionId="saveRolePermissions" pendingAction={pendingAction} className="btn btn-primary" pendingLabel="Guardando permisos..." onClick={handleSaveRolePermissions}>
+          <Save size={18} /> Guardar
+        </PendingButton>
       )}
-
+    >
+      {loading ? (
+        <AdminLoading label="Cargando permisos…" />
+      ) : permissionMatrixRoles.length === 0 ? (
+        <AdminEmpty title="No hay roles para mostrar" description="Creá roles en la sección Roles primero." />
+      ) : (
+      <>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-100">
@@ -111,10 +117,9 @@ function PermissionsAdminSection({ pendingAction, runAction, onPermissionKeysCha
           </tbody>
         </table>
       </div>
-      <PendingButton type="button" actionId="saveRolePermissions" pendingAction={pendingAction} className="btn btn-primary mt-4" pendingLabel="Guardando permisos..." onClick={handleSaveRolePermissions}>
-        <Save size={18} /> Guardar permisos por rol
-      </PendingButton>
-    </div>
+      </>
+      )}
+    </AdminBlock>
   );
 }
 

@@ -1,30 +1,39 @@
 /**
- * Puente local SR201 para Bacar Guardia — servicio MÍNIMO.
+ * Puente local SR201 — HTTP /pulse → TCP a la(s) placa(s) en LAN.
  *
- * Solo traduce HTTP (POST /pulse) → TCP al SR201 en la LAN.
- * SIN lógica de negocio, SIN base de datos, SIN usuarios/roles.
- * La autorización y el control de acceso viven en Firebase Cloud Functions.
+ * Temporizado: ON → espera N segundos → OFF (software), para respetar
+ * exactamente los segundos configurados por puerta en Admin.
  *
- * Ejecutar en PC de planta donde el SR201 es alcanzable (ej. 192.168.0.9).
- *
- * Uso:
- *   set SR201_HOST=192.168.1.100
- *   set SR201_PORT=6722
- *   set BRIDGE_PORT=5022
- *   set BRIDGE_SECRET=clave-secreta
- *   node scripts/sr201-bridge.js
- *
- * Docs: docs/INSTALACION-SR201.md · scripts/setup-servidor.ps1
+ * Config: scripts/sr201-bridge.config.json o variables de entorno.
  */
 
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
-const { sendTcpCommand, buildPulseCommand } = require('../functions/sr201');
+const {
+  sendTcpCommand,
+  sendTimedPulseTcp,
+  buildPulseCommand,
+  queryRelayStatusTcp
+} = require('../functions/sr201');
 
-const PORT = Number(process.env.BRIDGE_PORT) || 5022;
-const HOST = process.env.BRIDGE_HOST || '0.0.0.0';
-const SR201_HOST = process.env.SR201_HOST || '192.168.1.100';
-const SR201_PORT = Number(process.env.SR201_PORT) || 6722;
-const BRIDGE_SECRET = process.env.BRIDGE_SECRET || '';
+const loadFileConfig = () => {
+  const configPath = path.join(__dirname, 'sr201-bridge.config.json');
+  try {
+    if (!fs.existsSync(configPath)) return {};
+    return JSON.parse(fs.readFileSync(configPath, 'utf8')) || {};
+  } catch (err) {
+    console.warn('No se pudo leer sr201-bridge.config.json:', err.message);
+    return {};
+  }
+};
+
+const fileCfg = loadFileConfig();
+const PORT = Number(process.env.BRIDGE_PORT || fileCfg.bridgePort) || 5022;
+const HOST = process.env.BRIDGE_HOST || fileCfg.bridgeHost || '0.0.0.0';
+const SR201_HOST = process.env.SR201_HOST || fileCfg.sr201Host || '192.168.1.100';
+const SR201_PORT = Number(process.env.SR201_PORT || fileCfg.sr201Port) || 6722;
+const BRIDGE_SECRET = process.env.BRIDGE_SECRET || fileCfg.bridgeSecret || '';
 
 const sendJson = (res, statusCode, payload) => {
   res.writeHead(statusCode, { 'Content-Type': 'application/json' });
@@ -38,13 +47,58 @@ const isAuthorized = (req) => {
 };
 
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
+  if (req.method === 'GET' && (req.url === '/health' || req.url.startsWith('/health?'))) {
     return sendJson(res, 200, {
       status: 'ok',
       service: 'sr201-bridge',
       sr201Host: SR201_HOST,
-      sr201Port: SR201_PORT
+      sr201Port: SR201_PORT,
+      multiHost: true,
+      timed: 'software-on-wait-off',
+      statusApi: true,
+      version: 2
     });
+  }
+
+  const handleStatus = async (targetHost, targetPort) => {
+    const status = await queryRelayStatusTcp(targetHost, targetPort);
+    return {
+      message: 'Estado de relés',
+      ...status
+    };
+  };
+
+  if (req.method === 'GET' && (req.url === '/status' || req.url.startsWith('/status?'))) {
+    if (!isAuthorized(req)) {
+      return sendJson(res, 401, { message: 'No autorizado' });
+    }
+    try {
+      const u = new URL(req.url, 'http://localhost');
+      const targetHost = u.searchParams.get('host') || SR201_HOST;
+      const targetPort = Number(u.searchParams.get('port') || SR201_PORT) || SR201_PORT;
+      return sendJson(res, 200, await handleStatus(targetHost, targetPort));
+    } catch (err) {
+      return sendJson(res, 500, { message: err.message || 'Error al leer estado SR201' });
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/status') {
+    if (!isAuthorized(req)) {
+      return sendJson(res, 401, { message: 'No autorizado' });
+    }
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const payload = body ? JSON.parse(body) : {};
+        const targetHost = payload.host || SR201_HOST;
+        const targetPort = Number(payload.port) || SR201_PORT;
+        return sendJson(res, 200, await handleStatus(targetHost, targetPort));
+      } catch (err) {
+        return sendJson(res, 500, { message: err.message || 'Error al leer estado SR201' });
+      }
+    });
+    return;
   }
 
   if (req.method !== 'POST' || req.url !== '/pulse') {
@@ -64,19 +118,29 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = body ? JSON.parse(body) : {};
       const channel = Number(payload.channel) || 1;
-      const mode = payload.mode || 'jog';
-      const seconds = Number(payload.seconds) || 3;
-      const command = payload.command || buildPulseCommand(channel, mode, seconds);
+      const mode = payload.mode === 'timed' || payload.softwareTimed ? 'timed' : (payload.mode || 'jog');
+      const seconds = Math.max(1, Math.min(99, Number(payload.seconds) || 3));
       const targetHost = payload.host || SR201_HOST;
       const targetPort = Number(payload.port) || SR201_PORT;
 
-      const result = await sendTcpCommand(targetHost, targetPort, command);
+      let result;
+      if (mode === 'timed') {
+        // Duración exacta controlada acá (PC planta), no depende del firmware :n
+        result = await sendTimedPulseTcp(targetHost, targetPort, channel, seconds);
+      } else {
+        const command = payload.command || buildPulseCommand(channel, 'jog', seconds);
+        result = await sendTcpCommand(targetHost, targetPort, command);
+        result = { ...result, mode: 'jog', seconds: 0.5 };
+      }
+
       sendJson(res, 200, {
-        message: 'Pulso SR201 enviado',
-        command,
+        message: mode === 'timed'
+          ? `Pulso temporizado ${seconds}s enviado`
+          : 'Pulso jog enviado',
         host: targetHost,
         port: targetPort,
-        response: result.response
+        channel,
+        ...result
       });
     } catch (err) {
       sendJson(res, 500, { message: err.message || 'Error al activar SR201' });
@@ -84,7 +148,14 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+// Peticiones timed pueden durar muchos segundos; evitar timeouts cortos del socket HTTP.
+server.requestTimeout = 0;
+server.headersTimeout = 0;
+server.timeout = 0;
+
 server.listen(PORT, HOST, () => {
   console.log(`SR201 bridge escuchando en http://${HOST}:${PORT}`);
-  console.log(`Destino SR201: ${SR201_HOST}:${SR201_PORT}`);
+  console.log(`Destino por defecto: ${SR201_HOST}:${SR201_PORT}`);
+  console.log('Temporizado: ON → espera Ns → OFF (por puerta)');
+  if (!BRIDGE_SECRET) console.warn('AVISO: BRIDGE_SECRET vacío — /pulse sin autenticación');
 });

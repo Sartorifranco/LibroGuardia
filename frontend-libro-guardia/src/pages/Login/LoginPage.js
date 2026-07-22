@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AlertCircle, Eye, EyeOff, LogIn, Moon, Save, Sun } from 'lucide-react';
 import ToastStack from '../../components/ToastStack';
 import { useAuth } from '../../context/AuthContext';
@@ -6,7 +7,11 @@ import { useToast } from '../../context/ToastContext';
 import { useTheme } from '../../hooks/useTheme';
 import brand from '../../config/brand';
 
-function LoginPage() {
+/**
+ * Login unificado (mismo /api/auth/login).
+ * variant="empleado" solo ajusta copy y enlace a autoregistro.
+ */
+function LoginPage({ variant = 'default' } = {}) {
   const { login } = useAuth();
   const { error, successMessage, showError, clearMessages, setError, setSuccessMessage } = useToast();
   const { toggleTheme, isDark } = useTheme();
@@ -14,6 +19,7 @@ function LoginPage() {
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const isEmpleado = variant === 'empleado';
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -31,7 +37,7 @@ function LoginPage() {
   };
 
   return (
-    <div className="auth-page">
+    <div className={`auth-page${isEmpleado ? ' empleado-auth-page' : ''}`}>
       <button
         type="button"
         className="theme-toggle-btn auth-theme-toggle"
@@ -51,13 +57,26 @@ function LoginPage() {
         <div className="auth-brand">
           <img src={brand.logoPath} alt={brand.logoAlt} className="auth-logo" />
           <div>
-            <h1 className="auth-title">{brand.loginTitle}</h1>
-            <p className="auth-subtitle">{brand.loginSubtitle}</p>
+            <h1 className="auth-title">
+              {isEmpleado ? 'Acceso empleado' : brand.loginTitle}
+            </h1>
+            <p className="auth-subtitle">
+              {isEmpleado ? 'Carga de visitas de invitados' : brand.loginSubtitle}
+            </p>
           </div>
         </div>
 
         <p className="auth-help-text">
-          El acceso es provisto por un administrador. Si no tiene usuario, contacte a Sistemas o a su supervisor.
+          {isEmpleado ? (
+            <>
+              Usá el email con el que te registraste.{' '}
+              <Link to="/empleado/registro" className="text-red-600 underline">
+                Crear cuenta
+              </Link>
+            </>
+          ) : (
+            'El acceso es provisto por un administrador. Si no tiene usuario, contacte a Sistemas o a su supervisor.'
+          )}
         </p>
 
         {error && (
@@ -75,14 +94,16 @@ function LoginPage() {
 
         <form onSubmit={handleAuthSubmit} className="space-y-4">
           <div>
-            <label htmlFor="authUsername" className="field-label">Usuario</label>
+            <label htmlFor="authUsername" className="field-label">
+              {isEmpleado ? 'Email' : 'Usuario'}
+            </label>
             <input
               type="text"
               id="authUsername"
               value={loginUsername}
               onChange={(e) => setLoginUsername(e.target.value)}
               className="input-field"
-              placeholder={brand.loginUsernamePlaceholder}
+              placeholder={isEmpleado ? 'usuario@empresa.com' : brand.loginUsernamePlaceholder}
               autoComplete="username"
               autoCapitalize="none"
               autoCorrect="off"

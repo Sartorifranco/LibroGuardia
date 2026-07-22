@@ -419,11 +419,6 @@ function CitacionesAdminSection({ pendingAction, runAction, setPendingAction, au
 
   return (
     <div className="admin-sub-section admin-auth-section">
-      <div className="admin-content-header" style={{ marginBottom: '1rem' }}>
-        <h3>Autorizaciones de acceso</h3>
-        <p>Separá citaciones de transporte, altas manuales y el listado de visitas / permanentes.</p>
-      </div>
-
       <div className="admin-inner-tabs" role="tablist" aria-label="Secciones de autorizaciones">
         {AUTH_TABS.map((tab) => {
           const Icon = tab.icon;

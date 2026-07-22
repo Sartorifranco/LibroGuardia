@@ -37,9 +37,12 @@ app.use(require('./routes/adminUsersRoles'));
 app.use(require('./routes/masterData'));
 app.use(require('./routes/authorizations'));
 app.use(require('./routes/access'));
+app.use(require('./routes/empresasDestinos'));
+app.use(require('./routes/empleado'));
 app.use(require('./routes/fleetGps'));
 app.use(require('./routes/attendance'));
 app.use(require('./routes/entries'));
+app.use(require('./routes/peopleDoors'));
 app.use(require('./routes/system'));
 
 app.use((req, res, next) => {

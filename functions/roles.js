@@ -27,6 +27,12 @@ const SYSTEM_ROLE_META = {
     description: 'Acceso total al sistema incluyendo configuración técnica.',
     dashboardProfile: 'admin',
     sortOrder: 4
+  },
+  'empleado-visitas': {
+    label: 'Empleado — visitas',
+    description: 'Autoregistro: solo carga y ve sus propias visitas de invitados.',
+    dashboardProfile: 'operational',
+    sortOrder: 20
   }
 };
 

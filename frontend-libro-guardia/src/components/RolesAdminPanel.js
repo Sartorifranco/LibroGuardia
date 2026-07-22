@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Edit, Eye, EyeOff, Loader2, PlusCircle, Save, Shield, Trash2 } from 'lucide-react';
+import { Edit, Eye, EyeOff, PlusCircle, Save, Shield, Trash2 } from 'lucide-react';
+import { AdminEmpty, AdminLoading } from './admin/AdminUi';
 import {
   DASHBOARD_PROFILE_LABELS,
   PERMISSION_LABELS,
@@ -11,7 +12,7 @@ import {
 import { useConfirm } from '../context/ConfirmContext';
 import { apiFetch } from '../services/api';
 
-const TEMPLATE_ORDER = ['guardia', 'supervisor', 'monitoreo', 'admin'];
+const TEMPLATE_ORDER = ['guardia', 'supervisor', 'monitoreo', 'empleado-visitas', 'admin'];
 
 function countActiveInCategory(permissions, categoryPerms) {
   const set = new Set(permissions || []);
@@ -327,11 +328,7 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
   };
 
   if (loading) {
-    return (
-      <p className="text-gray-500 flex items-center gap-2">
-        <Loader2 className="animate-spin" size={18} /> Cargando roles...
-      </p>
-    );
+    return <AdminLoading label="Cargando roles…" />;
   }
 
   const createDraftRole = {
@@ -347,8 +344,8 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
     <div className="roles-admin-panel">
       {canManage && (
         <section className="admin-sub-section">
-          <h3 className="text-xl font-medium text-gray-800 mb-3 flex items-center gap-2">
-            <PlusCircle size={20} /> Crear rol
+          <h3 className="admin-block__title" style={{ marginBottom: '0.85rem' }}>
+            <PlusCircle size={18} /> Crear rol
           </h3>
 
           <div className="roles-templates">
@@ -430,11 +427,17 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
       )}
 
       <section className="admin-sub-section">
-        <h3 className="text-xl font-medium text-gray-800 mb-3 flex items-center gap-2">
-          <Shield size={20} /> Roles del sistema
+        <h3 className="admin-block__title" style={{ marginBottom: '0.85rem' }}>
+          <Shield size={18} /> Roles del sistema
         </h3>
         <div className="space-y-4">
-          {roles.map((role) => (
+          {roles.length === 0 ? (
+            <AdminEmpty
+              icon={Shield}
+              title="Todavía no hay roles"
+              description="Creá el primero con el formulario de arriba."
+            />
+          ) : roles.map((role) => (
             <article key={role.id} className="user-list-item flex-col items-stretch">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>

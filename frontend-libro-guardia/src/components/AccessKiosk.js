@@ -42,7 +42,9 @@ const REASON_LABELS = {
 
   fuera_horario_turno: 'Fuera de horario',
 
-  sistemas_acceso_permanente: 'Sistemas — acceso permanente'
+  sistemas_acceso_permanente: 'Sistemas — acceso permanente',
+
+  puerta_no_autorizada: 'No autorizado para esta puerta'
 
 };
 

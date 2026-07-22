@@ -32,7 +32,11 @@ export const PERMISSION_LABELS = {
   'attendance.alerts.read': 'Ver alertas de asistencia (faltantes de ingreso)',
   'monitoring.vehicles.manage': 'Autorizar vehículos con chofer y acompañantes (Monitoreo)',
   'monitoring.doors.panel': 'Botonera digital portón Monitoreo',
-  'guard.doors.panel': 'Botonera digital portón Guardia'
+  'guard.doors.panel': 'Botonera digital portón Guardia',
+  'empresas.manage': 'Gestionar empresas del predio',
+  'destinos.manage': 'Gestionar destinos y secuencias de puertas',
+  'visitas.create': 'Cargar visitas de invitados (empleado)',
+  'visitas.view.own': 'Ver solo mis visitas cargadas'
 };
 
 /** Agrupación de permisos para la UI de roles (nombres de uso diario). */
@@ -53,7 +57,9 @@ export const PERMISSION_CATEGORIES = [
       'master.citaciones.preregister',
       'master.nomina.read',
       'master.nomina.write',
-      'attendance.alerts.read'
+      'attendance.alerts.read',
+      'visitas.create',
+      'visitas.view.own'
     ]
   },
   {
@@ -92,7 +98,9 @@ export const PERMISSION_CATEGORIES = [
       'roles.manage',
       'settings.permissions',
       'audit.view',
-      'notifications.config'
+      'notifications.config',
+      'empresas.manage',
+      'destinos.manage'
     ]
   },
   {
@@ -189,6 +197,12 @@ export const ROLE_TEMPLATES = {
       'monitoring.doors.panel'
     ]
   },
+  'empleado-visitas': {
+    label: 'Empleado — visitas',
+    description: 'Autoregistro: solo carga y ve sus propias visitas de invitados.',
+    dashboardProfile: 'operational',
+    permissions: ['visitas.create', 'visitas.view.own']
+  },
   admin: {
     label: 'Admin',
     description: 'Acceso total al sistema incluyendo configuración técnica.',
@@ -247,7 +261,40 @@ export const canAccessAdmin = (user) =>
   hasPermission(user, 'access.control') ||
   hasPermission(user, 'access.doors.manage') ||
   hasPermission(user, 'audit.view') ||
-  hasPermission(user, 'notifications.config');
+  hasPermission(user, 'notifications.config') ||
+  hasPermission(user, 'empresas.manage') ||
+  hasPermission(user, 'destinos.manage');
+
+/**
+ * Árbol operativo /guardia (sidebar de operación, no panel admin).
+ * Usa los mismos permisos que habilitan pantallas del día a día.
+ */
+export const canAccessGuardia = (user) => {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return (
+    hasPermission(user, 'entries.create')
+    || hasPermission(user, 'entries.view')
+    || hasPermission(user, 'reports.export')
+    || hasPermission(user, 'access.kiosk')
+    || hasPermission(user, 'attendance.alerts.read')
+    || hasPermission(user, 'master.citaciones.read')
+    || hasPermission(user, 'fleet.gps.read')
+    || hasPermission(user, 'monitoring.vehicles.manage')
+    || hasPermission(user, 'master.vehicles.quick_authorize')
+    || hasPermission(user, 'monitoring.doors.panel')
+    || hasPermission(user, 'guard.doors.panel')
+  );
+};
+
+/** Panel /empleado — carga de visitas propias (rol mínimo). */
+export const canAccessEmpleado = (user) => {
+  if (!user) return false;
+  return (
+    hasPermission(user, 'visitas.create')
+    || hasPermission(user, 'visitas.view.own')
+  );
+};
 
 export const canManageUsers = (user) =>
   hasPermission(user, 'users.create') ||

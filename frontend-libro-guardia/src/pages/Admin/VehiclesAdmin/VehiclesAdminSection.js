@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { PlusCircle, Trash2, Upload } from 'lucide-react';
+import { PlusCircle, Trash2, Upload, Car } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
+import { AdminBlock, AdminEmpty } from '../../../components/admin/AdminUi';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -157,8 +158,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
 
   return (
     <>
-      <div className="admin-sub-section">
-        <h3 className="text-xl font-medium text-gray-800 mb-3">Precarga de vehículos autorizados</h3>
+      <AdminBlock title="Precarga de vehículos autorizados">
         <form onSubmit={handleSavePreloadedVehicle} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
           <input type="text" value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} className="input-field" placeholder="Patente" required />
           <input type="text" value={newVehicleBrand} onChange={(e) => setNewVehicleBrand(e.target.value)} className="input-field" placeholder="Marca / modelo" />
@@ -193,9 +193,15 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
             </PendingButton>
           </div>
         </div>
-      </div>
-      <div className="admin-sub-section">
-        <h3 className="text-xl font-medium text-gray-800 mb-3">Base actual ({vehicleMasterData.length})</h3>
+      </AdminBlock>
+      <AdminBlock title={`Base actual (${vehicleMasterData.length})`}>
+        {vehicleMasterData.length === 0 ? (
+          <AdminEmpty
+            icon={Car}
+            title="Todavía no hay vehículos autorizados"
+            description="Agregá uno a uno o subí un archivo XLSX/CSV."
+          />
+        ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-100">
@@ -228,7 +234,8 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
             </tbody>
           </table>
         </div>
-      </div>
+        )}
+      </AdminBlock>
     </>
   );
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { UserPlus, KeyRound, Edit, Trash2, PlusCircle, XCircle, ToggleRight, ToggleLeft, Save } from 'lucide-react';
+import { UserPlus, KeyRound, Edit, Trash2, PlusCircle, XCircle, ToggleRight, ToggleLeft, Save, Users } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
+import { AdminBlock, AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
 import { hasPermission, canManageTargetUser, PERMISSION_LABELS } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -16,7 +17,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   const { showSuccess, showError, setError } = useToast();
   const { confirm } = useConfirm();
 
-  const [, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState([]);
   const [newUsername, setNewUsername] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
@@ -176,8 +177,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   return (
     <>
       {hasPermission(currentUser, 'users.create') && (
-        <div className="admin-sub-section">
-          <h3 className="text-xl font-medium text-gray-800 mb-3 flex items-center gap-2"><UserPlus size={20} /> Crear nuevo usuario</h3>
+        <AdminBlock title={<><UserPlus size={18} /> Crear nuevo usuario</>}>
           <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <input type="text" id="newUsername" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className="input-field" placeholder="Usuario" required />
             <input type="password" id="newUserPassword" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)} className="input-field" placeholder="Contraseña" required />
@@ -186,17 +186,22 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 <option key={role.id} value={role.id}>{role.label}</option>
               ))}
             </select>
-            <PendingButton type="submit" actionId="createUser" pendingAction={pendingAction} className="btn btn-success md:col-span-3" pendingLabel="Creando usuario...">
+            <PendingButton type="submit" actionId="createUser" pendingAction={pendingAction} className="btn btn-primary md:col-span-3" pendingLabel="Creando usuario...">
               <PlusCircle size={20} /> Crear usuario
             </PendingButton>
           </form>
-        </div>
+        </AdminBlock>
       )}
 
-      <div className="admin-sub-section">
-        <h3 className="text-xl font-medium text-gray-800 mb-3 flex items-center gap-2"><KeyRound size={20} /> Gestión de usuarios</h3>
-        {users.length === 0 ? (
-          <p className="text-gray-500 text-center py-4">No hay usuarios registrados.</p>
+      <AdminBlock title={<><KeyRound size={18} /> Gestión de usuarios</>}>
+        {loading ? (
+          <AdminLoading label="Cargando usuarios…" />
+        ) : users.length === 0 ? (
+          <AdminEmpty
+            icon={Users}
+            title="Todavía no hay usuarios"
+            description="Creá el primero con el formulario de arriba."
+          />
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {users.map((user) => (
@@ -207,17 +212,17 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 </div>
                 <div className="flex items-center gap-2 mt-2 sm:mt-0">
                   {hasPermission(currentUser, 'users.edit') && canManageTargetUser(currentUser, user) && (
-                    <button onClick={() => handleEditUser(user)} className="btn btn-secondary-small"><Edit size={16} /> Editar</button>
+                    <button type="button" onClick={() => handleEditUser(user)} className="btn btn-secondary-small"><Edit size={16} /> Editar</button>
                   )}
                   {hasPermission(currentUser, 'users.delete') && user.id !== currentUser.id && canManageTargetUser(currentUser, user) && (
-                    <button onClick={() => handleDeleteUser(user.id)} className="btn btn-danger-small"><Trash2 size={16} /> Eliminar</button>
+                    <button type="button" onClick={() => handleDeleteUser(user.id)} className="btn btn-danger-small"><Trash2 size={16} /> Eliminar</button>
                   )}
                 </div>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </AdminBlock>
 
       {editingUser && (
         <div className="modal-overlay">
@@ -225,7 +230,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
             <button type="button" className="close-button" onClick={() => setEditingUser(null)} aria-label="Cerrar">
               <XCircle size={24} />
             </button>
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">Editar usuario: {editingUser.username}</h3>
+            <h3 className="admin-block__title" style={{ marginBottom: '1rem' }}>Editar usuario: {editingUser.username}</h3>
             <form onSubmit={handleSaveUserEdit} className="space-y-4">
               <input type="text" id="editedUsername" value={editedUsername} className="input-field" disabled />
               {hasPermission(currentUser, 'users.edit') && canManageTargetUser(currentUser, editingUser) && (
@@ -237,13 +242,18 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
               )}
               <input type="password" id="editedUserPassword" value={editedUserPassword} onChange={(e) => setEditedUserPassword(e.target.value)} className="input-field" placeholder="Nueva contraseña (opcional)" />
               {hasPermission(currentUser, 'users.edit') && canManageTargetUser(currentUser, editingUser) && (
-                <button type="button" onClick={() => setEditedUserActive(!editedUserActive)} className={`flex items-center gap-2 px-4 py-2 rounded-md ${editedUserActive ? 'bg-green-500 text-white' : 'bg-gray-300 text-gray-700'}`} disabled={editingUser.id === currentUser.id}>
+                <button
+                  type="button"
+                  onClick={() => setEditedUserActive(!editedUserActive)}
+                  className={`admin-toggle-active${editedUserActive ? ' is-on' : ''}`}
+                  disabled={editingUser.id === currentUser.id}
+                >
                   {editedUserActive ? <ToggleRight size={20} /> : <ToggleLeft size={20} />} {editedUserActive ? 'Activo' : 'Inactivo'}
                 </button>
               )}
               {hasPermission(currentUser, 'settings.permissions') && (
                 <div>
-                  <h4 className="font-medium mb-2">Permisos personalizados</h4>
+                  <h4 className="admin-block__title" style={{ marginBottom: '0.5rem' }}>Permisos personalizados</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-md p-3">
                     {(permissionKeys.length ? permissionKeys : Object.keys(PERMISSION_LABELS)).map((permission) => (
                       <label key={permission} className="flex items-center gap-2 text-sm">

@@ -17,7 +17,8 @@ const {
   openDoor,
   listActiveDoors,
   getAirlockState,
-  resetAirlockState
+  resetAirlockState,
+  getDoorsPhysicalStatus
 } = require('../doorController');
 const {
   evaluatePersonalAccess,
@@ -77,15 +78,25 @@ router.post('/api/access/test-relay', auth, requireAnyPermission(['access.contro
     if (!doorId) {
       return res.status(400).json({ message: 'No hay puertas configuradas para probar' });
     }
+    const pulseSeconds = req.body?.pulseSeconds != null ? Number(req.body.pulseSeconds) : null;
+    const pulseMode = req.body?.pulseMode || (pulseSeconds ? 'timed' : null);
     const result = await openDoor({
       doorId,
       username: req.user?.username,
       manual: true,
       bypassAirlock: true,
       force: true,
-      reason: 'test_relay'
+      reason: 'test_relay',
+      pulseSeconds: Number.isFinite(pulseSeconds) && pulseSeconds > 0 ? pulseSeconds : null,
+      pulseMode
     });
-    res.json({ message: 'Pulso de prueba enviado', ...result });
+    const secs = result.relay?.seconds || pulseSeconds;
+    res.json({
+      message: secs
+        ? `Pulso de prueba enviado (${secs}s)`
+        : 'Pulso de prueba enviado',
+      ...result
+    });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || 'Error al probar relevador SR201',
@@ -115,9 +126,47 @@ router.post('/api/guard/open-door', auth, requirePermission('access.manual_open'
 
 router.get('/api/guard/doors', auth, requirePermission('access.manual_open'), async (_req, res) => {
   try {
-    res.json(await listActiveDoors());
+    const { enrichDoorsWithLastPulse } = require('../lib/doorLastPulse');
+    const base = await listActiveDoors();
+    const doors = await enrichDoorsWithLastPulse(base.doors || []);
+    res.json({ ...base, doors });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/api/guard/door-names', auth, requireAnyPermission(['entries.view', 'reports.export', 'access.manual_open', 'access.doors.manage']), async (_req, res) => {
+  try {
+    const config = await getDoorsConfig();
+    res.json({
+      doors: (config.doors || []).map((d) => ({
+        id: d.id,
+        name: d.name || d.id,
+        active: d.active !== false
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/api/guard/live-alerts', auth, requireAnyPermission(['entries.view', 'entries.create', 'access.kiosk', 'access.manual_open', 'attendance.alerts.read']), async (_req, res) => {
+  try {
+    const { getLiveAlerts } = require('../lib/liveAlerts');
+    const result = await getLiveAlerts();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ message: err.message || 'Error al obtener alertas en vivo' });
+  }
+});
+
+router.get('/api/guard/fleet-presence', auth, requireAnyPermission(['entries.view', 'entries.create', 'fleet.gps.read']), async (_req, res) => {
+  try {
+    const { getFleetPresence } = require('../lib/getFleetPresence');
+    const presence = await getFleetPresence();
+    res.json(presence);
+  } catch (err) {
+    res.status(500).json({ message: err.message || 'Error al calcular presencia de flota' });
   }
 });
 
@@ -139,6 +188,15 @@ router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+router.get('/api/admin/doors/physical-status', auth, requireAnyPermission(['access.doors.manage', 'access.control', 'access.manual_open']), async (_req, res) => {
+  try {
+    const result = await getDoorsPhysicalStatus();
+    res.json(result);
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message || 'Error al leer estado físico' });
   }
 });
 

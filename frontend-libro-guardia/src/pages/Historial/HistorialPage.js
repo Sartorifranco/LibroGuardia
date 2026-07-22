@@ -12,16 +12,13 @@ import {
   resolveHistorialDateRange,
   toLocalYmd
 } from '../../utils/historialFilters';
+import {
+  formatDoorAccessPhrase,
+  getHistorialSection,
+  HISTORIAL_SECTIONS
+} from '../../utils/historialSections';
 import { hasPermission } from '../../utils/permissions';
 import brand from '../../config/brand';
-
-const TYPE_OPTIONS = [
-  { value: 'todos', label: 'Todos los tipos' },
-  { value: 'personal', label: 'Personal' },
-  { value: 'vehiculo', label: 'Vehículos externos' },
-  { value: 'flota', label: 'Flota interna' },
-  { value: 'novedad', label: 'Novedades' }
-];
 
 const PAGE_SIZE = 50;
 const EXPORT_MAX = 1000;
@@ -34,10 +31,10 @@ function HistorialPage() {
   const canExport = hasPermission(currentUser, 'reports.export');
 
   const today = toLocalYmd();
+  const [sectionId, setSectionId] = useState('accesos');
   const [datePreset, setDatePreset] = useState('today');
   const [customStartDate, setCustomStartDate] = useState(today);
   const [customEndDate, setCustomEndDate] = useState(today);
-  const [typeFilter, setTypeFilter] = useState('todos');
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
@@ -47,7 +44,10 @@ function HistorialPage() {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [doorNamesById, setDoorNamesById] = useState({});
   const requestIdRef = useRef(0);
+
+  const section = useMemo(() => getHistorialSection(sectionId), [sectionId]);
 
   const { startDate, endDate } = useMemo(
     () => resolveHistorialDateRange(datePreset, customStartDate, customEndDate),
@@ -59,17 +59,37 @@ function HistorialPage() {
     return () => clearTimeout(timer);
   }, [searchTerm]);
 
+  useEffect(() => {
+    if (!authToken || (!canView && !canExport)) return undefined;
+    let cancelled = false;
+    apiFetch('/guard/door-names', { token: authToken, allowForbidden: true })
+      .then((data) => {
+        if (cancelled) return;
+        const map = {};
+        (data.doors || []).forEach((d) => {
+          if (d.id) map[d.id] = d.name || d.id;
+        });
+        setDoorNamesById(map);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [authToken, canView, canExport]);
+
   const buildQuery = useCallback((cursor = null, limit = PAGE_SIZE) => {
     const params = new URLSearchParams({
       startDate,
       endDate,
       limit: String(limit),
-      type: typeFilter || 'todos'
+      type: section.apiType || 'todos'
     });
     if (debouncedSearch) params.set('q', debouncedSearch);
     if (cursor) params.set('cursor', cursor);
     return `/entries?${params.toString()}`;
-  }, [startDate, endDate, typeFilter, debouncedSearch]);
+  }, [startDate, endDate, section.apiType, debouncedSearch]);
+
+  const applySectionFilter = useCallback((list) => (
+    (list || []).filter((entry) => section.match(entry))
+  ), [section]);
 
   const fetchPage = useCallback(async ({ append = false, cursor = null } = {}) => {
     if (!authToken || (!canView && !canExport)) return;
@@ -81,7 +101,7 @@ function HistorialPage() {
       const data = await apiFetch(buildQuery(cursor, PAGE_SIZE), { token: authToken });
       if (reqId !== requestIdRef.current) return;
 
-      const pageEntries = data.entries || [];
+      const pageEntries = applySectionFilter(data.entries || []);
       setEntries((prev) => (append ? [...prev, ...pageEntries] : pageEntries));
       setHasMore(Boolean(data.page?.hasMore));
       setNextCursor(data.page?.nextCursor || null);
@@ -101,7 +121,7 @@ function HistorialPage() {
         setLoadingMore(false);
       }
     }
-  }, [authToken, buildQuery, canExport, canView, showError]);
+  }, [authToken, buildQuery, canExport, canView, showError, applySectionFilter]);
 
   useEffect(() => {
     setEntries([]);
@@ -124,7 +144,6 @@ function HistorialPage() {
     fetchPage({ append: true, cursor: nextCursor });
   };
 
-  /** Carga el resto del rango (tope EXPORT_MAX) para exportar. */
   const loadAllForExport = async () => {
     let all = [...entries];
     let cursor = nextCursor;
@@ -134,7 +153,7 @@ function HistorialPage() {
     while (more && cursor && all.length < EXPORT_MAX && loops < 40) {
       loops += 1;
       const data = await apiFetch(buildQuery(cursor, PAGE_SIZE), { token: authToken });
-      const batch = data.entries || [];
+      const batch = applySectionFilter(data.entries || []);
       all = [...all, ...batch];
       more = Boolean(data.page?.hasMore);
       cursor = data.page?.nextCursor || null;
@@ -147,16 +166,35 @@ function HistorialPage() {
   };
 
   const generateReportData = (sourceEntries) => {
+    if (sectionId === 'accesos') {
+      const headers = ['Persona', 'Movimiento', 'Puerta', 'Fecha', 'Hora registro', 'Hora evento', 'Usuario', 'Origen'];
+      const data = sourceEntries.map((entry) => {
+        const date = new Date(entry.timestamp);
+        const { name, verb, door } = formatDoorAccessPhrase(entry, doorNamesById);
+        return [
+          name,
+          verb,
+          door,
+          date.toLocaleDateString(),
+          date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+          entry.eventTime || 'N/A',
+          entry.registeredByUsername || 'Desconocido',
+          entry.entrySource || (entry.doorId ? 'kiosk' : '—')
+        ];
+      });
+      return { headers, data };
+    }
+
     const baseHeaders = ['Tipo de Registro', 'Fecha', 'Hora Registro', 'Hora Evento', 'Usuario que Registró'];
     let headers = [...baseHeaders, 'Detalle 1', 'Detalle 2', 'Detalle 3', 'Detalle 4'];
 
-    if (typeFilter === 'personal') {
+    if (section.apiType === 'personal') {
       headers = [...baseHeaders, 'Nombre', 'DNI/Legajo', 'Empresa', 'Destino'];
-    } else if (typeFilter === 'vehiculo') {
+    } else if (section.apiType === 'vehiculo') {
       headers = [...baseHeaders, 'Patente', 'Marca/Modelo', 'Empresa', 'Conductor'];
-    } else if (typeFilter === 'flota') {
+    } else if (section.apiType === 'flota') {
       headers = [...baseHeaders, 'Móvil', 'Chofer', 'Hora Programada / Patente', 'Hora Real'];
-    } else if (typeFilter === 'novedad') {
+    } else if (section.apiType === 'novedad') {
       headers = [...baseHeaders, 'Descripción'];
     }
 
@@ -169,7 +207,7 @@ function HistorialPage() {
         entry.registeredByUsername || 'Desconocido'
       ];
       const { typeDisplay, specificDetails } = getEntryTableDisplay(entry);
-      const details = typeFilter === 'novedad'
+      const details = section.apiType === 'novedad'
         ? [specificDetails[0] || '']
         : specificDetails;
       return [typeDisplay, ...commonDetails, ...details];
@@ -179,9 +217,8 @@ function HistorialPage() {
   };
 
   const filterLabel = () => {
-    const typeLabel = TYPE_OPTIONS.find((opt) => opt.value === typeFilter)?.label || typeFilter;
     const presetLabel = HISTORIAL_DATE_PRESETS.find((p) => p.id === datePreset)?.label || datePreset;
-    return `Tipo: ${typeLabel} · Fechas (${presetLabel}): ${startDate || '—'} a ${endDate || '—'}${debouncedSearch ? ` · Buscar: "${debouncedSearch}"` : ''}`;
+    return `Sección: ${section.label} · Fechas (${presetLabel}): ${startDate || '—'} a ${endDate || '—'}${debouncedSearch ? ` · Buscar: "${debouncedSearch}"` : ''}`;
   };
 
   const runExport = async (kind) => {
@@ -194,6 +231,7 @@ function HistorialPage() {
         showError('No hay datos para exportar con estos filtros.');
         return;
       }
+      const fileBase = `historial_${section.exportName || sectionId}`;
 
       if (kind === 'csv') {
         const csvContent = [
@@ -203,7 +241,7 @@ function HistorialPage() {
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.setAttribute('download', 'historial_libro_guardia.csv');
+        link.setAttribute('download', `${fileBase}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -232,23 +270,14 @@ function HistorialPage() {
             fontSize: 8
           },
           alternateRowStyles: { fillColor: [240, 240, 240] },
-          bodyStyles: { textColor: [0, 0, 0] },
-          didParseCell(cellData) {
-            if (cellData.section === 'body' && cellData.column.index === 0) {
-              cellData.cell.styles.fontStyle = 'bold';
-              const raw = String(cellData.cell.raw || '');
-              if (raw.includes('INGRESO')) cellData.cell.styles.textColor = [0, 128, 0];
-              else if (raw.includes('EGRESO')) cellData.cell.styles.textColor = [255, 0, 0];
-              else if (raw.includes('NOVEDAD')) cellData.cell.styles.textColor = [255, 165, 0];
-            }
-          }
+          bodyStyles: { textColor: [0, 0, 0] }
         });
-        doc.save('historial_libro_guardia.pdf');
+        doc.save(`${fileBase}.pdf`);
       } else {
         const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Historial');
-        XLSX.writeFile(wb, 'historial_libro_guardia.xlsx');
+        XLSX.utils.book_append_sheet(wb, ws, section.label.slice(0, 31));
+        XLSX.writeFile(wb, `${fileBase}.xlsx`);
       }
     } catch (err) {
       if (!err.isSessionExpired) {
@@ -272,9 +301,24 @@ function HistorialPage() {
       <h2 className="text-2xl font-semibold text-red-700 mb-2 flex items-center gap-2">
         <ClipboardList size={24} /> Historial
       </h2>
-      <p className="theme-section-desc" style={{ marginBottom: '1.25rem' }}>
-        Se consultan solo los movimientos del rango elegido (por defecto <strong>hoy</strong>), no todo el histórico.
+      <p className="theme-section-desc" style={{ marginBottom: '1rem' }}>
+        Secciones separadas por tipo de movimiento. Por defecto se consulta <strong>hoy</strong>.
       </p>
+
+      <div className="historial-sections" role="tablist" aria-label="Secciones del historial">
+        {HISTORIAL_SECTIONS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            role="tab"
+            aria-selected={sectionId === s.id}
+            className={`historial-section-tab${sectionId === s.id ? ' is-active' : ''}`}
+            onClick={() => setSectionId(s.id)}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
 
       {!canView && canExport && (
         <div className="historial-export-only-note" role="status">
@@ -320,35 +364,22 @@ function HistorialPage() {
             </div>
           </>
         )}
-        <div>
-          <label htmlFor="historialTypeFilter" className="block text-sm font-medium text-gray-700 mb-1">Tipo de movimiento</label>
-          <select
-            id="historialTypeFilter"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="input-field bg-white"
-          >
-            {TYPE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className={datePreset === 'custom' ? 'md:col-span-2' : 'md:col-span-3'}>
-          <label htmlFor="historialSearch" className="block text-sm font-medium text-gray-700 mb-1">Buscar</label>
+        <div className={datePreset === 'custom' ? 'md:col-span-2' : 'md:col-span-4'}>
+          <label htmlFor="historialSearch" className="block text-sm font-medium text-gray-700 mb-1">Buscar en esta sección</label>
           <input
             type="text"
             id="historialSearch"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="input-field bg-white"
-            placeholder="Buscar en los resultados del rango..."
+            placeholder="Nombre, DNI, patente, puerta…"
           />
         </div>
       </div>
 
       {canExport && (
         <div className="flex flex-col sm:flex-row gap-3 mb-6">
-          <span className="historial-export-label">Exportar (mismo rango):</span>
+          <span className="historial-export-label">Exportar esta sección:</span>
           <button type="button" disabled={exporting || loading} onClick={() => runExport('csv')} className="btn btn-secondary w-full sm:w-auto">
             <Download size={18} /> <File size={18} /> CSV
           </button>
@@ -362,17 +393,10 @@ function HistorialPage() {
         </div>
       )}
 
-      {!canView && canExport && (
-        <p className="theme-callout-info" style={{ marginBottom: '1rem' }}>
-          Hay {entries.length} registro(s) cargados para exportar.
-          La tabla en pantalla requiere permiso de ver registros.
-        </p>
-      )}
-
       {canView && (
         <>
           <p className="historial-meta">
-            {loading ? 'Cargando…' : `${entries.length} registro(s) cargados`}
+            {loading ? 'Cargando…' : `${entries.length} registro(s) en “${section.label}”`}
             {hasMore ? ' · hay más en este rango' : ''}
             {' · '}
             {filterLabel()}
@@ -383,22 +407,67 @@ function HistorialPage() {
               <Loader2 size={18} className="animate-spin" /> Cargando historial…
             </p>
           ) : entries.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No hay registros que coincidan con los filtros seleccionados.</p>
+            <p className="text-gray-500 text-center py-8">No hay registros en esta sección para los filtros elegidos.</p>
+          ) : sectionId === 'accesos' ? (
+            <>
+              <div className="overflow-x-auto rounded-lg shadow-md border border-gray-200">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-black text-white">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Persona</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Movimiento</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Puerta</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Hora</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Origen</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {entries.map((entry) => {
+                      const date = new Date(entry.timestamp);
+                      const { name, verb, door } = formatDoorAccessPhrase(entry, doorNamesById);
+                      const rowKey = entry.id || `${entry.timestamp}-${name}`;
+                      return (
+                        <tr key={rowKey}>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{name}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 capitalize">{verb}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{door}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{date.toLocaleDateString()}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {entry.eventTime || date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {entry.entrySource || (entry.doorId ? 'kiosk' : '—')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {hasMore && (
+                <div className="historial-load-more">
+                  <button type="button" className="btn btn-secondary" onClick={handleLoadMore} disabled={loadingMore}>
+                    {loadingMore ? <><Loader2 size={16} className="animate-spin" /> Cargando…</> : 'Cargar más'}
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
             <>
               <div className="overflow-x-auto rounded-lg shadow-md border border-gray-200">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-black text-white">
                     <tr>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Tipo</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Hora registro</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Hora evento</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Usuario</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 1</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 2</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 3</th>
-                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 4</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Tipo</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Fecha</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Hora registro</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Hora evento</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Usuario</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 1</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 2</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 3</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Detalle 4</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -427,20 +496,10 @@ function HistorialPage() {
                   </tbody>
                 </table>
               </div>
-
               {hasMore && (
                 <div className="historial-load-more">
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={handleLoadMore}
-                    disabled={loadingMore}
-                  >
-                    {loadingMore ? (
-                      <><Loader2 size={16} className="animate-spin" /> Cargando…</>
-                    ) : (
-                      'Cargar más'
-                    )}
+                  <button type="button" className="btn btn-secondary" onClick={handleLoadMore} disabled={loadingMore}>
+                    {loadingMore ? <><Loader2 size={16} className="animate-spin" /> Cargando…</> : 'Cargar más'}
                   </button>
                 </div>
               )}

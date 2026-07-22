@@ -35,7 +35,10 @@ const userToJSON = (doc, permissions = null) => {
     active: data.active !== false,
     mustChangePassword: data.mustChangePassword === true,
     permissions: permissions || data.permissions || [],
-    customPermissions: data.permissions || []
+    customPermissions: data.permissions || [],
+    empresaId: data.empresaId || null,
+    nombre: data.nombre || null,
+    email: data.email || null
   };
 };
 

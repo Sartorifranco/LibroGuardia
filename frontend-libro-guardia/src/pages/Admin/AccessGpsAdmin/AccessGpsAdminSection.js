@@ -148,15 +148,14 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
 
   return (
     <div className="admin-sub-section">
-      <h3 className="text-xl font-medium text-gray-800 mb-3">GPS flota interna (UBIKA)</h3>
-      <p className="text-sm text-gray-600 mb-4">
+      <p className="admin-block__desc" style={{ marginBottom: '1rem' }}>
         Detecta tránsito en el portón (entrando/saliendo), no los móviles estacionados en planta.
         Puede usar círculos rápidos o dibujar polígonos sobre cada portón en el mapa (recomendado si hay 2 accesos).
       </p>
 
       {loading && (
-        <div className="admin-section-loading">
-          <Loader2 className="animate-spin" size={32} />
+        <div className="admin-empty admin-empty--loading" role="status">
+          <Loader2 className="animate-spin" size={28} />
           <span>Cargando sección…</span>
         </div>
       )}

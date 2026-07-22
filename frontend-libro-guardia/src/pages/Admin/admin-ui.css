@@ -1,0 +1,333 @@
+/* ============================================================================
+ * Kit visual unificado de /admin/* — tipografía, bloques, tablas, empty/loading, nav agrupada.
+ * No altera layout operativo de /guardia.
+ * ============================================================================
+
+/* —— Navegación lateral agrupada —— */
+.admin-sidebar {
+  gap: 0.85rem;
+}
+
+.admin-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.admin-nav-group__label {
+  margin: 0 0 0.15rem;
+  padding: 0 0.85rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.admin-nav-group + .admin-nav-group {
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 900px) {
+  .admin-nav-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+  }
+
+  .admin-nav-group__label {
+    width: 100%;
+    padding: 0.25rem 0.35rem 0;
+  }
+
+  .admin-sidebar-btn {
+    width: auto;
+  }
+}
+
+/* —— Bloques / formularios / listas —— */
+.admin-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.admin-block,
+.admin-content .admin-sub-section,
+.admin-content .admin-form-card,
+.admin-content .admin-list-card {
+  background: var(--panel, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  box-shadow: 0 1px 2px rgba(28, 25, 23, 0.04);
+  padding: 1rem 1.1rem 1.15rem;
+}
+
+.admin-block__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.admin-block__title,
+.admin-content .admin-sub-section > h3,
+.admin-content .admin-form-card > h4,
+.admin-content .admin-list-card > h4,
+.admin-content .theme-section-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.admin-block__desc,
+.admin-content .theme-section-desc {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.admin-block__action {
+  flex-shrink: 0;
+}
+
+.admin-form-card label.admin-field,
+.admin-content .admin-form-card > div > label.block,
+.admin-content .admin-form-card label.block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.admin-content .admin-form-card .historial-meta,
+.admin-content .admin-list-card .historial-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Evitar doble “tarjeta dentro de tarjeta” cuando un sub-section envuelve form-card */
+.admin-content .admin-sub-section .admin-form-card,
+.admin-content .admin-sub-section .admin-list-card,
+.admin-content .admin-block .admin-form-card {
+  box-shadow: none;
+  border-style: dashed;
+  background: var(--panel-muted, rgba(28, 25, 23, 0.02));
+}
+
+/* —— Botones unificados dentro de admin —— */
+.admin-content .btn {
+  min-height: 2.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  gap: 0.4rem;
+}
+
+.admin-content .btn-secondary-small,
+.admin-content .btn-danger-small {
+  min-height: 1.9rem;
+  padding: 0.28rem 0.65rem;
+  font-size: 0.8rem;
+}
+
+/* btn-success era un segundo “primary” rojo — unificar look */
+.admin-content .btn-success {
+  background: var(--brand-primary, #dc2626);
+  border-color: var(--brand-primary, #dc2626);
+  color: #fff;
+}
+
+.admin-content .btn-success:hover:not(:disabled) {
+  background: var(--brand-primary-hover, #b91c1c);
+  border-color: var(--brand-primary-hover, #b91c1c);
+}
+
+.admin-content .btn-danger,
+.admin-content .btn-danger-small {
+  background: transparent;
+  color: #b91c1c;
+  border: 1px solid rgba(185, 28, 28, 0.35);
+}
+
+.admin-content .btn-danger:hover:not(:disabled),
+.admin-content .btn-danger-small:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.08);
+}
+
+/* Toggle Activo/Inactivo del modal usuarios → botones de sistema */
+.admin-content .admin-toggle-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--border);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--panel-muted, #f5f5f4);
+  color: var(--text);
+}
+
+.admin-content .admin-toggle-active.is-on {
+  background: rgba(22, 101, 52, 0.12);
+  border-color: rgba(22, 101, 52, 0.35);
+  color: #166534;
+}
+
+/* —— Tablas —— */
+.admin-table-wrap,
+.admin-content .overflow-x-auto,
+.admin-content .theme-panel-nested {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-sm, 8px);
+}
+
+.admin-table,
+.admin-content table.min-w-full,
+.admin-content table.theme-table,
+.admin-content .people-access-table,
+.admin-content .doors-list table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.admin-table thead th,
+.admin-content table.min-w-full thead th,
+.admin-content table.theme-table thead th,
+.admin-content .people-access-table thead th {
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--panel-muted, #f5f5f4);
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-table tbody td,
+.admin-content table.min-w-full tbody td,
+.admin-content table.theme-table tbody td,
+.admin-content .people-access-table tbody td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text);
+}
+
+.admin-table tbody tr:last-child td,
+.admin-content table.min-w-full tbody tr:last-child td,
+.admin-content table.theme-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* —— Empty / loading —— */
+.admin-empty,
+.admin-content .activity-panel__empty,
+.admin-content .activity-panel__loading,
+.admin-content .doors-list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  text-align: center;
+  padding: 1.75rem 1rem;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--panel-muted, rgba(28, 25, 23, 0.02));
+  font-size: 0.875rem;
+}
+
+.admin-empty strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.admin-empty span {
+  max-width: 28rem;
+  line-height: 1.4;
+}
+
+.admin-empty--loading {
+  border-style: solid;
+}
+
+/* Listas tipo usuario */
+.admin-content .user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.admin-content .user-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--panel, #fff);
+}
+
+/* Header de página: un poco más respirado */
+.admin-content-header {
+  margin-bottom: 0.25rem;
+}
+
+.admin-content-header h3 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.admin-content-header p {
+  margin-top: 0.2rem;
+  font-size: 0.875rem;
+}
+
+/* Dark */
+html.dark .admin-block,
+html.dark .admin-content .admin-sub-section,
+html.dark .admin-content .admin-form-card,
+html.dark .admin-content .admin-list-card,
+[data-theme='dark'] .admin-block,
+[data-theme='dark'] .admin-content .admin-sub-section,
+[data-theme='dark'] .admin-content .admin-form-card,
+[data-theme='dark'] .admin-content .admin-list-card {
+  background: rgba(28, 25, 23, 0.55);
+}
+
+html.dark .admin-table thead th,
+html.dark .admin-content table.min-w-full thead th,
+html.dark .admin-content table.theme-table thead th,
+[data-theme='dark'] .admin-table thead th,
+[data-theme='dark'] .admin-content table.min-w-full thead th,
+[data-theme='dark'] .admin-content table.theme-table thead th {
+  background: rgba(0, 0, 0, 0.25);
+}

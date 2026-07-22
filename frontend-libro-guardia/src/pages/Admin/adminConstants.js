@@ -2,10 +2,22 @@ export const ADMIN_SECTION_META = {
   users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
   access: { title: 'GPS flota UBIKA', description: 'Monitoreo de móviles en portón y registro automático.' },
   doors: { title: 'Puertas y acceso', description: 'SR201, multi-puerta, autenticación y estancos en un solo lugar.' },
+  peopleAccess: {
+    title: 'Acceso a puertas (personal)',
+    description: 'Por persona: todas las puertas o un subconjunto. Auditoría rápida desde el listado.'
+  },
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
   nomina: { title: 'Nómina de personal', description: 'Base de empleados, turnos y tipos de autorización.' },
   vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },
   fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
+  empresas: {
+    title: 'Empresas del predio',
+    description: 'Empresas que comparten la instalación y dominios de email autorizados (autoregistro).'
+  },
+  destinos: {
+    title: 'Destinos',
+    description: 'Lugares del predio con la secuencia de puertas necesarias para llegar.'
+  },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
   activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },

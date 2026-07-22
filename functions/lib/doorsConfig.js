@@ -6,6 +6,33 @@ const AUTH_METHODS = ['dni', 'face', 'credential', 'manual'];
 
 const DOOR_DRIVERS = ['sr201', 'generic_http'];
 
+const READER_DIRECTIONS = ['ingreso', 'egreso', 'ambos'];
+
+/**
+ * Prefijo de lector en la lectura USB (diagrama planta):
+ *   INGRESO_P1#30111222  → readerId=INGRESO_P1, payload=30111222
+ *   EGRESO_P1#30111222
+ * También acepta "INGRESO_P1:..." o "INGRESO_P1 ...".
+ */
+const READER_PREFIX_RE = /^(INGRESO|EGRESO)[_-]([A-Za-z0-9_-]+)[#:\s]+([\s\S]+)$/i;
+
+const parseReaderPrefixedScan = (rawData = '') => {
+  const trimmed = String(rawData || '').trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(READER_PREFIX_RE);
+  if (!match) return null;
+  const sense = match[1].toUpperCase() === 'EGRESO' ? 'egreso' : 'ingreso';
+  const doorCode = String(match[2] || '').trim();
+  const readerId = `${sense === 'egreso' ? 'EGRESO' : 'INGRESO'}_${doorCode}`;
+  return {
+    readerId,
+    direction: sense,
+    doorCode,
+    payload: String(match[3] || '').trim(),
+    rawPrefix: trimmed.slice(0, trimmed.length - match[3].length)
+  };
+};
+
 const DEFAULT_DOOR = {
   id: '',
   name: '',
@@ -25,6 +52,8 @@ const DEFAULT_DOOR = {
   pulseSeconds: 3,
   authMethods: ['dni', 'credential'],
   readerIds: ['default'],
+  /** Lectores con dirección fija opcional. direction: ingreso | egreso | ambos */
+  readers: [{ id: 'default', direction: 'ambos' }],
   kioskEnabled: true,
   manualOpenAllowed: true,
   autoOpenOnAuth: true,
@@ -89,8 +118,70 @@ const normalizeDevice = (device = {}) => {
   };
 };
 
+/**
+ * Normaliza readers[{id,direction}] y sincroniza readerIds (compat).
+ * Si solo vienen readerIds, cada uno queda con direction 'ambos'.
+ * Si vienen readers y readerIds, se prioriza el orden de readerIds y se
+ * conservan directions conocidas por id.
+ */
+const normalizeReaders = (door = {}) => {
+  const prevById = new Map();
+  if (Array.isArray(door.readers)) {
+    door.readers.forEach((item) => {
+      const id = String(item?.id || '').trim();
+      if (!id) return;
+      const direction = READER_DIRECTIONS.includes(item.direction) ? item.direction : 'ambos';
+      prevById.set(id, { id, direction });
+    });
+  }
+
+  let ids = [];
+  if (Array.isArray(door.readerIds) && door.readerIds.length) {
+    ids = door.readerIds.map((item) => String(item).trim()).filter(Boolean);
+  } else if (prevById.size) {
+    ids = [...prevById.keys()];
+  } else {
+    ids = ['default'];
+  }
+
+  const readers = ids.map((id) => {
+    const prev = prevById.get(id);
+    return {
+      id,
+      direction: prev?.direction && READER_DIRECTIONS.includes(prev.direction)
+        ? prev.direction
+        : 'ambos'
+    };
+  });
+
+  return {
+    readers,
+    readerIds: readers.map((r) => r.id)
+  };
+};
+
+/** Dirección configurada del reader, o 'ambos' si no existe. */
+const getReaderDirection = (door, readerId = 'default') => {
+  const id = String(readerId || 'default').trim() || 'default';
+  const readers = Array.isArray(door?.readers) ? door.readers : [];
+  const match = readers.find((r) => r.id === id);
+  if (match && READER_DIRECTIONS.includes(match.direction)) return match.direction;
+  return 'ambos';
+};
+
+/**
+ * Si el reader tiene direction fija ingreso|egreso, la devuelve.
+ * Si es 'ambos' o no está, null → el caller debe inferir.
+ */
+const resolveReaderFixedMovement = (door, readerId = 'default') => {
+  const direction = getReaderDirection(door, readerId);
+  if (direction === 'ingreso' || direction === 'egreso') return direction;
+  return null;
+};
+
 const normalizeDoor = (door = {}, index = 0) => {
   const id = slugifyDoorId(door.id || door.name) || `puerta-${index + 1}`;
+  const { readers, readerIds } = normalizeReaders(door);
   return {
     ...DEFAULT_DOOR,
     ...door,
@@ -101,9 +192,8 @@ const normalizeDoor = (door = {}, index = 0) => {
     pulseMode: ['inherit', 'jog', 'timed'].includes(door.pulseMode) ? door.pulseMode : 'inherit',
     pulseSeconds: Number(door.pulseSeconds) || DEFAULT_DOOR.pulseSeconds,
     authMethods: normalizeAuthMethods(door.authMethods),
-    readerIds: Array.isArray(door.readerIds) && door.readerIds.length
-      ? door.readerIds.map((item) => String(item).trim()).filter(Boolean)
-      : ['default'],
+    readers,
+    readerIds,
     kioskEnabled: door.kioskEnabled !== false,
     manualOpenAllowed: door.manualOpenAllowed !== false,
     autoOpenOnAuth: door.autoOpenOnAuth !== false,
@@ -187,6 +277,21 @@ const saveDoorsConfig = async (updates = {}) => {
     payload.airlockGroups = (updates.airlockGroups || []).map(normalizeAirlockGroup);
   }
 
+  // Evitar defaultDoorId huérfano (causa 404 en “Abrir puerta”).
+  if (payload.doors) {
+    const ids = new Set(payload.doors.filter((d) => d.active !== false).map((d) => d.id));
+    const preferred = payload.defaultDoorId !== undefined
+      ? payload.defaultDoorId
+      : updates.defaultDoorId;
+    if (preferred && ids.has(preferred)) {
+      payload.defaultDoorId = preferred;
+    } else if (ids.size) {
+      payload.defaultDoorId = [...ids][0];
+    } else {
+      payload.defaultDoorId = null;
+    }
+  }
+
   await db.collection('settings').doc(DOORS_SETTINGS_DOC).set(payload, { merge: true });
   return getDoorsConfig();
 };
@@ -208,7 +313,10 @@ const findDoorByReader = (config, readerId = 'default') => {
   const match = (config?.doors || []).find(
     (door) => door.active !== false
       && door.kioskEnabled !== false
-      && door.readerIds.includes(reader)
+      && (
+        (Array.isArray(door.readerIds) && door.readerIds.includes(reader))
+        || (Array.isArray(door.readers) && door.readers.some((r) => r.id === reader))
+      )
   );
   if (match) return match;
   const defaultDoor = findDoorById(config, config.defaultDoorId);
@@ -230,11 +338,16 @@ const getAirlockDoors = (config, groupId) => {
 module.exports = {
   AUTH_METHODS,
   DOOR_DRIVERS,
+  READER_DIRECTIONS,
   DEFAULT_DOOR,
   DEFAULT_AIRLOCK_GROUP,
   DEFAULT_DOORS_CONFIG,
   slugifyDoorId,
   normalizeDoorsConfig,
+  normalizeReaders,
+  getReaderDirection,
+  resolveReaderFixedMovement,
+  parseReaderPrefixedScan,
   getDoorsConfig,
   getDoorsConfigMeta,
   saveDoorsConfig,

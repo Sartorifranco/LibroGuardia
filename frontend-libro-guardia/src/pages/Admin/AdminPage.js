@@ -1,5 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Car, ClipboardList, Settings, KeyRound, Truck, ShieldCheck, QrCode, DoorOpen, Activity, Loader2, ScrollText, Bell } from 'lucide-react';
+import {
+  Car,
+  ClipboardList,
+  Settings,
+  KeyRound,
+  Truck,
+  ShieldCheck,
+  QrCode,
+  DoorOpen,
+  Activity,
+  Loader2,
+  ScrollText,
+  Bell,
+  Users,
+  Building2,
+  MapPin,
+  Satellite
+} from 'lucide-react';
 import { hasPermission } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../services/api';
@@ -13,10 +30,133 @@ import VehiclesAdminSection from './VehiclesAdmin/VehiclesAdminSection';
 import FleetAdminSection from './FleetAdmin/FleetAdminSection';
 import PermissionsAdminSection from './PermissionsAdmin/PermissionsAdminSection';
 import DoorsAdminSection from './DoorsAdmin/DoorsAdminSection';
+import PeopleAccessAdminSection from './PeopleAccessAdmin/PeopleAccessAdminSection';
 import RolesAdminSection from './RolesAdmin/RolesAdminSection';
 import ActivityAdminSection from './ActivityAdmin/ActivityAdminSection';
 import AuditAdminSection from './AuditAdmin/AuditAdminSection';
 import NotificationsAdminSection from './NotificationsAdmin/NotificationsAdminSection';
+import EmpresasAdminSection from './EmpresasAdmin/EmpresasAdminSection';
+import DestinosAdminSection from './DestinosAdmin/DestinosAdminSection';
+import './admin-ui.css';
+
+/** Grupos de navegación admin (orden de producto). */
+const ADMIN_NAV_GROUPS = [
+  {
+    id: 'personas',
+    label: 'Personas y accesos',
+    items: [
+      { id: 'users', label: 'Usuarios', icon: KeyRound, match: (u) => hasPermission(u, 'users.view') },
+      {
+        id: 'roles',
+        label: 'Roles',
+        icon: ShieldCheck,
+        match: (u) => hasPermission(u, 'roles.view') || hasPermission(u, 'roles.manage')
+      },
+      {
+        id: 'permissions',
+        label: 'Permisos',
+        icon: Settings,
+        match: (u) => hasPermission(u, 'settings.permissions')
+      },
+      {
+        id: 'peopleAccess',
+        label: 'Acceso personal',
+        icon: Users,
+        match: (u) =>
+          hasPermission(u, 'access.doors.manage')
+          || hasPermission(u, 'access.control')
+          || hasPermission(u, 'master.nomina.write')
+      }
+    ]
+  },
+  {
+    id: 'infra',
+    label: 'Infraestructura',
+    items: [
+      {
+        id: 'doors',
+        label: 'Puertas y acceso',
+        icon: DoorOpen,
+        match: (u) => hasPermission(u, 'access.doors.manage') || hasPermission(u, 'access.control')
+      },
+      {
+        id: 'notifications',
+        label: 'Notificaciones',
+        icon: Bell,
+        match: (u) => hasPermission(u, 'notifications.config')
+      },
+      {
+        id: 'access',
+        label: 'GPS flota',
+        icon: Satellite,
+        match: (u) => hasPermission(u, 'access.control')
+      }
+    ]
+  },
+  {
+    id: 'maestros',
+    label: 'Datos maestros',
+    items: [
+      {
+        id: 'nomina',
+        label: 'Nómina',
+        icon: ClipboardList,
+        match: (u) => hasPermission(u, 'master.nomina.write')
+      },
+      {
+        id: 'citaciones',
+        label: 'Autorizaciones',
+        icon: QrCode,
+        match: (u) => hasPermission(u, 'master.citaciones.write')
+      },
+      {
+        id: 'vehicles',
+        label: 'Vehículos',
+        icon: Car,
+        match: (u) => hasPermission(u, 'master.vehicles.write')
+      },
+      {
+        id: 'fleet',
+        label: 'Flota interna',
+        icon: Truck,
+        match: (u) => hasPermission(u, 'fleet.upload')
+      },
+      {
+        id: 'empresas',
+        label: 'Empresas',
+        icon: Building2,
+        match: (u) => hasPermission(u, 'empresas.manage')
+      },
+      {
+        id: 'destinos',
+        label: 'Destinos',
+        icon: MapPin,
+        match: (u) => hasPermission(u, 'destinos.manage')
+      }
+    ]
+  },
+  {
+    id: 'supervision',
+    label: 'Supervisión',
+    items: [
+      {
+        id: 'activity',
+        label: 'Actividad',
+        icon: Activity,
+        match: (u) =>
+          hasPermission(u, 'users.view')
+          || hasPermission(u, 'roles.view')
+          || hasPermission(u, 'settings.permissions')
+      },
+      {
+        id: 'audit',
+        label: 'Auditoría',
+        icon: ScrollText,
+        match: (u) => hasPermission(u, 'audit.view')
+      }
+    ]
+  }
+];
 
 /**
  * Panel de administración completo.
@@ -28,10 +168,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
   const { pendingAction, setPendingAction, runAction } = useAdminAction();
   const setAdminSection = onSectionChange;
 
-  // Compartido entre la sección de Usuarios (modal de edición) y la de Permisos.
   const [permissionKeys, setPermissionKeys] = useState([]);
 
-  // Mismo prefetch que el AdminPage monolítico: al abrir Admin (no solo la pestaña Puertas).
   useEffect(() => {
     const fetchKioskSettings = async () => {
       if (!currentUser || !hasPermission(currentUser, 'access.kiosk')) return;
@@ -43,39 +181,15 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
       }
     };
     if (currentUser) fetchKioskSettings();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- igual que antes: no re-correr por cambios de callback
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, authToken]);
 
-  const adminNavItems = useMemo(() => {
+  const adminNavGroups = useMemo(() => {
     if (!currentUser) return [];
-    const items = [];
-    if (hasPermission(currentUser, 'users.view')) items.push({ id: 'users', label: 'Usuarios', icon: KeyRound });
-    if (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) {
-      items.push({ id: 'roles', label: 'Roles', icon: ShieldCheck });
-    }
-    if (
-      hasPermission(currentUser, 'users.view') ||
-      hasPermission(currentUser, 'roles.view') ||
-      hasPermission(currentUser, 'settings.permissions')
-    ) {
-      items.push({ id: 'activity', label: 'Actividad', icon: Activity });
-    }
-    if (hasPermission(currentUser, 'audit.view')) {
-      items.push({ id: 'audit', label: 'Auditoría', icon: ScrollText });
-    }
-    if (hasPermission(currentUser, 'notifications.config')) {
-      items.push({ id: 'notifications', label: 'Notificaciones', icon: Bell });
-    }
-    if (hasPermission(currentUser, 'access.doors.manage') || hasPermission(currentUser, 'access.control')) {
-      items.push({ id: 'doors', label: 'Puertas y acceso', icon: DoorOpen });
-    }
-    if (hasPermission(currentUser, 'access.control')) items.push({ id: 'access', label: 'GPS flota', icon: ShieldCheck });
-    if (hasPermission(currentUser, 'master.citaciones.write')) items.push({ id: 'citaciones', label: 'Autorizaciones', icon: QrCode });
-    if (hasPermission(currentUser, 'master.nomina.write')) items.push({ id: 'nomina', label: 'Nómina', icon: ClipboardList });
-    if (hasPermission(currentUser, 'master.vehicles.write')) items.push({ id: 'vehicles', label: 'Vehículos', icon: Car });
-    if (hasPermission(currentUser, 'fleet.upload')) items.push({ id: 'fleet', label: 'Flota interna', icon: Truck });
-    if (hasPermission(currentUser, 'settings.permissions')) items.push({ id: 'permissions', label: 'Permisos', icon: Settings });
-    return items;
+    return ADMIN_NAV_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => item.match(currentUser))
+    })).filter((group) => group.items.length > 0);
   }, [currentUser]);
 
   const activeAdminMeta = ADMIN_SECTION_META[adminSection] || { title: 'Administración', description: '' };
@@ -99,16 +213,21 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
 
         <div className="admin-panel-layout">
           <aside className="admin-sidebar" aria-label="Secciones de administración">
-            {adminNavItems.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                className={`admin-sidebar-btn${adminSection === id ? ' active' : ''}`}
-                onClick={() => setAdminSection(id)}
-              >
-                <Icon size={18} aria-hidden />
-                {label}
-              </button>
+            {adminNavGroups.map((group) => (
+              <div key={group.id} className="admin-nav-group">
+                <p className="admin-nav-group__label">{group.label}</p>
+                {group.items.map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`admin-sidebar-btn${adminSection === id ? ' active' : ''}`}
+                    onClick={() => setAdminSection(id)}
+                  >
+                    <Icon size={18} aria-hidden />
+                    {label}
+                  </button>
+                ))}
+              </div>
             ))}
           </aside>
 
@@ -135,6 +254,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
               <DoorsAdminSection pendingAction={pendingAction} runAction={runAction} onAccessConfigSaved={onAccessConfigSaved} />
             )}
 
+            {adminSection === 'peopleAccess'
+              && (hasPermission(currentUser, 'access.doors.manage')
+                || hasPermission(currentUser, 'access.control')
+                || hasPermission(currentUser, 'master.nomina.write'))
+              && (
+                <PeopleAccessAdminSection />
+              )}
+
             {adminSection === 'access' && hasPermission(currentUser, 'access.control') && (
               <AccessGpsAdminSection pendingAction={pendingAction} runAction={runAction} />
             )}
@@ -149,6 +276,14 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
 
             {adminSection === 'fleet' && hasPermission(currentUser, 'fleet.upload') && (
               <FleetAdminSection pendingAction={pendingAction} setPendingAction={setPendingAction} />
+            )}
+
+            {adminSection === 'empresas' && hasPermission(currentUser, 'empresas.manage') && (
+              <EmpresasAdminSection pendingAction={pendingAction} runAction={runAction} />
+            )}
+
+            {adminSection === 'destinos' && hasPermission(currentUser, 'destinos.manage') && (
+              <DestinosAdminSection pendingAction={pendingAction} runAction={runAction} />
             )}
 
             {adminSection === 'roles' && (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) && (

@@ -21,8 +21,29 @@ const logDoorEvent = async (event) => {
   });
 };
 
-const buildRelayConfigForDoor = (door, globalConfig = {}) => {
+const buildRelayConfigForDoor = (door, globalConfig = {}, overrides = {}) => {
   const driver = resolveDriverId(door.device?.driver);
+  const doorSeconds = Number(door.pulseSeconds);
+  const globalSeconds = Number(globalConfig.pulseSeconds);
+  const overrideSeconds = Number(overrides.pulseSeconds);
+  const pulseSeconds = Number.isFinite(overrideSeconds) && overrideSeconds > 0
+    ? overrideSeconds
+    : (Number.isFinite(doorSeconds) && doorSeconds > 0
+      ? doorSeconds
+      : (Number.isFinite(globalSeconds) && globalSeconds > 0 ? globalSeconds : 3));
+
+  let pulseMode = overrides.pulseMode
+    || door.pulseMode
+    || globalConfig.pulseMode
+    || 'timed';
+  if (pulseMode === 'inherit') {
+    pulseMode = globalConfig.pulseMode === 'jog' ? 'jog' : 'timed';
+  }
+  // Si hay temporizador configurado en la puerta, forzar timed.
+  if (!overrides.pulseMode && Number.isFinite(doorSeconds) && doorSeconds > 0) {
+    pulseMode = 'timed';
+  }
+
   return {
     enabled: globalConfig.enabled !== false,
     driver,
@@ -34,8 +55,8 @@ const buildRelayConfigForDoor = (door, globalConfig = {}) => {
     httpUrl: door.device?.httpUrl || '',
     httpMethod: door.device?.httpMethod || 'POST',
     httpAuthToken: door.device?.httpAuthToken || '',
-    pulseMode: door.pulseMode === 'inherit' ? (globalConfig.pulseMode || 'jog') : door.pulseMode,
-    pulseSeconds: Number(door.pulseSeconds || globalConfig.pulseSeconds || 3)
+    pulseMode,
+    pulseSeconds: Math.max(1, Math.min(99, pulseSeconds))
   };
 };
 
@@ -203,8 +224,8 @@ const afterInnerDoorOpened = async ({ group }) => {
   });
 };
 
-const pulseDoorRelay = async (door, globalConfig, { force = false } = {}) => {
-  const relayConfig = buildRelayConfigForDoor(door, globalConfig);
+const pulseDoorRelay = async (door, globalConfig, { force = false, pulseSeconds, pulseMode } = {}) => {
+  const relayConfig = buildRelayConfigForDoor(door, globalConfig, { pulseSeconds, pulseMode });
   if (!isDoorRelayConfigured(door, globalConfig)) {
     const error = new Error(`Puerta "${door.name}" sin dispositivo configurado`);
     error.status = 503;
@@ -225,19 +246,41 @@ const openDoor = async ({
   personId = null,
   entryId = null,
   authMethod = null,
-  movementType = 'ingreso'
+  movementType = 'ingreso',
+  pulseSeconds = null,
+  pulseMode = null
 }) => {
   const [globalConfig, doorsConfig] = await Promise.all([
     getAccessControlConfig(),
     getDoorsConfig()
   ]);
 
-  const door = doorId
-    ? findDoorById(doorsConfig, doorId)
-    : findDoorByReader(doorsConfig, readerId);
+  const door = (() => {
+    if (doorId) {
+      const exact = findDoorById(doorsConfig, doorId);
+      if (exact) return exact;
+    } else if (readerId) {
+      const byReader = findDoorByReader(doorsConfig, readerId);
+      if (byReader) return byReader;
+    }
+    // Fallback solo si no mandaron doorId explícito (apertura genérica).
+    if (!doorId) {
+      return findDoorById(doorsConfig, doorsConfig.defaultDoorId)
+        || (doorsConfig.doors || []).find((d) => d.active !== false)
+        || null;
+    }
+    return null;
+  })();
 
   if (!door) {
-    const error = new Error('Puerta no encontrada o inactiva');
+    const available = (doorsConfig.doors || [])
+      .filter((d) => d.active !== false)
+      .map((d) => `${d.id} (${d.name || 'sin nombre'})`);
+    const error = new Error(
+      doorId
+        ? `Puerta "${doorId}" no encontrada o inactiva. Activas: ${available.join(', ') || 'ninguna — guardá al menos una en Admin → Puertas'}.`
+        : `No hay puertas activas configuradas. Guardá al menos una en Admin → Puertas y acceso.`
+    );
     error.status = 404;
     throw error;
   }
@@ -270,7 +313,11 @@ const openDoor = async ({
   }
 
   try {
-    const relay = await pulseDoorRelay(door, globalConfig, { force: manual || force || bypassAirlock });
+    const relay = await pulseDoorRelay(door, globalConfig, {
+      force: manual || force || bypassAirlock,
+      pulseSeconds,
+      pulseMode
+    });
     manualCooldownByDoor.set(cooldownKey, now);
 
     if (group && door.airlockRole === 'outer' && !bypassAirlock && !manual) {
@@ -372,6 +419,98 @@ const listActiveDoors = async () => {
   };
 };
 
+/**
+ * Estado físico (relé) por puerta vía bridge.
+ * Abierta = canal activado (1); Cerrada = canal en reposo (0).
+ */
+const getDoorsPhysicalStatus = async () => {
+  const { queryRelayStatusViaBridge } = require('./lib/doorDrivers/sr201');
+  const [globalConfig, doorsConfig] = await Promise.all([
+    getAccessControlConfig(),
+    getDoorsConfig()
+  ]);
+
+  const bridgeUrl = String(globalConfig.bridgeUrl || '').trim();
+  if (!bridgeUrl) {
+    return {
+      ok: false,
+      message: 'Sin URL de puente: no se puede leer el estado físico',
+      doors: []
+    };
+  }
+
+  const doors = (doorsConfig.doors || []).filter((d) => d.active !== false);
+  const byHost = new Map();
+
+  for (const door of doors) {
+    const relay = buildRelayConfigForDoor(door, globalConfig);
+    const host = relay.host;
+    const port = relay.port;
+    const key = `${host}:${port}`;
+    if (!byHost.has(key)) {
+      byHost.set(key, { host, port, bridgeSecret: relay.bridgeSecret, doorIds: [] });
+    }
+    byHost.get(key).doorIds.push({
+      doorId: door.id,
+      doorName: door.name,
+      channel: relay.relayChannel
+    });
+  }
+
+  const doorsStatus = [];
+  const boardErrors = [];
+
+  for (const board of byHost.values()) {
+    try {
+      const status = await queryRelayStatusViaBridge(bridgeUrl, {
+        host: board.host,
+        port: board.port,
+        bridgeSecret: board.bridgeSecret || globalConfig.bridgeSecret || ''
+      });
+      const channels = status.channels || {};
+      for (const item of board.doorIds) {
+        const relayOn = channels[item.channel] === true;
+        const known = Object.prototype.hasOwnProperty.call(channels, item.channel);
+        doorsStatus.push({
+          doorId: item.doorId,
+          doorName: item.doorName,
+          host: board.host,
+          channel: item.channel,
+          relayOn: known ? relayOn : null,
+          physicalState: !known ? 'unknown' : (relayOn ? 'open' : 'closed'),
+          physicalLabel: !known ? 'Sin dato' : (relayOn ? 'Abierta' : 'Cerrada'),
+          raw: status.raw || null,
+          queriedAt: status.queriedAt || new Date().toISOString()
+        });
+      }
+    } catch (err) {
+      boardErrors.push({ host: board.host, message: err.message });
+      for (const item of board.doorIds) {
+        doorsStatus.push({
+          doorId: item.doorId,
+          doorName: item.doorName,
+          host: board.host,
+          channel: item.channel,
+          relayOn: null,
+          physicalState: 'error',
+          physicalLabel: 'Sin lectura',
+          error: err.message,
+          queriedAt: new Date().toISOString()
+        });
+      }
+    }
+  }
+
+  return {
+    ok: boardErrors.length === 0,
+    message: boardErrors.length
+      ? `Algunas placas no respondieron (${boardErrors.length})`
+      : 'Estado físico actualizado',
+    doors: doorsStatus,
+    boardErrors
+  };
+};
+
 module.exports = {
   buildRelayConfigForDoor,
   isDoorRelayConfigured,
@@ -380,5 +519,6 @@ module.exports = {
   openDoor,
   resolveDoorContext,
   listActiveDoors,
+  getDoorsPhysicalStatus,
   evaluateAirlockForOpen
 };

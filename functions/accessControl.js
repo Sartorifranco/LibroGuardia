@@ -19,6 +19,12 @@ const {
 } = require('./lib/accessValidation');
 const { buildNominaAccessMessage } = require('./lib/accessNominaMessages');
 const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
+const { applyDoorRestrictionForIngreso } = require('./lib/doorAccess');
+const {
+  findEligibleVisita,
+  markVisitaEstado,
+  nextEstadoForMovement
+} = require('./lib/visitasAccess');
 
 const findPersonalMaster = async (idNumber) => {
   const idNumberNormalized = normalizeIdNumber(idNumber);
@@ -202,7 +208,8 @@ const decidirAcceso = async ({
   nombre = '',
   apellido = '',
   tipoMovimiento = 'ingreso',
-  referenceDate = new Date()
+  referenceDate = new Date(),
+  doorId = null
 }) => {
   const { dateString: today, dayCode } = getArgentinaDateParts(referenceDate);
   const dniNormalized = normalizeDni(dni);
@@ -210,6 +217,37 @@ const decidirAcceso = async ({
 
   if (tipoMovimiento === 'egreso') {
     const resolved = await resolvePersonForValidarAcceso({ dni, nombre, apellido });
+    const visitaMatch = await findEligibleVisita({
+      dniNormalized: dniNormalized || resolved.dniNormalized,
+      doorId,
+      movementType: 'egreso'
+    });
+    if (visitaMatch.visita) {
+      return {
+        authorized: true,
+        denialReason: null,
+        personId: resolved.personId,
+        personName: visitaMatch.visita.nombreVisitante || resolved.nameSnapshot || nameSnapshot,
+        authorization: null,
+        authorizationType: 'visita_empleado',
+        dniNormalized: dniNormalized || resolved.dniNormalized,
+        allowedDoorIds: visitaMatch.allowedDoorIds,
+        visitaId: visitaMatch.visita.id
+      };
+    }
+    if (visitaMatch.reason === 'puerta_no_autorizada') {
+      return {
+        authorized: false,
+        denialReason: 'puerta_no_autorizada',
+        personId: resolved.personId,
+        personName: resolved.nameSnapshot || nameSnapshot,
+        authorization: null,
+        authorizationType: null,
+        dniNormalized: dniNormalized || resolved.dniNormalized,
+        allowedDoorIds: visitaMatch.allowedDoorIds || null,
+        visitaId: null
+      };
+    }
     return {
       authorized: true,
       denialReason: null,
@@ -217,7 +255,9 @@ const decidirAcceso = async ({
       personName: resolved.nameSnapshot || nameSnapshot,
       authorization: null,
       authorizationType: null,
-      dniNormalized: dniNormalized || resolved.dniNormalized
+      dniNormalized: dniNormalized || resolved.dniNormalized,
+      allowedDoorIds: resolved.person?.allowedDoorIds ?? null,
+      visitaId: null
     };
   }
 
@@ -286,14 +326,85 @@ const decidirAcceso = async ({
     }
   }
 
-  return {
+  // Credencial huérfana no llega acá; persona: usar people.allowedDoorIds.
+  // Si la autorización trae lista propia, tiene prioridad (casos especiales).
+  let allowedDoorIds = authorization?.allowedDoorIds != null
+    ? authorization.allowedDoorIds
+    : (resolved.person?.allowedDoorIds ?? null);
+
+  let visitaId = null;
+
+  // Visitas de empleados (colección 'visitas'): si no hubo auth clásica, o como
+  // refuerzo cuando la persona no está en people.
+  if (!authorized) {
+    const visitaMatch = await findEligibleVisita({
+      dniNormalized: dniNormalized || resolved.dniNormalized,
+      doorId,
+      movementType: 'ingreso'
+    });
+    if (visitaMatch.visita) {
+      authorized = true;
+      denialReason = null;
+      authorizationType = 'visita_empleado';
+      allowedDoorIds = visitaMatch.allowedDoorIds;
+      visitaId = visitaMatch.visita.id;
+      console.log('[accessControl] Acceso autorizado por visita de empleado', {
+        visitaId,
+        doorId
+      });
+      return {
+        authorized: true,
+        denialReason: null,
+        personId: resolved.personId,
+        personName: visitaMatch.visita.nombreVisitante || resolved.nameSnapshot || nameSnapshot,
+        authorization: null,
+        authorizationType: 'visita_empleado',
+        dniNormalized: dniNormalized || resolved.dniNormalized,
+        allowedDoorIds,
+        visitaId
+      };
+    }
+    if (visitaMatch.reason === 'puerta_no_autorizada') {
+      return {
+        authorized: false,
+        denialReason: 'puerta_no_autorizada',
+        personId: resolved.personId,
+        personName: resolved.nameSnapshot || nameSnapshot,
+        authorization: null,
+        authorizationType: null,
+        dniNormalized: dniNormalized || resolved.dniNormalized,
+        allowedDoorIds: visitaMatch.allowedDoorIds || null,
+        visitaId: null
+      };
+    }
+  }
+
+  const restricted = applyDoorRestrictionForIngreso({
     authorized,
     denialReason,
+    allowedDoorIds,
+    doorId,
+    movementType: tipoMovimiento
+  });
+
+  if (authorized && !restricted.authorized) {
+    console.log('[accessControl] Acceso denegado: puerta no autorizada', {
+      personId: resolved.personId,
+      doorId,
+      allowedDoorIds
+    });
+  }
+
+  return {
+    authorized: restricted.authorized,
+    denialReason: restricted.denialReason,
     personId: resolved.personId,
     personName: resolved.nameSnapshot || nameSnapshot,
     authorization,
     authorizationType,
-    dniNormalized
+    dniNormalized,
+    allowedDoorIds,
+    visitaId
   };
 };
 
@@ -303,14 +414,15 @@ const validarAcceso = async ({
   apellido = '',
   tipoMovimiento = 'ingreso',
   channel = 'molinete',
-  guardId = null
+  guardId = null,
+  doorId = null
 }) => {
   const dniNormalized = normalizeDni(dni);
   const nameSnapshot = buildFullName(nombre, apellido);
 
   let decision;
   try {
-    decision = await decidirAcceso({ dni, nombre, apellido, tipoMovimiento });
+    decision = await decidirAcceso({ dni, nombre, apellido, tipoMovimiento, doorId });
   } catch (err) {
     console.error('[accessControl] Error interno en validarAcceso', err);
     decision = {
@@ -326,7 +438,7 @@ const validarAcceso = async ({
 
   const entryId = await writeAccessEntry({
     personId: decision.personId,
-    authorizationId: decision.authorization?.id || null,
+    authorizationId: decision.authorization?.id || decision.visitaId || null,
     nameSnapshot: decision.personName,
     dniSnapshot: decision.dniNormalized || dniNormalized,
     tipoMovimiento,
@@ -338,13 +450,23 @@ const validarAcceso = async ({
     registeredBy: guardId
   });
 
+  if (decision.authorized && decision.visitaId) {
+    try {
+      await markVisitaEstado(decision.visitaId, nextEstadoForMovement(tipoMovimiento));
+    } catch (err) {
+      console.error('[accessControl] No se pudo actualizar estado de visita', err.message);
+    }
+  }
+
   return {
     authorized: decision.authorized,
     denialReason: decision.denialReason,
     personId: decision.personId,
     personName: decision.personName,
     authorizationType: decision.authorizationType,
-    entryId
+    entryId,
+    allowedDoorIds: decision.allowedDoorIds ?? null,
+    visitaId: decision.visitaId || null
   };
 };
 
@@ -525,13 +647,18 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
   const { openDoor, resolveDoorContext } = require('./doorController');
   const { resolveScanContext } = require('./lib/accessAuthMethods');
   const { inferMovementTypeForToday } = require('./lib/inferMovementType');
-  const isGuardDesk = readerId === 'guard-desk';
+  const { parseReaderPrefixedScan, resolveReaderFixedMovement } = require('./lib/doorsConfig');
+
+  const prefixed = parseReaderPrefixedScan(rawData);
+  const effectiveRawData = prefixed?.payload || rawData;
+  const effectiveReaderId = prefixed?.readerId || readerId || 'default';
+  const isGuardDesk = effectiveReaderId === 'guard-desk';
 
   const [{ door, airlockState }, config] = await Promise.all([
-    resolveDoorContext({ doorId, readerId }),
+    resolveDoorContext({ doorId, readerId: effectiveReaderId }),
     getAccessControlConfig()
   ]);
-  const scan = await resolveScanContext({ rawData, door });
+  const scan = await resolveScanContext({ rawData: effectiveRawData, door });
 
   if (!scan.ok) {
     return {
@@ -560,7 +687,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     parsed = { format: 'credential' };
     scanFormat = 'credential';
   } else {
-    parsed = scan.parsed || parseScanData(rawData);
+    parsed = scan.parsed || parseScanData(effectiveRawData);
     idNumber = normalizeIdNumber(parsed.idNumber || idNumber);
     firstName = parsed.firstName || firstName;
     lastName = parsed.lastName || lastName;
@@ -587,10 +714,13 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     apellido: lastName
   });
 
-  const movementType = await inferMovementTypeForToday({
-    personId: resolvedPerson.personId,
-    dniNormalized: idNumber || resolvedPerson.dniNormalized
-  });
+  const fixedMovement = prefixed?.direction
+    || resolveReaderFixedMovement(door, effectiveReaderId);
+  const movementType = fixedMovement
+    || await inferMovementTypeForToday({
+      personId: resolvedPerson.personId,
+      dniNormalized: idNumber || resolvedPerson.dniNormalized
+    });
 
   let result;
   if (scan.authMethod === 'credential' && scan.authorization && !scan.person) {
@@ -609,7 +739,8 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       apellido: lastName,
       tipoMovimiento: 'egreso',
       channel: 'molinete',
-      guardId: username
+      guardId: username,
+      doorId: door.id
     });
   } else {
     result = await validarAcceso({
@@ -618,7 +749,8 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       apellido: lastName,
       tipoMovimiento: 'ingreso',
       channel: 'molinete',
-      guardId: username
+      guardId: username,
+      doorId: door.id
     });
   }
 
@@ -644,6 +776,27 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
         authorized = false;
         denialReason = nominaAccess.reason || denialReason;
       }
+    }
+
+    // Lista de puertas: persona (people) o authorization (credencial sin personId).
+    const allowedDoorIds = scan.person?.allowedDoorIds
+      ?? resolvedPerson.person?.allowedDoorIds
+      ?? result.allowedDoorIds
+      ?? scan.authorization?.allowedDoorIds
+      ?? null;
+
+    const doorCheck = applyDoorRestrictionForIngreso({
+      authorized,
+      denialReason,
+      message,
+      allowedDoorIds,
+      doorId: door.id,
+      movementType: 'ingreso'
+    });
+    authorized = doorCheck.authorized;
+    denialReason = doorCheck.denialReason;
+    if (!doorCheck.authorized && doorCheck.message) {
+      message = doorCheck.message;
     }
   }
 

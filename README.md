@@ -18,6 +18,7 @@ El frontend **no** habla con Firestore directamente (`firestore.rules` lo bloque
 **Guía setup:** [FIREBASE-SETUP.md](./FIREBASE-SETUP.md)  
 **Instalación cliente nuevo:** [INSTALL-CLIENTE-NUEVO.md](./INSTALL-CLIENTE-NUEVO.md)  
 **Puente SR201:** [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md)  
+**Lector puerta desatendida:** [docs/INSTALACION-LECTOR-PUERTA.md](./docs/INSTALACION-LECTOR-PUERTA.md)  
 **Puente citaciones:** [docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md)  
 **Migración backend:** [docs/MIGRACION-BACKEND.md](./docs/MIGRACION-BACKEND.md)
 
@@ -120,6 +121,7 @@ Middleware compartido: `functions/middleware/auth.js`.
 | `routes/fleetGps.js` | Flota (móviles/choferes) y GPS UBIKA |
 | `routes/attendance.js` | Nómina, citados, alertas de asistencia |
 | `routes/entries.js` | `GET/POST /api/entries` |
+| `routes/peopleDoors.js` | `allowedDoorIds` por persona / puerta |
 | `routes/system.js` | Búsqueda, actividad, auditoría, reportes, notificaciones, vencimientos |
 
 Drivers de puerta: `functions/lib/doorDrivers/`. Reportes gerenciales: `functions/reports.js`.

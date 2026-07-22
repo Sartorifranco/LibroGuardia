@@ -9,6 +9,10 @@ node_modules/
 # Builds
 frontend-libro-guardia/build/
 
+# Caché de Firebase Hosting (local)
+.firebase/
+**/.firebase/
+
 # Backups duplicados / carpetas locales sobrantes
 legacy/backend-libro-guardia/Bak/
 backend-libro-guardia/          # sobra local tras migración a legacy/
@@ -22,9 +26,13 @@ npm-debug.log*
 # Auditoría local
 AUDITORIA_UNIVERSAL.txt
 
-# Config local de deploy (copiar desde config.example.ps1)
+# Config local de deploy / bridges (copiar desde *.example.*)
 scripts/config.ps1
 scripts/citaciones-bridge.config.json
+scripts/sr201-bridge.config.json
 functions/node_modules/
 functions/serviceAccountKey.json
 functions/.env
+
+# Resúmenes locales de scripts de backfill
+functions/scripts/citaciones-backfill-summary-*.json

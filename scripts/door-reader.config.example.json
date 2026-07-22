@@ -1,0 +1,12 @@
+{
+  "apiBaseUrl": "https://TU-PROYECTO.web.app/api",
+  "username": "kiosk.puerta-entrada",
+  "password": "CAMBIAR",
+  "doorId": "puerta-entrada",
+  "readerId": "lector-in",
+  "inputDevice": "/dev/input/by-id/usb-GADNIC_*-event-kbd",
+  "inputMode": "evdev",
+  "logFile": "/var/log/door-reader-bridge.log",
+  "reconnectMinMs": 2000,
+  "reconnectMaxMs": 60000
+}

@@ -7,7 +7,7 @@
   },
   "scripts": {
     "create-admin": "node create-admin.js",
-    "test": "node --test test/accessValidation.test.js test/accessControl.test.js test/fleetGps.test.js test/geofence.test.js test/nomina.test.js test/centroCostoGroups.test.js test/personMatch.test.js test/transportCsvParser.test.js test/sr201.test.js test/doorController.test.js test/doorDriverRegistry.test.js test/auditLog.test.js test/changePassword.test.js test/passwordVersion.test.js test/notifications.test.js test/loginRateLimit.test.js test/documentExpiry.test.js test/reportsSummary.test.js"
+    "test": "node --test test/accessValidation.test.js test/accessControl.test.js test/fleetGps.test.js test/geofence.test.js test/nomina.test.js test/centroCostoGroups.test.js test/personMatch.test.js test/transportCsvParser.test.js test/sr201.test.js test/doorController.test.js test/doorDriverRegistry.test.js test/auditLog.test.js test/changePassword.test.js test/passwordVersion.test.js test/notifications.test.js test/loginRateLimit.test.js test/documentExpiry.test.js test/reportsSummary.test.js test/doorsConfigReaders.test.js test/doorAccess.test.js test/fleetPresence.test.js test/liveAlerts.test.js test/empresasDestinos.test.js test/visitasEmpleado.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

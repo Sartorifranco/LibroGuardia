@@ -34,7 +34,11 @@ const PERMISSION_KEYS = [
   'attendance.alerts.read',
   'monitoring.vehicles.manage',
   'monitoring.doors.panel',
-  'guard.doors.panel'
+  'guard.doors.panel',
+  'empresas.manage',
+  'destinos.manage',
+  'visitas.create',
+  'visitas.view.own'
 ];
 
 const TECHNICAL_PERMISSIONS = [
@@ -99,6 +103,10 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.kiosk',
     'access.exceptional_entry',
     'attendance.alerts.read'
+  ],
+  'empleado-visitas': [
+    'visitas.create',
+    'visitas.view.own'
   ],
   admin: PERMISSION_KEYS.slice()
 };

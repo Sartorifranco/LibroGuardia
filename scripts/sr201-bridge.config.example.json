@@ -1,0 +1,7 @@
+{
+  "sr201Host": "192.168.0.38",
+  "sr201Port": 6722,
+  "bridgePort": 5022,
+  "bridgeHost": "0.0.0.0",
+  "bridgeSecret": "CAMBIAR_ESTE_SECRETO"
+}

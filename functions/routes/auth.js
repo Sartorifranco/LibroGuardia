@@ -17,6 +17,7 @@ const {
 } = require('../lib/loginRateLimit');
 const { seedInitialUsers, isBootstrapCompleted, INITIAL_USERS } = require('../seedUsers');
 const { changeOwnPassword } = require('../lib/changePassword');
+const { selfRegisterEmployee } = require('../lib/selfRegister');
 const {
   getPasswordVersion,
   setCachedPasswordVersion
@@ -76,6 +77,25 @@ router.post('/api/auth/register', (_req, res) => {
   res.status(403).json({
     message: 'El registro público está deshabilitado. Solicite a un administrador que cree su usuario.'
   });
+});
+
+router.post('/api/auth/self-register', async (req, res) => {
+  try {
+    const user = await selfRegisterEmployee({
+      email: req.body?.email,
+      password: req.body?.password,
+      nombre: req.body?.nombre || req.body?.name
+    });
+    res.status(201).json({
+      message: 'Cuenta creada. Ya podés iniciar sesión.',
+      user
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error en el autoregistro',
+      code: err.code
+    });
+  }
 });
 
 router.post('/api/auth/login', async (req, res) => {
@@ -148,7 +168,10 @@ router.post('/api/auth/login', async (req, res) => {
         active: user.active !== false,
         mustChangePassword: user.mustChangePassword === true,
         permissions,
-        customPermissions: user.permissions || []
+        customPermissions: user.permissions || [],
+        empresaId: user.empresaId || null,
+        nombre: user.nombre || null,
+        email: user.email || null
       }
     });
   } catch (err) {
