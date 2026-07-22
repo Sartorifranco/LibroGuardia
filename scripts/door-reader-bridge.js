@@ -1,15 +1,22 @@
 /**
- * Puente headless: lector GADNIC (USB keyboard-wedge) → Cloud Functions kiosk-scan.
+ * Puente de producción (mini PC por puerta):
+ *   lector GADNIC CODBAR14 (RS-232) → POST /api/access/kiosk-scan
  *
- * Corre en la mini PC de CADA puerta (el USB está enchufado ahí).
- * El relé SR201 NO lo maneja este script: lo dispara el backend vía sr201-bridge
- * (un solo bridge/túnel por planta alcanza para todos los SR201 de la misma LAN).
+ * NO dispara el relé en local: eso lo hace Cloud Functions vía sr201-bridge + túnel
+ * (triggerRelay rechaza IPs privadas sin bridgeUrl).
  *
- * Captura: lectura directa de /dev/input/event* (evdev), sin X11 ni navegador.
- * Referencia de buffer/timeout: frontend useUsbScanner.js (SCAN_GAP_MS = 120).
+ * Framing serie: mismo criterio validado en scripts/test-lector-rele.js
+ * (buffer hasta CR / CRLF / LF, o silencio idleMs).
+ *
+ * Instalación (una vez):
+ *   cd scripts && npm install
+ *
+ * Config:
+ *   copy door-reader.config.example.json door-reader.config.json
+ *   (editar credenciales / doorId / puerto COM)
  *
  * Uso:
- *   set DOOR_READER_CONFIG=./door-reader.config.json
+ *   set DOOR_READER_CONFIG=C:\ruta\door-reader.config.json
  *   node scripts/door-reader-bridge.js
  *
  * Docs: docs/INSTALACION-LECTOR-PUERTA.md
@@ -21,28 +28,24 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
-const SCAN_GAP_MS = 120;
-const EVENT_SIZE = 24; // struct input_event en Linux 64-bit
-const EV_KEY = 1;
-const KEY_ENTER = 28;
-const KEY_LEFTSHIFT = 42;
-const KEY_RIGHTSHIFT = 54;
+const DEFAULTS = {
+  serialPort: 'COM3',
+  baudRate: 9600,
+  idleMs: 120,
+  apiBaseUrl: '',
+  username: '',
+  password: '',
+  doorId: '',
+  readerId: 'default',
+  logFile: '',
+  reconnectMinMs: 2000,
+  reconnectMaxMs: 60000,
+  inputMode: 'serial' // serial | stdin
+};
 
-/** Mapa parcial keycode Linux → carácter (sin shift / con shift). */
-const KEYMAP = {
-  2: ['1', '!'], 3: ['2', '"'], 4: ['3', '#'], 5: ['4', '$'], 6: ['5', '%'],
-  7: ['6', '&'], 8: ['7', '/'], 9: ['8', '('], 10: ['9', ')'], 11: ['0', '='],
-  12: ['\'', '?'], 13: ['¿', '¡'],
-  16: ['q', 'Q'], 17: ['w', 'W'], 18: ['e', 'E'], 19: ['r', 'R'], 20: ['t', 'T'],
-  21: ['y', 'Y'], 22: ['u', 'U'], 23: ['i', 'I'], 24: ['o', 'O'], 25: ['p', 'P'],
-  30: ['a', 'A'], 31: ['s', 'S'], 32: ['d', 'D'], 33: ['f', 'F'], 34: ['g', 'G'],
-  35: ['h', 'H'], 36: ['j', 'J'], 37: ['k', 'K'], 38: ['l', 'L'],
-  44: ['z', 'Z'], 45: ['x', 'X'], 46: ['c', 'C'], 47: ['v', 'V'], 48: ['b', 'B'],
-  49: ['n', 'N'], 50: ['m', 'M'],
-  51: [',', ';'], 52: ['.', ':'], 53: ['-', '_'],
-  39: ['ñ', 'Ñ'],
-  86: ['<', '>'],
-  57: [' ', ' ']
+const CONTROL_NAMES = {
+  0: 'NUL', 7: 'BEL', 8: 'BS', 9: 'TAB', 10: 'LF', 11: 'VT', 12: 'FF',
+  13: 'CR', 27: 'ESC', 32: 'SPC'
 };
 
 const loadConfig = () => {
@@ -52,24 +55,40 @@ const loadConfig = () => {
   let fileCfg = {};
   if (fs.existsSync(configPath)) {
     fileCfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  } else if (!process.env.DOOR_READER_CONFIG) {
+    // sin archivo local: solo env / defaults
+  } else {
+    throw new Error(`No existe el archivo de config: ${configPath}`);
   }
 
+  const env = process.env;
   const cfg = {
-    apiBaseUrl: String(process.env.API_BASE_URL || fileCfg.apiBaseUrl || '').replace(/\/$/, ''),
-    username: String(process.env.KIOSK_USERNAME || fileCfg.username || '').trim(),
-    password: String(process.env.KIOSK_PASSWORD || fileCfg.password || ''),
-    doorId: String(process.env.DOOR_ID || fileCfg.doorId || '').trim(),
-    readerId: String(process.env.READER_ID || fileCfg.readerId || 'default').trim(),
-    inputDevice: String(process.env.INPUT_DEVICE || fileCfg.inputDevice || '').trim(),
-    inputMode: String(process.env.INPUT_MODE || fileCfg.inputMode || 'evdev').trim(),
-    logFile: String(process.env.LOG_FILE || fileCfg.logFile || '').trim(),
-    reconnectMinMs: Number(process.env.RECONNECT_MIN_MS || fileCfg.reconnectMinMs || 2000),
-    reconnectMaxMs: Number(process.env.RECONNECT_MAX_MS || fileCfg.reconnectMaxMs || 60000)
+    serialPort: String(env.SERIAL_PORT || fileCfg.serialPort || DEFAULTS.serialPort).trim(),
+    baudRate: Number(env.SERIAL_BAUD || fileCfg.baudRate || DEFAULTS.baudRate) || DEFAULTS.baudRate,
+    idleMs: Number(env.IDLE_MS || fileCfg.idleMs || DEFAULTS.idleMs) || DEFAULTS.idleMs,
+    apiBaseUrl: String(env.API_BASE_URL || fileCfg.apiBaseUrl || DEFAULTS.apiBaseUrl)
+      .replace(/\/$/, ''),
+    username: String(env.KIOSK_USERNAME || fileCfg.username || DEFAULTS.username).trim(),
+    password: String(env.KIOSK_PASSWORD || fileCfg.password || DEFAULTS.password),
+    doorId: String(env.DOOR_ID || fileCfg.doorId || DEFAULTS.doorId).trim(),
+    readerId: String(env.READER_ID || fileCfg.readerId || DEFAULTS.readerId).trim(),
+    lectorId: String(env.LECTOR_ID || fileCfg.lectorId || '').trim(),
+    logFile: String(env.LOG_FILE || fileCfg.logFile || DEFAULTS.logFile).trim(),
+    reconnectMinMs: Number(env.RECONNECT_MIN_MS || fileCfg.reconnectMinMs || DEFAULTS.reconnectMinMs),
+    reconnectMaxMs: Number(env.RECONNECT_MAX_MS || fileCfg.reconnectMaxMs || DEFAULTS.reconnectMaxMs),
+    inputMode: String(env.INPUT_MODE || fileCfg.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
+    configPath
   };
 
-  if (!cfg.apiBaseUrl) throw new Error('Falta apiBaseUrl (URL de la API, ej. https://xxx.web.app/api)');
-  if (!cfg.username || !cfg.password) throw new Error('Faltan username/password del usuario kiosk');
-  if (!cfg.doorId) throw new Error('Falta doorId');
+  if (!cfg.apiBaseUrl) {
+    throw new Error('Falta apiBaseUrl (ej. https://bacarguard.web.app/api)');
+  }
+  if (!cfg.username || !cfg.password) {
+    throw new Error('Faltan username/password del usuario kiosk de esta puerta');
+  }
+  if (!cfg.doorId) {
+    throw new Error('Falta doorId (ID de la puerta en Admin → Puertas)');
+  }
   return cfg;
 };
 
@@ -83,6 +102,23 @@ const log = (cfg, level, message, extra) => {
       // no romper el servicio por fallo de log a disco
     }
   }
+};
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const formatByte = (byte) => {
+  const name = CONTROL_NAMES[byte];
+  if (name) return `[${name}]`;
+  if (byte >= 33 && byte <= 126) return String.fromCharCode(byte);
+  return `[0x${byte.toString(16).padStart(2, '0')}]`;
+};
+
+const formatChunk = (buf) => {
+  const bytes = [...buf];
+  return {
+    pretty: bytes.map(formatByte).join(''),
+    hex: bytes.map((b) => b.toString(16).padStart(2, '0')).join(' ')
+  };
 };
 
 const requestJson = (method, urlString, { headers = {}, body } = {}) =>
@@ -112,7 +148,7 @@ const requestJson = (method, urlString, { headers = {}, body } = {}) =>
       });
     });
     req.on('error', reject);
-    req.setTimeout(20000, () => {
+    req.setTimeout(25000, () => {
       req.destroy(new Error('Timeout de red'));
     });
     if (payload) req.write(payload);
@@ -121,7 +157,7 @@ const requestJson = (method, urlString, { headers = {}, body } = {}) =>
 
 const createApiClient = (cfg) => {
   let token = null;
-  let loginBackoffMs = cfg.reconnectMinMs;
+  let networkBackoffMs = cfg.reconnectMinMs;
 
   const login = async () => {
     const res = await requestJson('POST', `${cfg.apiBaseUrl}/auth/login`, {
@@ -135,8 +171,11 @@ const createApiClient = (cfg) => {
       throw new Error(res.data.message || `Login falló (${res.status})`);
     }
     token = res.data.token;
-    loginBackoffMs = cfg.reconnectMinMs;
-    log(cfg, 'info', 'Sesión kiosk OK', { username: cfg.username });
+    networkBackoffMs = cfg.reconnectMinMs;
+    log(cfg, 'info', 'Sesión kiosk OK', {
+      username: cfg.username,
+      expiresIn: '8h'
+    });
     return token;
   };
 
@@ -160,6 +199,7 @@ const createApiClient = (cfg) => {
 
     let res = await doCall();
     if (res.status === 401) {
+      log(cfg, 'warn', 'Token expirado o inválido (401) — re-login');
       token = null;
       await login();
       res = await doCall();
@@ -167,165 +207,355 @@ const createApiClient = (cfg) => {
     return res;
   };
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const heartbeat = async () => {
+    const doCall = async () => {
+      const bearer = await ensureToken();
+      return requestJson('POST', `${cfg.apiBaseUrl}/lectores/heartbeat`, {
+        headers: { Authorization: `Bearer ${bearer}` },
+        body: {
+          doorId: cfg.doorId,
+          readerId: cfg.readerId,
+          ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {})
+        }
+      });
+    };
+
+    let res = await doCall();
+    if (res.status === 401) {
+      token = null;
+      await login();
+      res = await doCall();
+    }
+    return res;
+  };
 
   const withNetworkRetry = async (fn, label) => {
     for (;;) {
       try {
         const result = await fn();
-        loginBackoffMs = cfg.reconnectMinMs;
+        networkBackoffMs = cfg.reconnectMinMs;
         return result;
       } catch (err) {
-        const wait = err.retryAfterMs || loginBackoffMs;
+        const wait = err.retryAfterMs || networkBackoffMs;
         log(cfg, 'warn', `${label} falló, reintento`, {
           error: err.message,
           waitMs: wait
         });
         await sleep(wait);
-        loginBackoffMs = Math.min(cfg.reconnectMaxMs, Math.floor(loginBackoffMs * 1.8));
+        networkBackoffMs = Math.min(
+          cfg.reconnectMaxMs,
+          Math.floor(networkBackoffMs * 1.8)
+        );
       }
     }
   };
 
-  return { login, kioskScan, withNetworkRetry };
+  return { login, kioskScan, heartbeat, withNetworkRetry };
 };
 
-const createScanBuffer = (onComplete) => {
-  let buffer = '';
-  let lastKeyAt = 0;
-
-  const pushChar = (ch) => {
-    const now = Date.now();
-    if (now - lastKeyAt > SCAN_GAP_MS) buffer = '';
-    lastKeyAt = now;
-    buffer += ch;
-  };
-
-  const submit = () => {
-    const value = buffer.trim();
-    buffer = '';
-    if (value) onComplete(value);
-  };
-
-  return { pushChar, submit };
+const loadSerialPort = () => {
+  try {
+    return require('serialport');
+  } catch {
+    try {
+      return require(path.join(__dirname, 'node_modules', 'serialport'));
+    } catch (err) {
+      throw new Error(
+        'No se encontró el paquete "serialport". Ejecutá:\n'
+        + '  cd scripts\n'
+        + '  npm install\n'
+        + `Detalle: ${err.message}`
+      );
+    }
+  }
 };
 
 /**
- * Decodifica eventos evdev (KEY down) a caracteres.
- * Solo Linux. Requiere permisos de lectura sobre el device (grupo `input`).
+ * Framing validado en test-lector-rele.js: acumula hasta CR/LF/CRLF,
+ * o flush por silencio (idleMs) si el lector no manda terminador.
  */
-const startEvdevReader = (cfg, onScan) => {
-  if (!cfg.inputDevice) {
-    throw new Error('Falta inputDevice (ej. /dev/input/by-id/usb-...-event-kbd)');
-  }
-  if (!fs.existsSync(cfg.inputDevice)) {
-    throw new Error(`No existe el dispositivo de entrada: ${cfg.inputDevice}`);
-  }
+const createSerialFramer = (cfg, onComplete) => {
+  let buffer = Buffer.alloc(0);
+  let idleTimer = null;
 
-  const stream = fs.createReadStream(cfg.inputDevice);
-  const scan = createScanBuffer(onScan);
-  let shift = false;
-  let leftover = Buffer.alloc(0);
-
-  stream.on('data', (chunk) => {
-    const buf = Buffer.concat([leftover, chunk]);
-    const complete = buf.length - (buf.length % EVENT_SIZE);
-    leftover = buf.slice(complete);
-
-    for (let offset = 0; offset < complete; offset += EVENT_SIZE) {
-      const type = buf.readUInt16LE(offset + 16);
-      const code = buf.readUInt16LE(offset + 18);
-      const value = buf.readInt32LE(offset + 20);
-      if (type !== EV_KEY) continue;
-
-      if (code === KEY_LEFTSHIFT || code === KEY_RIGHTSHIFT) {
-        shift = value !== 0;
-        continue;
-      }
-      // value 1 = key down, 2 = autorepeat, 0 = up
-      if (value !== 1) continue;
-
-      if (code === KEY_ENTER) {
-        scan.submit();
-        continue;
-      }
-      const mapped = KEYMAP[code];
-      if (!mapped) continue;
-      scan.pushChar(shift ? mapped[1] : mapped[0]);
+  const clearIdle = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
     }
-  });
+  };
 
-  stream.on('error', (err) => {
-    log(cfg, 'error', 'Error leyendo input device', { error: err.message });
-  });
+  const emitFrame = (rawBuf, reason) => {
+    clearIdle();
+    if (!rawBuf || rawBuf.length === 0) return;
+    const text = rawBuf.toString('utf8').replace(/[\r\n\0]+/g, '').trim();
+    const { pretty, hex } = formatChunk(rawBuf);
+    onComplete({ text, pretty, hex, reason, rawBuf });
+  };
 
-  log(cfg, 'info', 'Escuchando lector evdev', { device: cfg.inputDevice });
-  return () => stream.destroy();
+  const scheduleIdleFlush = () => {
+    clearIdle();
+    idleTimer = setTimeout(() => {
+      if (buffer.length === 0) return;
+      const snapshot = buffer;
+      buffer = Buffer.alloc(0);
+      emitFrame(snapshot, `silencio ${cfg.idleMs}ms`);
+    }, cfg.idleMs);
+  };
+
+  const push = (chunk) => {
+    const { pretty, hex } = formatChunk(chunk);
+    log(cfg, 'debug', `RX chunk (${chunk.length} B)`, { pretty, hex });
+
+    buffer = Buffer.concat([buffer, chunk]);
+
+    while (buffer.length > 0) {
+      const cr = buffer.indexOf(0x0d);
+      const lf = buffer.indexOf(0x0a);
+      let cut = -1;
+      if (cr >= 0 && lf >= 0) cut = Math.min(cr, lf);
+      else if (cr >= 0) cut = cr;
+      else if (lf >= 0) cut = lf;
+
+      if (cut < 0) break;
+
+      let end = cut + 1;
+      if (buffer[cut] === 0x0d && buffer[end] === 0x0a) end += 1;
+
+      const frame = Buffer.from(buffer.subarray(0, end));
+      buffer = buffer.subarray(end);
+
+      let termLabel = 'terminador';
+      const hasCr = frame.includes(0x0d);
+      const hasLf = frame.includes(0x0a);
+      if (hasCr && hasLf) termLabel = 'CRLF';
+      else if (hasCr) termLabel = 'CR';
+      else if (hasLf) termLabel = 'LF';
+
+      emitFrame(frame, termLabel);
+    }
+
+    if (buffer.length > 0) scheduleIdleFlush();
+  };
+
+  return {
+    push,
+    reset: () => {
+      clearIdle();
+      buffer = Buffer.alloc(0);
+    },
+    destroy: clearIdle
+  };
 };
 
-/** Modo prueba sin hardware: pegá el código y Enter en la consola. */
-const startStdinReader = (cfg, onScan) => {
-  const scan = createScanBuffer(onScan);
-  process.stdin.setEncoding('utf8');
-  if (process.stdin.isTTY) process.stdin.setRawMode?.(false);
+const openSerialOnce = (cfg) => new Promise((resolve, reject) => {
+  const { SerialPort } = loadSerialPort();
+  const port = new SerialPort({
+    path: cfg.serialPort,
+    baudRate: cfg.baudRate,
+    dataBits: 8,
+    parity: 'none',
+    stopBits: 1,
+    autoOpen: false
+  });
+
+  port.open((err) => {
+    if (err) {
+      const msg = err.message || String(err);
+      let hint = '';
+      if (/access denied|busy|in use|EACCES|EBUSY/i.test(msg)) {
+        hint = ' El puerto suele estar en uso por otro programa.';
+      }
+      if (/cannot find|ENOENT|file not found|unknown/i.test(msg)) {
+        hint = ' Revisá el nombre del puerto (Administrador de dispositivos → Puertos COM).';
+      }
+      reject(new Error(`No se pudo abrir ${cfg.serialPort}: ${msg}.${hint}`));
+      return;
+    }
+    resolve(port);
+  });
+});
+
+/**
+ * Mantiene el puerto serie abierto con reconexión y backoff.
+ * Nunca termina el loop salvo shutdown.
+ */
+const runSerialLoop = async (cfg, onFrame, shouldStop) => {
+  let backoff = cfg.reconnectMinMs;
+
+  while (!shouldStop()) {
+    let port = null;
+    const framer = createSerialFramer(cfg, onFrame);
+
+    try {
+      port = await openSerialOnce(cfg);
+      backoff = cfg.reconnectMinMs;
+      log(cfg, 'info', 'Puerto serie abierto', {
+        port: cfg.serialPort,
+        baud: cfg.baudRate
+      });
+
+      await new Promise((resolve) => {
+        const onData = (chunk) => framer.push(chunk);
+        const onError = (err) => {
+          log(cfg, 'error', 'Error de puerto serie', { error: err.message || String(err) });
+        };
+        const onClose = () => {
+          log(cfg, 'warn', 'Puerto serie cerrado');
+          cleanup();
+          resolve();
+        };
+        const cleanup = () => {
+          port.off('data', onData);
+          port.off('error', onError);
+          port.off('close', onClose);
+          framer.destroy();
+        };
+
+        port.on('data', onData);
+        port.on('error', onError);
+        port.on('close', onClose);
+
+        if (shouldStop()) {
+          cleanup();
+          try { if (port.isOpen) port.close(); } catch (_e) { /* ignore */ }
+          resolve();
+        }
+      });
+    } catch (err) {
+      log(cfg, 'error', 'Fallo serie, reintento', {
+        error: err.message,
+        waitMs: backoff
+      });
+      framer.destroy();
+      await sleep(backoff);
+      backoff = Math.min(cfg.reconnectMaxMs, Math.floor(backoff * 1.8));
+      continue;
+    }
+
+    if (shouldStop()) break;
+    log(cfg, 'warn', 'Reconectando puerto serie', { waitMs: backoff });
+    await sleep(backoff);
+    backoff = Math.min(cfg.reconnectMaxMs, Math.floor(backoff * 1.8));
+  }
+};
+
+const startStdinReader = (cfg, onFrame) => {
+  const framer = createSerialFramer(cfg, onFrame);
   process.stdin.resume();
   process.stdin.on('data', (chunk) => {
-    for (const ch of String(chunk)) {
-      if (ch === '\n' || ch === '\r') scan.submit();
-      else if (ch.length === 1) scan.pushChar(ch);
-    }
+    framer.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8'));
   });
-  log(cfg, 'info', 'Modo stdin (prueba). Escaneá o tipeá + Enter.');
-  return () => process.stdin.pause();
+  log(cfg, 'info', 'Modo stdin (prueba). Pegá rawData + Enter/CR.');
+  return () => framer.destroy();
 };
 
 const main = async () => {
   const cfg = loadConfig();
   const api = createApiClient(cfg);
+  let stopping = false;
+  const shouldStop = () => stopping;
 
   log(cfg, 'info', 'door-reader-bridge iniciando', {
     doorId: cfg.doorId,
     readerId: cfg.readerId,
     apiBaseUrl: cfg.apiBaseUrl,
-    inputMode: cfg.inputMode
+    inputMode: cfg.inputMode,
+    serialPort: cfg.serialPort,
+    baudRate: cfg.baudRate,
+    configPath: cfg.configPath
   });
 
   await api.withNetworkRetry(() => api.login(), 'login');
 
+  const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 5 * 60 * 1000);
+  const sendHeartbeat = async () => {
+    try {
+      const res = await api.heartbeat();
+      if (res.status >= 200 && res.status < 300) {
+        log(cfg, 'info', 'Heartbeat OK', {
+          lectorId: res.data?.lectorId,
+          status: res.data?.connectionStatus
+        });
+      } else {
+        log(cfg, 'warn', 'Heartbeat rechazado', {
+          status: res.status,
+          message: res.data?.message
+        });
+      }
+    } catch (err) {
+      log(cfg, 'warn', 'Heartbeat falló', { error: err.message });
+    }
+  };
+  sendHeartbeat();
+  const heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS);
+
   let busy = false;
-  const handleScan = async (rawData) => {
-    if (busy) {
-      log(cfg, 'warn', 'Lectura ignorada (aún procesando la anterior)', { rawData });
+  const handleFrame = async ({ text, pretty, hex, reason }) => {
+    if (!text) {
+      log(cfg, 'warn', 'Frame vacío tras limpiar CR/LF', { reason, pretty });
       return;
     }
+    if (busy) {
+      log(cfg, 'warn', 'Lectura ignorada (aún procesando la anterior)', {
+        preview: text.slice(0, 80)
+      });
+      return;
+    }
+
     busy = true;
+    const t0 = Date.now();
     try {
-      log(cfg, 'info', 'Escaneo recibido', { rawData: rawData.slice(0, 80) });
+      log(cfg, 'info', 'Escaneo recibido', {
+        reason,
+        pretty: pretty.slice(0, 160),
+        hex: hex.slice(0, 120),
+        preview: text.slice(0, 80)
+      });
+
       const res = await api.withNetworkRetry(
-        () => api.kioskScan(rawData),
+        () => api.kioskScan(text),
         'kiosk-scan'
       );
       const data = res.data || {};
-      log(cfg, data.authorized ? 'info' : 'warn', 'Resultado kiosk-scan', {
+      const elapsedMs = Date.now() - t0;
+      const level = data.authorized ? 'info' : 'warn';
+      log(cfg, level, 'Resultado kiosk-scan', {
         status: res.status,
         authorized: data.authorized,
+        ok: data.ok,
         movementType: data.movementType,
         message: data.message,
         relayTriggered: data.relayTriggered,
-        relayError: data.relayError || null
+        relayError: data.relayError || null,
+        elapsedMs
       });
     } catch (err) {
-      log(cfg, 'error', 'Fallo al procesar escaneo', { error: err.message });
+      log(cfg, 'error', 'Fallo al procesar escaneo', {
+        error: err.message,
+        elapsedMs: Date.now() - t0
+      });
     } finally {
       busy = false;
     }
   };
 
+  const shutdown = () => {
+    if (stopping) return;
+    stopping = true;
+    clearInterval(heartbeatTimer);
+    log(cfg, 'info', 'Cerrando door-reader-bridge…');
+    setTimeout(() => process.exit(0), 500);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
   if (cfg.inputMode === 'stdin') {
-    startStdinReader(cfg, handleScan);
-  } else {
-    startEvdevReader(cfg, handleScan);
+    startStdinReader(cfg, handleFrame);
+    return;
   }
+
+  await runSerialLoop(cfg, handleFrame, shouldStop);
 };
 
 if (require.main === module) {
@@ -337,7 +567,7 @@ if (require.main === module) {
 
 module.exports = {
   loadConfig,
-  createScanBuffer,
-  SCAN_GAP_MS,
-  KEYMAP
+  createSerialFramer,
+  formatChunk,
+  DEFAULTS
 };

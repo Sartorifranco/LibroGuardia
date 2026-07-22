@@ -15,7 +15,8 @@ import {
   Users,
   Building2,
   MapPin,
-  Satellite
+  Satellite,
+  ScanLine
 } from 'lucide-react';
 import { hasPermission } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
@@ -37,6 +38,7 @@ import AuditAdminSection from './AuditAdmin/AuditAdminSection';
 import NotificationsAdminSection from './NotificationsAdmin/NotificationsAdminSection';
 import EmpresasAdminSection from './EmpresasAdmin/EmpresasAdminSection';
 import DestinosAdminSection from './DestinosAdmin/DestinosAdminSection';
+import LectoresAdminSection from './LectoresAdmin/LectoresAdminSection';
 import './admin-ui.css';
 
 /** Grupos de navegación admin (orden de producto). */
@@ -78,6 +80,12 @@ const ADMIN_NAV_GROUPS = [
         label: 'Puertas y acceso',
         icon: DoorOpen,
         match: (u) => hasPermission(u, 'access.doors.manage') || hasPermission(u, 'access.control')
+      },
+      {
+        id: 'lectores',
+        label: 'Lectores',
+        icon: ScanLine,
+        match: (u) => hasPermission(u, 'lectores.manage')
       },
       {
         id: 'notifications',
@@ -284,6 +292,10 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
 
             {adminSection === 'destinos' && hasPermission(currentUser, 'destinos.manage') && (
               <DestinosAdminSection pendingAction={pendingAction} runAction={runAction} />
+            )}
+
+            {adminSection === 'lectores' && hasPermission(currentUser, 'lectores.manage') && (
+              <LectoresAdminSection pendingAction={pendingAction} runAction={runAction} />
             )}
 
             {adminSection === 'roles' && (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) && (

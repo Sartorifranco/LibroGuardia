@@ -1,66 +1,90 @@
-# Instalación — lector GADNIC en puerta desatendida
+# Instalación — lector GADNIC en puerta (serie RS-232)
 
-Mini PC headless por puerta + lector GADNIC DNI/QR (USB keyboard-wedge) + relé SR201.
+Mini PC / PC de planta por puerta + lector **GADNIC CODBAR14** en modo **serie (RS-232)** + relé **SR201**.
 
-App: Firebase Hosting / Cloud Functions. Este documento es para **puertas sin guardia ni tablet**.
+App: https://bacarguard.web.app — Firebase Hosting / Cloud Functions.
+
+Validado en hardware real (Windows, COM3, 9600 baud, terminador **CR**). El disparo ciego del relé se probó con `scripts/test-lector-rele.js`; este documento describe el **camino de producción** (`door-reader-bridge.js` → API → autorización → relé).
 
 ---
 
 ## Arquitectura (quién hace qué)
 
 ```
-GADNIC USB  →  door-reader-bridge.js (mini PC de ESA puerta)
-                    │
-                    │  HTTPS  POST /api/access/kiosk-scan
-                    ▼
-              Cloud Functions (autoriza + dispara relé)
-                    │
-                    │  HTTPS (túnel Cloudflare)
-                    ▼
-              sr201-bridge.js (UNA PC/servidor de planta)
-                    │
-                    │  TCP :6722  (host/port de ESA puerta)
-                    ▼
-              SR201 de la puerta
+GADNIC CODBAR14 (RS-232 / USB-serie)
+        │  COM3 @ 9600, frame hasta CR
+        ▼
+door-reader-bridge.js  (PC / mini PC de ESA puerta)
+        │
+        │  HTTPS  POST /api/auth/login
+        │  HTTPS  POST /api/access/kiosk-scan  { rawData, doorId, readerId }
+        ▼
+Cloud Functions (autoriza + dispara relé)
+        │
+        │  HTTPS (túnel Cloudflare / URL pública del puente)
+        ▼
+sr201-bridge.js  (UNA PC/servidor de planta)
+        │  TCP :6722  (host/port de ESA puerta)
+        ▼
+SR201 de la puerta
 ```
+
+### Importante: IP privada del SR201
+
+`triggerRelay` **rechaza IPs privadas** (ej. `192.168.0.38`) si no hay `bridgeUrl`. En producción la puerta **debe** tener configurado el puente SR201 + túnel (Admin → Puertas → URL pública del túnel). El script de diagnóstico puede abrir el relé por TCP directo en LAN; el bridge de lector **no** habla con el SR201.
 
 ### Un solo bridge SR201 para todas las puertas (recomendado)
 
-Si las puertas nuevas están en la **misma LAN** que el molinete actual:
+Si las puertas están en la **misma LAN**:
 
-1. Dejá corriendo **un** `scripts/sr201-bridge.js` + **un** túnel Cloudflare (como hoy).
-2. En Admin → Puertas, cada puerta nueva lleva su propio `device.host` / `device.port` / `channel` y el **mismo** `bridgeUrl` / `bridgeSecret`.
-3. El driver SR201 envía `host`+`port` en cada pulso; el bridge local ya los acepta (`payload.host` / `payload.port`).
-
-No hace falta un túnel ni un `sr201-bridge` por puerta.
-
-### Sí hace falta un door-reader-bridge por puerta
-
-El GADNIC está enchufado por USB a la mini PC física de esa puerta. Ese proceso solo reenvía lecturas a la API; no habla con el SR201.
+1. Un `scripts/sr201-bridge.js` + un túnel Cloudflare.
+2. En Admin → Puertas, cada puerta con su `host` / `port` / `channel` y el **mismo** `bridgeUrl`.
+3. Un `door-reader-bridge` **por puerta** (el lector serie está enchufado ahí).
 
 ---
 
-## Hardware recomendado (por puerta)
+## Hardware confirmado
 
-| Ítem | Recomendación | Costo aprox. (USD, 2026) |
-|------|---------------|---------------------------|
-| Mini PC | **Raspberry Pi Zero 2 W** (Wi‑Fi) o **Pi 4 2GB** si preferís Ethernet/cable | Zero 2 W ~15–25 · Pi 4 ~35–55 |
-| Alimentación | Fuente oficial 5 V (evitar hubs flojos) | 8–12 |
-| Case + microSD | Case simple + microSD 16/32 GB (Raspberry Pi OS Lite 64-bit) | 10–15 |
-| Lector | GADNIC DNI/QR USB (modo teclado / keyboard-wedge) | según proveedor |
-| Relé | SR201 Ethernet (ya soportado) | según proveedor |
-
-**Por qué Pi Zero 2 W / Pi 4:** barato, Linux estable, comunidad enorme para evdev/USB, bajo consumo 24/7. Si la planta exige Ethernet fijo y no Wi‑Fi, preferí **Pi 4** con cable.
-
-No hace falta pantalla, teclado ni mouse en operación normal.
+| Ítem | Valor real validado |
+|------|---------------------|
+| Lector | GADNIC CODBAR14 |
+| Modo | **RS-232 / serie** (no keyboard-wedge para este bridge) |
+| Puerto Windows | **COM3** (puede variar; ver Administrador de dispositivos) |
+| Baud rate | **9600** 8N1 |
+| Terminador de lectura | **CR** (`0x0D`) |
+| Formato DNI | PDF417 argentino → compatible 1:1 con `functions/dniParser.js` |
+| Adaptador | USB↔serie del propio lector / cable que enumera como “Dispositivo serie USB” |
+| Relé | SR201 Ethernet (ej. `192.168.0.38:6722`) vía **puente + túnel** en producción |
 
 ---
 
-## 1. Configurar la puerta en LibroGuardia
+## 1. Configurar el GADNIC en modo serie
+
+1. Entrá al menú de configuración del CODBAR14 (manual del fabricante / códigos de configuración).
+2. Seleccioná interfaz **RS-232 / Serial** (no HID teclado).
+3. Baud **9600**, 8 datos, sin paridad, 1 stop.
+4. Sufijo / terminador: **CR** (Carriage Return).
+5. En Windows: Administrador de dispositivos → Puertos (COM y LPT) → anotá el COM (ej. COM3).
+
+Verificación rápida **sin API**:
+
+```powershell
+cd C:\Users\Admin\Desktop\LG
+cd scripts
+npm install
+cd ..
+node scripts/test-lector-rele.js --port COM3 --baud 9600 --diag-only
+```
+
+Al escanear un DNI deberías ver bytes crudos con `[CR]` al final y el texto PDF417 (`tramite@apellido@nombre@...`).
+
+---
+
+## 2. Configurar la puerta en LibroGuardia
 
 1. Admin → Puertas: crear/editar la puerta (`doorId`, ej. `puerta-entrada`).
-2. Device SR201: `host`/`port`/`channel` del relé de esa puerta + el `bridgeUrl` compartido de planta.
-3. Lectores con dirección fija (campo `readers` en la config; el panel hoy edita los ids y conserva directions ya guardadas):
+2. Device SR201: `host` / `port` / `channel` + **`bridgeUrl`** del túnel de planta (obligatorio en producción).
+3. Lectores con dirección fija si aplica:
 
 ```json
 "readers": [
@@ -69,128 +93,78 @@ No hace falta pantalla, teclado ni mouse en operación normal.
 ]
 ```
 
-- `ingreso` / `egreso`: el backend **no** infiere el sentido; usa ese `movementType`.
-- `ambos` (default): se mantiene la inferencia automática actual.
+---
 
-También podés enviar el objeto completo con `PUT /api/admin/doors-config` (permiso de gestión de puertas).
+## 3. Usuario de sistema (solo `access.kiosk`)
+
+**Recomendado:** Admin → **Lectores** → crear el lector. El panel genera el usuario kiosk,
+muestra la contraseña **una sola vez** y descarga el `door-reader.config.json` listo para la mini PC.
+
+**Manual (legado):** un usuario por puerta desde Admin → Usuarios + rol `kiosk_puerta`.
+
+El bridge hace `POST /api/auth/login`, heartbeat cada 5 min a `/api/lectores/heartbeat`, y re-loguea ante `401` o JWT vencido (~8 h).
 
 ---
 
-## 2. Usuario de sistema (auth existente)
+## 4. Instalar door-reader-bridge (Windows — PC de validación / mini PC)
 
-**Criterio: un usuario por puerta** (no uno compartido para toda la planta).
+```powershell
+cd C:\ruta\LibroGuardia\scripts
+npm install
 
-- Se crea desde Admin → Usuarios como cualquier usuario.
-- Rol con permiso **solo** `access.kiosk` (o permisos custom acotados a ese permiso).
-- Username sugerido: `kiosk.puerta-entrada`.
-- Contraseña fuerte; el bridge la guarda en el JSON local de la mini PC (no en el repo).
-
-Motivo: auditar/revocar una puerta sin afectar las demás; si se compromete una mini PC, el blast radius es menor. Funcionalmente un usuario compartido también funcionaría (mismo permiso), pero no lo recomendamos.
-
-El bridge hace `POST /api/auth/login` y re-loguea ante `401` o JWT vencido (~8 h).
-
----
-
-## 3. Conectar el GADNIC
-
-1. En Raspberry Pi OS Lite, enchufá el GADNIC por USB.
-2. Identificá el device:
-
-```bash
-ls -l /dev/input/by-id/
-# buscá algo como: usb-...-event-kbd
+copy door-reader.config.example.json door-reader.config.json
+notepad door-reader.config.json
 ```
 
-3. Agregá el usuario del servicio al grupo `input`:
+Campos del JSON:
 
-```bash
-sudo usermod -aG input doorreader
-```
-
-4. (Opcional) regla udev permanente si el path `by-id` cambia; en la mayoría de los GADNIC el symlink `by-id` es estable.
-
-5. Probá captura (modo consola del bridge):
-
-```bash
-INPUT_MODE=stdin node scripts/door-reader-bridge.js
-# o con el device real (ver config)
-```
-
----
-
-## 4. Instalar door-reader-bridge
-
-En la mini PC (Linux):
-
-```bash
-# Node 20 LTS
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs git
-
-sudo mkdir -p /opt/libro-guardia
-sudo git clone <url-del-repo> /opt/libro-guardia
-# o copiá solo scripts/door-reader-bridge.js + el JSON de config
-
-sudo cp /opt/libro-guardia/scripts/door-reader.config.example.json \
-        /etc/libro-guardia/door-reader.config.json
-sudo nano /etc/libro-guardia/door-reader.config.json
-```
-
-Campos mínimos del JSON:
-
-| Campo | Ejemplo |
-|-------|---------|
-| `apiBaseUrl` | `https://tu-cliente.web.app/api` |
-| `username` / `password` | usuario kiosk de esa puerta |
-| `doorId` | `puerta-entrada` |
-| `readerId` | `lector-in` (debe existir en `readers` de la puerta) |
-| `inputDevice` | `/dev/input/by-id/usb-....-event-kbd` |
-| `logFile` | `/var/log/door-reader-bridge.log` |
+| Campo | Ejemplo | Descripción |
+|-------|---------|-------------|
+| `apiBaseUrl` | `https://bacarguard.web.app/api` | Base de la API (sin `/` final de más) |
+| `username` / `password` | usuario kiosk de esa puerta | Login JWT |
+| `doorId` | `puerta-p1` | ID en Admin → Puertas |
+| `readerId` | `INGRESO_P1` | Debe existir en `readers` de la puerta |
+| `serialPort` | `COM3` | Puerto serie del GADNIC |
+| `baudRate` | `9600` | Confirmado en campo |
+| `idleMs` | `120` | Flush por silencio si no hubiera CR (respaldo) |
+| `inputMode` | `serial` | `stdin` solo para pruebas sin hardware |
+| `logFile` | `C:\Logs\door-reader-bridge.log` | Opcional |
+| `reconnectMinMs` / `reconnectMaxMs` | `2000` / `60000` | Backoff serie y red |
 
 Prueba manual:
 
-```bash
-export DOOR_READER_CONFIG=/etc/libro-guardia/door-reader.config.json
-node /opt/libro-guardia/scripts/door-reader-bridge.js
+```powershell
+$env:DOOR_READER_CONFIG = "C:\ruta\LibroGuardia\scripts\door-reader.config.json"
+node C:\ruta\LibroGuardia\scripts\door-reader-bridge.js
 ```
 
-Escaneá un DNI/QR: en el log deberías ver `authorized` / `denegado` y si el relé se disparó (`relayTriggered`).
+Al arrancar: `Sesión kiosk OK`. Al escanear: `Escaneo recibido` → `Resultado kiosk-scan` con `authorized: true/false` y `relayTriggered` / `relayError`.
+
+### Servicio permanente (Windows — NSSM o Tarea programada)
+
+**Opción A — NSSM**
+
+```powershell
+nssm install LibroGuardiaDoorReader "C:\Program Files\nodejs\node.exe" "C:\LG\scripts\door-reader-bridge.js"
+nssm set LibroGuardiaDoorReader AppDirectory C:\LG\scripts
+nssm set LibroGuardiaDoorReader AppEnvironmentExtra DOOR_READER_CONFIG=C:\LG\scripts\door-reader.config.json
+nssm set LibroGuardiaDoorReader Start SERVICE_AUTO_START
+nssm start LibroGuardiaDoorReader
+```
+
+**Opción B — Tarea programada** al inicio de sesión / arranque, con el mismo `node …door-reader-bridge.js` y variable `DOOR_READER_CONFIG`.
+
+El proceso reconecta el COM y reintenta la red con backoff; no hace falta reiniciarlo ante un glitch corto.
 
 ---
 
-## 5. systemd (sobrevive reinicios)
+## 5. Raspberry Pi (futuro)
 
-`/etc/systemd/system/door-reader-bridge.service`:
+Cuando se migre de la PC Windows a Pi por puerta:
 
-```ini
-[Unit]
-Description=LibroGuardia door reader bridge
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=doorreader
-Group=input
-Environment=DOOR_READER_CONFIG=/etc/libro-guardia/door-reader.config.json
-ExecStart=/usr/bin/node /opt/libro-guardia/scripts/door-reader-bridge.js
-Restart=always
-RestartSec=5
-Nice=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo useradd -r -s /usr/sbin/nologin -G input doorreader
-sudo mkdir -p /var/log
-sudo touch /var/log/door-reader-bridge.log
-sudo chown doorreader:doorreader /var/log/door-reader-bridge.log
-sudo systemctl daemon-reload
-sudo systemctl enable --now door-reader-bridge
-sudo journalctl -u door-reader-bridge -f
-```
+- Mismo script; `serialPort` será algo como `/dev/ttyUSB0` o `/dev/serial/by-id/...`.
+- Servicio con **systemd** (equivalente al NSSM de Windows).
+- El framing y la API no cambian.
 
 ---
 
@@ -198,17 +172,19 @@ sudo journalctl -u door-reader-bridge -f
 
 | Síntoma | Qué mirar |
 |---------|-----------|
-| No hay eventos al escanear | `inputDevice`, grupo `input`, `ls -l /dev/input/by-id` |
+| No abre COM | Nombre del puerto; otro programa usando el COM; cable/adaptador |
+| Bytes basura | Baud rate (probar 9600); modo serie del GADNIC |
 | Login 401/403 | usuario/password; permiso `access.kiosk`; usuario activo |
-| Denegado siempre | citación/nómina; `direction` del reader; doorId correcto |
-| Autorizado pero no abre | `sr201-bridge` + túnel; host/port de esa puerta; canal |
-| Red intermitente | el bridge reintenta con backoff; no pierde el proceso |
+| Denegado siempre | citación/nómina; `direction` del reader; `doorId` |
+| Autorizado pero no abre | `sr201-bridge` + túnel; `bridgeUrl` en la puerta; host/port/canal |
+| Red intermitente | backoff del bridge; no mata el proceso |
 
-Logs: consola de systemd y/o `logFile` del config.
+Herramienta hermana (disparo directo LAN, **sin** autorización): `scripts/test-lector-rele.js`.
 
 ---
 
 ## Relación con docs existentes
 
 - Puente SR201 / túnel: [INSTALACION-SR201.md](./INSTALACION-SR201.md)
-- Checklist cliente nuevo: [INSTALL-CLIENTE-NUEVO.md](../INSTALL-CLIENTE-NUEVO.md)
+- Multi-puertas / API kiosk: [MULTI-PUERTAS.md](./MULTI-PUERTAS.md)
+- Checklist molinete: [PRUEBA-MOLINETE.md](./PRUEBA-MOLINETE.md)

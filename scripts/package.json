@@ -1,9 +1,8 @@
 {
-  "name": "bacarguard-local-bridges",
+  "name": "libroguardia-scripts-hw",
   "private": true,
-  "description": "Puentes locales Bacar Guardia (SR201, carpeta citaciones)",
+  "description": "Dependencias locales para scripts de hardware de puerta (serialport).",
   "dependencies": {
-    "chokidar": "^3.6.0",
-    "xlsx": "^0.18.5"
+    "serialport": "^13.0.0"
   }
 }

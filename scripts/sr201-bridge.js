@@ -1,8 +1,10 @@
 /**
  * Puente local SR201 — HTTP /pulse → TCP a la(s) placa(s) en LAN.
  *
- * Temporizado: ON → espera N segundos → OFF (software), para respetar
- * exactamente los segundos configurados por puerta en Admin.
+ * Temporizado (software): ON → responde HTTP al caller → espera N s → OFF.
+ * Así /api/access/kiosk-scan no queda bloqueado los N segundos del pulso
+ * (la persona en la puerta recibe "autorizado" apenas se inicia la apertura).
+ * La duración mecánica del pulso no cambia.
  *
  * Config: scripts/sr201-bridge.config.json o variables de entorno.
  */
@@ -54,9 +56,9 @@ const server = http.createServer(async (req, res) => {
       sr201Host: SR201_HOST,
       sr201Port: SR201_PORT,
       multiHost: true,
-      timed: 'software-on-wait-off',
+      timed: 'software-on-async-off',
       statusApi: true,
-      version: 2
+      version: 3
     });
   }
 
@@ -125,8 +127,15 @@ const server = http.createServer(async (req, res) => {
 
       let result;
       if (mode === 'timed') {
-        // Duración exacta controlada acá (PC planta), no depende del firmware :n
-        result = await sendTimedPulseTcp(targetHost, targetPort, channel, seconds);
+        // Responder tras ON; OFF en background (misma duración N s).
+        result = await sendTimedPulseTcp(
+          targetHost,
+          targetPort,
+          channel,
+          seconds,
+          undefined,
+          { waitForComplete: false }
+        );
       } else {
         const command = payload.command || buildPulseCommand(channel, 'jog', seconds);
         result = await sendTcpCommand(targetHost, targetPort, command);
@@ -135,7 +144,7 @@ const server = http.createServer(async (req, res) => {
 
       sendJson(res, 200, {
         message: mode === 'timed'
-          ? `Pulso temporizado ${seconds}s enviado`
+          ? `Pulso temporizado ${seconds}s iniciado (OFF async)`
           : 'Pulso jog enviado',
         host: targetHost,
         port: targetPort,
@@ -148,7 +157,6 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-// Peticiones timed pueden durar muchos segundos; evitar timeouts cortos del socket HTTP.
 server.requestTimeout = 0;
 server.headersTimeout = 0;
 server.timeout = 0;
@@ -156,6 +164,6 @@ server.timeout = 0;
 server.listen(PORT, HOST, () => {
   console.log(`SR201 bridge escuchando en http://${HOST}:${PORT}`);
   console.log(`Destino por defecto: ${SR201_HOST}:${SR201_PORT}`);
-  console.log('Temporizado: ON → espera Ns → OFF (por puerta)');
+  console.log('Temporizado: ON → HTTP 200 → espera Ns → OFF (async)');
   if (!BRIDGE_SECRET) console.warn('AVISO: BRIDGE_SECRET vacío — /pulse sin autenticación');
 });

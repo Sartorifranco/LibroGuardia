@@ -37,6 +37,7 @@ const PERMISSION_KEYS = [
   'guard.doors.panel',
   'empresas.manage',
   'destinos.manage',
+  'lectores.manage',
   'visitas.create',
   'visitas.view.own'
 ];

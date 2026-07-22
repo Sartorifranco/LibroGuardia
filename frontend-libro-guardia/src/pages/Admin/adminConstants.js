@@ -18,6 +18,10 @@ export const ADMIN_SECTION_META = {
     title: 'Destinos',
     description: 'Lugares del predio con la secuencia de puertas necesarias para llegar.'
   },
+  lectores: {
+    title: 'Lectores físicos',
+    description: 'Asignación de mini PC + GADNIC a cada puerta: usuario kiosk, config JSON y estado de conexión.'
+  },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
   activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },

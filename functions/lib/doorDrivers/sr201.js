@@ -66,18 +66,55 @@ const sendTcpCommand = (host, port, command, timeoutMs = DEFAULT_TIMEOUT_MS) =>
     });
   });
 
-/** Temporizado fiable: activa → espera N s → desactiva (en la PC de planta). */
-const sendTimedPulseTcp = async (host, port, channel, seconds, timeoutMs = DEFAULT_TIMEOUT_MS) => {
+/**
+ * Temporizado fiable: ON → espera N s → OFF (en la PC de planta).
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.waitForComplete=true]
+ *   Si false, resuelve apenas el ON TCP confirma (el OFF sigue en background).
+ *   Usado por el bridge HTTP para no bloquear /api/access/kiosk-scan durante N s.
+ */
+const sendTimedPulseTcp = async (
+  host,
+  port,
+  channel,
+  seconds,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  options = {}
+) => {
+  const waitForComplete = options.waitForComplete !== false;
   const n = clampSeconds(seconds);
   const onCmd = buildOnCommand(channel);
   const offCmd = buildOffCommand(channel);
-  await sendTcpCommand(host, port, onCmd, timeoutMs);
-  await sleep(n * 1000);
-  const off = await sendTcpCommand(host, port, offCmd, timeoutMs);
+  const onResult = await sendTcpCommand(host, port, onCmd, timeoutMs);
+
+  const runOff = async () => {
+    await sleep(n * 1000);
+    return sendTcpCommand(host, port, offCmd, timeoutMs);
+  };
+
+  if (!waitForComplete) {
+    runOff().catch((err) => {
+      console.error(
+        `[sr201] OFF async falló (${host}:${port} ch=${channel}):`,
+        err.message || err
+      );
+    });
+    return {
+      command: `${onCmd} / wait ${n}s / ${offCmd}`,
+      mode: 'timed',
+      seconds: n,
+      async: true,
+      response: onResult.response
+    };
+  }
+
+  const off = await runOff();
   return {
     command: `${onCmd} / wait ${n}s / ${offCmd}`,
     mode: 'timed',
     seconds: n,
+    async: false,
     response: off.response
   };
 };
@@ -158,10 +195,9 @@ const sendViaBridge = async (bridgeUrl, payload, bridgeSecret = '') => {
     throw new Error('Falta la URL del puente SR201 (bridgeUrl). Configurala en Admin → Puertas.');
   }
 
-  // El bridge hace el wait localmente: el HTTP puede demorar pulseSeconds + margen.
-  const waitBudgetSec = payload.mode === 'timed'
-    ? clampSeconds(payload.seconds) + 15
-    : 15;
+  // Timed: el bridge responde tras confirmar ON (OFF async). No hace falta
+  // presupuestar pulseSeconds en el AbortController de Cloud Functions.
+  const waitBudgetSec = 20;
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller
     ? setTimeout(() => controller.abort(), waitBudgetSec * 1000)
@@ -249,7 +285,15 @@ const triggerRelay = async (config = {}, { force = false } = {}) => {
   }
 
   if (mode === 'timed') {
-    const timed = await sendTimedPulseTcp(host, port, channel, seconds, Number(config.timeoutMs) || DEFAULT_TIMEOUT_MS);
+    // Igual criterio que el bridge: no bloquear la API HTTP durante N segundos.
+    const timed = await sendTimedPulseTcp(
+      host,
+      port,
+      channel,
+      seconds,
+      Number(config.timeoutMs) || DEFAULT_TIMEOUT_MS,
+      { waitForComplete: false }
+    );
     return { triggered: true, via: 'tcp', host, port, ...timed };
   }
 

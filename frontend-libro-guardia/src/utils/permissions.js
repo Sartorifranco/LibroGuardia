@@ -35,6 +35,7 @@ export const PERMISSION_LABELS = {
   'guard.doors.panel': 'Botonera digital portón Guardia',
   'empresas.manage': 'Gestionar empresas del predio',
   'destinos.manage': 'Gestionar destinos y secuencias de puertas',
+  'lectores.manage': 'Gestionar lectores físicos (mini PC / GADNIC)',
   'visitas.create': 'Cargar visitas de invitados (empleado)',
   'visitas.view.own': 'Ver solo mis visitas cargadas'
 };
@@ -100,7 +101,8 @@ export const PERMISSION_CATEGORIES = [
       'audit.view',
       'notifications.config',
       'empresas.manage',
-      'destinos.manage'
+      'destinos.manage',
+      'lectores.manage'
     ]
   },
   {
@@ -263,7 +265,8 @@ export const canAccessAdmin = (user) =>
   hasPermission(user, 'audit.view') ||
   hasPermission(user, 'notifications.config') ||
   hasPermission(user, 'empresas.manage') ||
-  hasPermission(user, 'destinos.manage');
+  hasPermission(user, 'destinos.manage') ||
+  hasPermission(user, 'lectores.manage');
 
 /**
  * Árbol operativo /guardia (sidebar de operación, no panel admin).

@@ -47,8 +47,8 @@ Start-Sleep -Seconds 2
 
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:5022/health" -TimeoutSec 5
 Write-Host ("Health: " + ($health | ConvertTo-Json -Compress)) -ForegroundColor Green
-if (-not $health.statusApi -or [int]$health.version -lt 2) {
-  Write-Host "ADVERTENCIA: el bridge no reporta statusApi/version 2. Puede seguir siendo codigo viejo." -ForegroundColor Yellow
+if (-not $health.statusApi -or [int]$health.version -lt 3) {
+  Write-Host "ADVERTENCIA: el bridge no reporta version >= 3 (OFF async). El kiosk puede seguir esperando el pulso completo." -ForegroundColor Yellow
 }
 
 $cfg = Get-Content $configJson -Raw | ConvertFrom-Json

@@ -48,8 +48,10 @@ Start-Sleep -Seconds 2
 try {
   $health = Invoke-RestMethod -Uri "http://127.0.0.1:5022/health" -TimeoutSec 5
   Write-Host ("OK bridge running -> {0}:{1}" -f $health.sr201Host, $health.sr201Port) -ForegroundColor Green
-  if ($health.statusApi -and [int]$health.version -ge 2) {
-    Write-Host "OK status API v2 (estado fisico en tiempo real)" -ForegroundColor Green
+  if ($health.statusApi -and [int]$health.version -ge 3) {
+    Write-Host "OK status API v3 (pulso timed async — kiosk no espera N s)" -ForegroundColor Green
+  } elseif ($health.statusApi -and [int]$health.version -ge 2) {
+    Write-Host "WARN: bridge v2 — reiniciá para v3 (OFF async, respuesta kiosk rápida)" -ForegroundColor Yellow
   } else {
     Write-Host "WARN: health sin statusApi/version 2 — reinicia con restart-sr201-bridge.ps1" -ForegroundColor Yellow
   }

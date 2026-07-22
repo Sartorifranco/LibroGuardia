@@ -30,6 +30,9 @@ AUDITORIA_UNIVERSAL.txt
 scripts/config.ps1
 scripts/citaciones-bridge.config.json
 scripts/sr201-bridge.config.json
+scripts/door-reader.config.json
+scripts/door-reader.config.*.json
+!scripts/door-reader.config.example.json
 functions/node_modules/
 functions/serviceAccountKey.json
 functions/.env
