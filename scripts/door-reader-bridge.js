@@ -56,6 +56,11 @@ const DEFAULTS = {
   offlineCacheRefreshMs: 15 * 60 * 1000,
   /** Si la lista tiene más de N horas, no confiar y denegar offline. */
   offlineCacheMaxAgeHours: 24,
+  /**
+   * Con offlineCache + caché vigente: decide YA con la lista (sin kiosk-scan),
+   * abre relé al instante y reporta el evento en background vía cola offline.
+   */
+  localFirstMode: false,
   offlineAllowlistFile: '',
   offlineQueueFile: '',
   onlineScanTimeoutMs: 12000,
@@ -81,11 +86,21 @@ const loadConfig = () => {
   }
 
   const env = process.env;
-  const offlineCache = (() => {
-    const raw = env.OFFLINE_CACHE != null ? env.OFFLINE_CACHE : fileCfg.offlineCache;
+  const parseBool = (raw, fallback = false) => {
     if (raw === true || raw === '1' || String(raw).toLowerCase() === 'true') return true;
-    return false;
-  })();
+    if (raw === false || raw === '0' || String(raw).toLowerCase() === 'false') return false;
+    return fallback;
+  };
+
+  const offlineCache = parseBool(
+    env.OFFLINE_CACHE != null ? env.OFFLINE_CACHE : fileCfg.offlineCache,
+    false
+  );
+  let localFirstMode = parseBool(
+    env.LOCAL_FIRST_MODE != null ? env.LOCAL_FIRST_MODE : fileCfg.localFirstMode,
+    false
+  );
+  if (!offlineCache) localFirstMode = false;
 
   const cfg = {
     serialPort: String(env.SERIAL_PORT || fileCfg.serialPort || DEFAULTS.serialPort).trim(),
@@ -103,6 +118,7 @@ const loadConfig = () => {
     reconnectMaxMs: Number(env.RECONNECT_MAX_MS || fileCfg.reconnectMaxMs || DEFAULTS.reconnectMaxMs),
     inputMode: String(env.INPUT_MODE || fileCfg.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
     offlineCache,
+    localFirstMode,
     offlineCacheRefreshMs: Number(
       env.OFFLINE_CACHE_REFRESH_MS || fileCfg.offlineCacheRefreshMs || DEFAULTS.offlineCacheRefreshMs
     ) || DEFAULTS.offlineCacheRefreshMs,
@@ -287,13 +303,19 @@ const findAllowlistMatch = (allowlist, dniNormalized, now = new Date()) => {
   return hit;
 };
 
-const isAllowlistFresh = (allowlist, maxAgeHours) => {
+const isAllowlistFresh = (allowlist, maxAgeHours, nowMs = Date.now()) => {
   if (!allowlist?.generatedAt) return false;
   const at = Date.parse(allowlist.generatedAt);
   if (!Number.isFinite(at)) return false;
   const maxMs = Math.max(1, Number(maxAgeHours) || 24) * 60 * 60 * 1000;
-  return (Date.now() - at) <= maxMs;
+  return (nowMs - at) <= maxMs;
 };
+
+/** true si debe decidir con caché sin llamar a kiosk-scan (modo instantáneo). */
+const canDecideLocalFirst = (cfg = {}, allowlist = null, nowMs = Date.now()) =>
+  Boolean(cfg.offlineCache)
+  && Boolean(cfg.localFirstMode)
+  && isAllowlistFresh(allowlist, cfg.offlineCacheMaxAgeHours, nowMs);
 
 const createApiClient = (cfg) => {
   let token = null;
@@ -358,6 +380,8 @@ const createApiClient = (cfg) => {
       body: {
         doorId: cfg.doorId,
         readerId: cfg.readerId,
+        serialPort: cfg.serialPort,
+        inputMode: cfg.inputMode,
         ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {})
       },
       timeoutMs: 20000
@@ -674,12 +698,20 @@ const main = async () => {
     });
   };
 
-  const decideOffline = async (rawData) => {
+  const decideFromCache = async (rawData, {
+    denyIfStale = true,
+    label = 'offline'
+  } = {}) => {
     const identity = extractScanIdentity(rawData);
     const now = new Date();
+    const fresh = Boolean(cachedAllowlist)
+      && isAllowlistFresh(cachedAllowlist, cfg.offlineCacheMaxAgeHours);
 
-    if (!cachedAllowlist || !isAllowlistFresh(cachedAllowlist, cfg.offlineCacheMaxAgeHours)) {
-      log(cfg, 'warn', 'Offline: allowlist ausente o vencida — denegado', {
+    if (!fresh) {
+      if (!denyIfStale) {
+        return null;
+      }
+      log(cfg, 'warn', `${label}: allowlist ausente o vencida — denegado`, {
         hasCache: Boolean(cachedAllowlist),
         generatedAt: cachedAllowlist?.generatedAt || null,
         maxAgeHours: cfg.offlineCacheMaxAgeHours
@@ -700,15 +732,17 @@ const main = async () => {
       return {
         authorized: false,
         message: 'Sin conexión y lista local vencida o ausente. Acceso denegado.',
-        offline: true
+        offline: true,
+        localFirst: label === 'local-first'
       };
     }
 
     if (!identity.dniNormalized) {
       return {
         authorized: false,
-        message: 'No se pudo leer el documento (modo offline).',
-        offline: true
+        message: `No se pudo leer el documento (modo ${label}).`,
+        offline: true,
+        localFirst: label === 'local-first'
       };
     }
 
@@ -724,7 +758,7 @@ const main = async () => {
         await fireLocalRelay(cfg, cachedAllowlist.localRelay);
         relayTriggered = true;
       } catch (relayErr) {
-        log(cfg, 'error', 'Fallo relé local (offline)', { error: relayErr.message });
+        log(cfg, 'error', `Fallo relé local (${label})`, { error: relayErr.message });
       }
     }
 
@@ -743,17 +777,30 @@ const main = async () => {
       relayTriggered
     });
 
+    // Reportar a la nube en background (misma cola / idempotencia).
+    flushOfflineQueue().catch((err) => {
+      log(cfg, 'warn', `Cola ${label}: sync diferido falló (reintento en heartbeat)`, {
+        error: err.message
+      });
+    });
+
     return {
       authorized,
       message: authorized
-        ? `Offline OK: ${match.nombre || identity.dniNormalized}`
-        : 'Offline: no autorizado en lista local',
+        ? `${label === 'local-first' ? 'Instantáneo' : 'Offline'} OK: ${match.nombre || identity.dniNormalized}`
+        : `${label === 'local-first' ? 'Instantáneo' : 'Offline'}: no autorizado en lista local`,
       offline: true,
+      localFirst: label === 'local-first',
       localRelay: cachedAllowlist.localRelay || null,
       relayMode: cachedAllowlist.relayMode || 'local',
       relayTriggered
     };
   };
+
+  const decideOffline = (rawData) => decideFromCache(rawData, {
+    denyIfStale: true,
+    label: 'offline'
+  });
 
   log(cfg, 'info', 'door-reader-bridge iniciando', {
     doorId: cfg.doorId,
@@ -763,6 +810,7 @@ const main = async () => {
     serialPort: cfg.serialPort,
     baudRate: cfg.baudRate,
     offlineCache: cfg.offlineCache,
+    localFirstMode: cfg.localFirstMode,
     configPath: cfg.configPath
   });
 
@@ -850,31 +898,49 @@ const main = async () => {
 
       let res;
       let usedOffline = false;
+      let usedLocalFirst = false;
 
-      if (cfg.offlineCache) {
-        try {
-          res = await api.kioskScan(text);
-        } catch (err) {
-          if (isNetworkError(err)) {
-            log(cfg, 'warn', 'kiosk-scan sin red — modo offline', { error: err.message });
-            const offlineResult = await decideOffline(text);
-            usedOffline = true;
-            res = { status: 200, data: offlineResult };
-          } else {
-            throw err;
-          }
+      if (canDecideLocalFirst(cfg, cachedAllowlist)) {
+        const localResult = await decideFromCache(text, {
+          denyIfStale: false,
+          label: 'local-first'
+        });
+        if (localResult) {
+          usedLocalFirst = true;
+          usedOffline = true;
+          res = { status: 200, data: localResult };
         }
-      } else {
-        res = await api.withNetworkRetry(
-          () => api.kioskScan(text),
-          'kiosk-scan'
-        );
+      }
+
+      if (!res) {
+        if (cfg.offlineCache) {
+          try {
+            res = await api.kioskScan(text);
+          } catch (err) {
+            if (isNetworkError(err)) {
+              log(cfg, 'warn', 'kiosk-scan sin red — modo offline', { error: err.message });
+              const offlineResult = await decideOffline(text);
+              usedOffline = true;
+              res = { status: 200, data: offlineResult };
+            } else {
+              throw err;
+            }
+          }
+        } else {
+          res = await api.withNetworkRetry(
+            () => api.kioskScan(text),
+            'kiosk-scan'
+          );
+        }
       }
 
       const data = res.data || {};
       const elapsedMs = Date.now() - t0;
       const level = data.authorized ? 'info' : 'warn';
-      log(cfg, level, usedOffline ? 'Resultado offline' : 'Resultado kiosk-scan', {
+      const resultLabel = usedLocalFirst
+        ? 'Resultado local-first'
+        : (usedOffline ? 'Resultado offline' : 'Resultado kiosk-scan');
+      log(cfg, level, resultLabel, {
         status: res.status,
         authorized: data.authorized,
         ok: data.ok,
@@ -884,11 +950,12 @@ const main = async () => {
         relayTriggered: data.relayTriggered,
         relayError: data.relayError || null,
         offline: Boolean(data.offline || usedOffline),
+        localFirst: usedLocalFirst,
         elapsedMs
       });
 
       // MODO LOCAL online: la nube autorizó pero NO disparó el relé; lo hacemos acá.
-      // (En offline, decideOffline ya disparó el relé si correspondía.)
+      // (En offline/local-first, decideFromCache ya disparó el relé si correspondía.)
       if (!usedOffline && data.authorized && data.relayMode === 'local' && data.localRelay) {
         const tRelay = Date.now();
         try {
@@ -946,7 +1013,17 @@ module.exports = {
   formatChunk,
   isNetworkError,
   isAllowlistFresh,
+  canDecideLocalFirst,
   findAllowlistMatch,
   extractScanIdentity,
+  /**
+   * Camino de decisión testable (sin I/O de red real).
+   * Si local-first + caché vigente → no invoca kioskScanFn.
+   */
+  resolveScanPath: ({ cfg, allowlist, nowMs = Date.now() }) => {
+    if (canDecideLocalFirst(cfg, allowlist, nowMs)) return 'local-first';
+    if (cfg.offlineCache) return 'online-with-offline-fallback';
+    return 'online-only';
+  },
   DEFAULTS
 };

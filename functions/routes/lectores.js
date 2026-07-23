@@ -197,14 +197,18 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       username,
       lectorId: req.body?.lectorId || null,
       doorId: req.body?.doorId || null,
-      readerId: req.body?.readerId || null
+      readerId: req.body?.readerId || null,
+      serialPort: req.body?.serialPort || req.body?.puertoDetectado || null,
+      inputMode: req.body?.inputMode || req.body?.inputModeDetectado || null
     });
     res.json({
       ok: true,
       lectorId: lector.id,
       ultimaConexion: lector.ultimaConexion,
       connectionStatus: resolveConnectionStatus(lector.ultimaConexion),
-      forceResync: Boolean(lector.forceResync)
+      forceResync: Boolean(lector.forceResync),
+      puertoDetectado: lector.puertoDetectado || null,
+      inputModeDetectado: lector.inputModeDetectado || null
     });
   } catch (err) {
     res.status(err.status || 500).json({

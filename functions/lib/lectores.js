@@ -38,9 +38,67 @@ const httpError = (status, message, code) => {
   return err;
 };
 
+const DEFAULT_OFFLINE_REFRESH_MS = 15 * 60 * 1000;
+const DEFAULT_OFFLINE_MAX_AGE_HOURS = 24;
+
+const toBool = (value, fallback = false) => {
+  if (value === true || value === false) return value;
+  if (value === '1' || String(value).toLowerCase() === 'true') return true;
+  if (value === '0' || String(value).toLowerCase() === 'false') return false;
+  return fallback;
+};
+
+const sanitizeOfflineOptions = (body = {}, previous = {}) => {
+  const offlineCache = toBool(
+    body.offlineCache !== undefined ? body.offlineCache : previous.offlineCache,
+    false
+  );
+  let localFirstMode = toBool(
+    body.localFirstMode !== undefined ? body.localFirstMode : previous.localFirstMode,
+    false
+  );
+  // Instantáneo requiere caché offline.
+  if (!offlineCache) localFirstMode = false;
+
+  let offlineCacheRefreshMs;
+  if (
+    body.offlineCacheRefreshMinutes !== undefined
+    && body.offlineCacheRefreshMinutes !== null
+    && body.offlineCacheRefreshMinutes !== ''
+  ) {
+    offlineCacheRefreshMs = Number(body.offlineCacheRefreshMinutes) * 60_000;
+  } else if (body.offlineCacheRefreshMs !== undefined) {
+    offlineCacheRefreshMs = Number(body.offlineCacheRefreshMs);
+  } else {
+    offlineCacheRefreshMs = Number(previous.offlineCacheRefreshMs);
+  }
+  if (!Number.isFinite(offlineCacheRefreshMs) || offlineCacheRefreshMs < 60_000) {
+    offlineCacheRefreshMs = DEFAULT_OFFLINE_REFRESH_MS;
+  }
+  offlineCacheRefreshMs = Math.min(24 * 60 * 60 * 1000, Math.max(60_000, offlineCacheRefreshMs));
+
+  let offlineCacheMaxAgeHours = Number(
+    body.offlineCacheMaxAgeHours !== undefined
+      ? body.offlineCacheMaxAgeHours
+      : previous.offlineCacheMaxAgeHours
+  );
+  if (!Number.isFinite(offlineCacheMaxAgeHours) || offlineCacheMaxAgeHours < 1) {
+    offlineCacheMaxAgeHours = DEFAULT_OFFLINE_MAX_AGE_HOURS;
+  }
+  offlineCacheMaxAgeHours = Math.min(168, Math.max(1, Math.round(offlineCacheMaxAgeHours)));
+
+  return {
+    offlineCache,
+    localFirstMode,
+    offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours
+  };
+};
+
 const toLectorJson = (doc) => {
   const data = typeof doc.data === 'function' ? doc.data() : doc;
   const id = doc.id || data.id;
+  const offline = sanitizeOfflineOptions(data, data);
   return {
     id,
     nombre: data.nombre || '',
@@ -50,6 +108,12 @@ const toLectorJson = (doc) => {
     usuarioSistemaId: data.usuarioSistemaId || '',
     ultimaConexion: data.ultimaConexion || null,
     forceResync: Boolean(data.forceResync),
+    offlineCache: offline.offlineCache,
+    localFirstMode: offline.localFirstMode,
+    offlineCacheRefreshMs: offline.offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours: offline.offlineCacheMaxAgeHours,
+    puertoDetectado: data.puertoDetectado || null,
+    inputModeDetectado: data.inputModeDetectado || null,
     createdAt: data.createdAt || null,
     updatedAt: data.updatedAt || null
   };
@@ -92,7 +156,7 @@ const validateDoorAndReader = async ({ doorId, readerId, direction }) => {
   return { door, direction: dir, doorsConfig };
 };
 
-const sanitizeLectorFields = (body = {}) => {
+const sanitizeLectorFields = (body = {}, previous = {}) => {
   const nombre = String(body.nombre || '').trim();
   if (!nombre) throw httpError(400, 'El nombre es obligatorio');
   const doorId = String(body.doorId || '').trim();
@@ -101,7 +165,13 @@ const sanitizeLectorFields = (body = {}) => {
   if (!readerId) throw httpError(400, 'readerId es obligatorio');
   const direction = DIRECTIONS.includes(body.direction) ? body.direction : null;
   if (!direction) throw httpError(400, 'direction debe ser ingreso, egreso o ambos');
-  return { nombre, doorId, readerId, direction };
+  return {
+    nombre,
+    doorId,
+    readerId,
+    direction,
+    ...sanitizeOfflineOptions(body, previous)
+  };
 };
 
 const buildDoorReaderConfig = ({
@@ -110,25 +180,39 @@ const buildDoorReaderConfig = ({
   password,
   doorId,
   readerId,
-  lectorId = ''
-}) => ({
-  apiBaseUrl: String(apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/$/, ''),
-  username: String(username || ''),
-  password: password == null ? '' : String(password),
-  doorId: String(doorId || ''),
-  readerId: String(readerId || ''),
-  lectorId: String(lectorId || ''),
-  serialPort: 'COM3',
-  baudRate: 9600,
-  idleMs: 120,
-  inputMode: 'serial',
-  logFile: '/var/log/door-reader-bridge.log',
-  reconnectMinMs: 2000,
-  reconnectMaxMs: 60000,
-  offlineCache: false,
-  offlineCacheRefreshMs: 900000,
-  offlineCacheMaxAgeHours: 24
-});
+  lectorId = '',
+  offlineCache = false,
+  localFirstMode = false,
+  offlineCacheRefreshMs = DEFAULT_OFFLINE_REFRESH_MS,
+  offlineCacheMaxAgeHours = DEFAULT_OFFLINE_MAX_AGE_HOURS,
+  serialPort = 'COM3'
+} = {}) => {
+  const offline = sanitizeOfflineOptions({
+    offlineCache,
+    localFirstMode,
+    offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours
+  });
+  return {
+    apiBaseUrl: String(apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/$/, ''),
+    username: String(username || ''),
+    password: password == null ? '' : String(password),
+    doorId: String(doorId || ''),
+    readerId: String(readerId || ''),
+    lectorId: String(lectorId || ''),
+    serialPort: String(serialPort || 'COM3').trim() || 'COM3',
+    baudRate: 9600,
+    idleMs: 120,
+    inputMode: 'serial',
+    logFile: '/var/log/door-reader-bridge.log',
+    reconnectMinMs: 2000,
+    reconnectMaxMs: 60000,
+    offlineCache: offline.offlineCache,
+    localFirstMode: offline.localFirstMode,
+    offlineCacheRefreshMs: offline.offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours: offline.offlineCacheMaxAgeHours
+  };
+};
 
 const ensureKioskRole = async () => {
   const existing = await getRoleById(KIOSK_ROLE_ID);
@@ -228,6 +312,8 @@ const createLector = async (body, { apiBaseUrl } = {}) => {
     ...fields,
     usuarioSistemaId: username,
     ultimaConexion: null,
+    puertoDetectado: null,
+    inputModeDetectado: null,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp()
   };
@@ -240,7 +326,11 @@ const createLector = async (body, { apiBaseUrl } = {}) => {
     password,
     doorId: fields.doorId,
     readerId: fields.readerId,
-    lectorId: ref.id
+    lectorId: ref.id,
+    offlineCache: fields.offlineCache,
+    localFirstMode: fields.localFirstMode,
+    offlineCacheRefreshMs: fields.offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours: fields.offlineCacheMaxAgeHours
   });
 
   return { lector, password, config, username };
@@ -250,8 +340,8 @@ const updateLector = async (id, body) => {
   const ref = db.collection(LECTORES).doc(id);
   const beforeSnap = await ref.get();
   if (!beforeSnap.exists) throw httpError(404, 'Lector no encontrado');
-  const before = beforeSnap.data();
-  const fields = sanitizeLectorFields({ ...before, ...body });
+  const before = beforeSnap.data() || {};
+  const fields = sanitizeLectorFields({ ...before, ...body }, before);
   await validateDoorAndReader(fields);
   await ref.set({
     ...fields,
@@ -291,7 +381,11 @@ const regenerateCredentials = async (id, { apiBaseUrl } = {}) => {
     password,
     doorId: lector.doorId,
     readerId: lector.readerId,
-    lectorId: id
+    lectorId: id,
+    offlineCache: lector.offlineCache,
+    localFirstMode: lector.localFirstMode,
+    offlineCacheRefreshMs: lector.offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours
   });
 
   return { lector, password, config };
@@ -305,7 +399,11 @@ const buildConfigForDownload = async (id, { apiBaseUrl, includePassword = false,
     password: includePassword ? password : '',
     doorId: lector.doorId,
     readerId: lector.readerId,
-    lectorId: id
+    lectorId: id,
+    offlineCache: lector.offlineCache,
+    localFirstMode: lector.localFirstMode,
+    offlineCacheRefreshMs: lector.offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours
   });
 };
 
@@ -324,7 +422,14 @@ const resolveAuthUsername = (user) => {
  * Heartbeat del bridge: actualiza ultimaConexion del lector del usuario kiosk.
  * Si forceResync estaba en true, lo consume (pasa a false) y lo reporta en la respuesta.
  */
-const touchHeartbeat = async ({ username, lectorId = null, doorId = null, readerId = null }) => {
+const touchHeartbeat = async ({
+  username,
+  lectorId = null,
+  doorId = null,
+  readerId = null,
+  serialPort = null,
+  inputMode = null
+} = {}) => {
   const uid = String(username || '').trim().toLowerCase();
   if (!uid) throw httpError(401, 'No autenticado');
 
@@ -375,6 +480,10 @@ const touchHeartbeat = async ({ username, lectorId = null, doorId = null, reader
   if (forceResync) {
     patch.forceResync = false;
   }
+  const port = String(serialPort || '').trim();
+  if (port) patch.puertoDetectado = port;
+  const mode = String(inputMode || '').trim().toLowerCase();
+  if (mode) patch.inputModeDetectado = mode;
 
   await ref.set(patch, { merge: true });
 
@@ -412,6 +521,7 @@ module.exports = {
   toLectorJson,
   resolveConnectionStatus,
   sanitizeLectorFields,
+  sanitizeOfflineOptions,
   buildDoorReaderConfig,
   ensureKioskRole,
   resolveApiBaseUrl,

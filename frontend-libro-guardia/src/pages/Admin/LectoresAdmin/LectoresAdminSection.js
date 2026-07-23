@@ -52,8 +52,32 @@ const emptyCreateForm = () => ({
   nombre: '',
   doorId: '',
   readerId: '',
-  direction: 'ingreso'
+  direction: 'ingreso',
+  offlineCache: false,
+  localFirstMode: false,
+  offlineCacheRefreshMinutes: 15,
+  offlineCacheMaxAgeHours: 24
 });
+
+const offlineFieldsFromRow = (row = {}) => ({
+  offlineCache: Boolean(row.offlineCache),
+  localFirstMode: Boolean(row.localFirstMode) && Boolean(row.offlineCache),
+  offlineCacheRefreshMinutes: Math.max(
+    1,
+    Math.round((Number(row.offlineCacheRefreshMs) || 900000) / 60000)
+  ),
+  offlineCacheMaxAgeHours: Math.max(1, Number(row.offlineCacheMaxAgeHours) || 24)
+});
+
+const bodyFromOfflineForm = (form) => {
+  const offlineCache = Boolean(form.offlineCache);
+  return {
+    offlineCache,
+    localFirstMode: offlineCache && Boolean(form.localFirstMode),
+    offlineCacheRefreshMs: Math.max(1, Number(form.offlineCacheRefreshMinutes) || 15) * 60_000,
+    offlineCacheMaxAgeHours: Math.max(1, Number(form.offlineCacheMaxAgeHours) || 24)
+  };
+};
 
 function downloadJson(filename, data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -136,6 +160,7 @@ function EditLectorModal({
 }) {
   if (!draft) return null;
   const readers = readersForDoorId(doors, draft.doorId);
+  const offlineOn = Boolean(draft.offlineCache);
 
   return (
     <div className="admin-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-lector-title">
@@ -147,8 +172,8 @@ function EditLectorModal({
           </button>
         </div>
         <p className="historial-meta" style={{ marginBottom: '0.75rem' }}>
-          Si cambiás puerta o readerId, actualizá también el <code>door-reader.config.json</code> en la mini PC
-          (o regenerá y volvé a copiar el archivo).
+          Si cambiás puerta, readerId o modos offline/instantáneo, descargá de nuevo el
+          {' '}<code>door-reader.config.json</code> y copialo a la mini PC (o regenerá credenciales).
         </p>
         <form
           onSubmit={(e) => {
@@ -210,6 +235,59 @@ function EditLectorModal({
               </select>
             </label>
           </div>
+
+          <div className="lector-offline-opts" style={{ marginTop: '1rem' }}>
+            <p className="historial-meta" style={{ marginBottom: '0.5rem' }}>
+              Caché local / respuesta instantánea (default apagado)
+            </p>
+            <label className="lector-check">
+              <input
+                type="checkbox"
+                checked={offlineOn}
+                onChange={(e) => onChange({
+                  offlineCache: e.target.checked,
+                  localFirstMode: e.target.checked ? draft.localFirstMode : false
+                })}
+              />
+              <span>Modo offline (caché local)</span>
+            </label>
+            <label className={`lector-check${offlineOn ? '' : ' lector-check--dim'}`}>
+              <input
+                type="checkbox"
+                checked={Boolean(draft.localFirstMode) && offlineOn}
+                disabled={!offlineOn}
+                onChange={(e) => onChange({ localFirstMode: e.target.checked })}
+              />
+              <span>Modo instantáneo (decide siempre con caché local, más rápido)</span>
+            </label>
+            <div className="admin-form-grid" style={{ marginTop: '0.5rem' }}>
+              <label>
+                <span className="historial-meta">Refresco de lista (min)</span>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={1440}
+                  disabled={!offlineOn}
+                  value={draft.offlineCacheRefreshMinutes}
+                  onChange={(e) => onChange({ offlineCacheRefreshMinutes: e.target.value })}
+                />
+              </label>
+              <label>
+                <span className="historial-meta">Antigüedad máx. caché (horas)</span>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={168}
+                  disabled={!offlineOn}
+                  value={draft.offlineCacheMaxAgeHours}
+                  onChange={(e) => onChange({ offlineCacheMaxAgeHours: e.target.value })}
+                />
+              </label>
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-2" style={{ marginTop: '1rem' }}>
             <PendingButton
               type="submit"
@@ -297,7 +375,8 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       nombre: row.nombre || '',
       doorId: row.doorId || '',
       readerId: row.readerId || '',
-      direction: row.direction || 'ingreso'
+      direction: row.direction || 'ingreso',
+      ...offlineFieldsFromRow(row)
     });
   };
 
@@ -312,7 +391,13 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         const data = await apiFetch('/admin/lectores', {
           method: 'POST',
           token: authToken,
-          body: { nombre, doorId, readerId, direction }
+          body: {
+            nombre,
+            doorId,
+            readerId,
+            direction,
+            ...bodyFromOfflineForm(createForm)
+          }
         });
         setLectores((prev) => [...prev, data.lector].sort((a, b) =>
           String(a.nombre).localeCompare(String(b.nombre))));
@@ -337,10 +422,16 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         const data = await apiFetch(`/admin/lectores/${id}`, {
           method: 'PUT',
           token: authToken,
-          body: { nombre, doorId, readerId, direction }
+          body: {
+            nombre,
+            doorId,
+            readerId,
+            direction,
+            ...bodyFromOfflineForm(editDraft)
+          }
         });
         setLectores((prev) => prev.map((x) => (x.id === id ? data.lector : x)));
-        showSuccess(data.message || 'Lector actualizado');
+        showSuccess(data.message || 'Lector actualizado. Descargá el JSON si cambiaste modos offline.');
         closeEdit();
       } catch (err) {
         showError(err.message || 'Error al actualizar lector');
@@ -509,6 +600,61 @@ function LectoresAdminSection({ pendingAction, runAction }) {
               </select>
             </label>
           </div>
+          <div className="lector-offline-opts" style={{ marginTop: '0.85rem' }}>
+            <label className="lector-check">
+              <input
+                type="checkbox"
+                checked={Boolean(createForm.offlineCache)}
+                onChange={(e) => setCreateForm((prev) => ({
+                  ...prev,
+                  offlineCache: e.target.checked,
+                  localFirstMode: e.target.checked ? prev.localFirstMode : false
+                }))}
+              />
+              <span>Modo offline (caché local)</span>
+            </label>
+            <label className={`lector-check${createForm.offlineCache ? '' : ' lector-check--dim'}`}>
+              <input
+                type="checkbox"
+                checked={Boolean(createForm.localFirstMode) && Boolean(createForm.offlineCache)}
+                disabled={!createForm.offlineCache}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, localFirstMode: e.target.checked }))}
+              />
+              <span>Modo instantáneo (decide con caché local)</span>
+            </label>
+            <div className="admin-form-grid" style={{ marginTop: '0.5rem' }}>
+              <label>
+                <span className="historial-meta">Refresco lista (min)</span>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={1440}
+                  disabled={!createForm.offlineCache}
+                  value={createForm.offlineCacheRefreshMinutes}
+                  onChange={(e) => setCreateForm((prev) => ({
+                    ...prev,
+                    offlineCacheRefreshMinutes: e.target.value
+                  }))}
+                />
+              </label>
+              <label>
+                <span className="historial-meta">Antigüedad máx. (horas)</span>
+                <input
+                  className="input-field"
+                  type="number"
+                  min={1}
+                  max={168}
+                  disabled={!createForm.offlineCache}
+                  value={createForm.offlineCacheMaxAgeHours}
+                  onChange={(e) => setCreateForm((prev) => ({
+                    ...prev,
+                    offlineCacheMaxAgeHours: e.target.value
+                  }))}
+                />
+              </label>
+            </div>
+          </div>
           <div className="flex flex-wrap gap-2" style={{ marginTop: '0.75rem' }}>
             <PendingButton
               type="submit"
@@ -541,6 +687,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                 <th>Nombre</th>
                 <th>Puerta</th>
                 <th>Reader</th>
+                <th>Puerto</th>
                 <th>Sentido</th>
                 <th>Conexión</th>
                 <th>Última conexión</th>
@@ -558,6 +705,12 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                     </td>
                     <td>{doorName(row.doorId)}</td>
                     <td><code>{row.readerId}</code></td>
+                    <td>
+                      <code>{row.puertoDetectado || '—'}</code>
+                      {row.inputModeDetectado ? (
+                        <div className="theme-section-desc">{row.inputModeDetectado}</div>
+                      ) : null}
+                    </td>
                     <td>{DIRECTION_LABELS[row.direction] || row.direction}</td>
                     <td>
                       <span className={status.className} title={status.hint}>
@@ -643,6 +796,14 @@ function LectoresAdminSection({ pendingAction, runAction }) {
           gap: 0.75rem;
         }
         .admin-form-grid label { display: flex; flex-direction: column; gap: 0.35rem; }
+        .lector-check {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          margin: 0.35rem 0;
+          font-size: 0.9rem;
+        }
+        .lector-check--dim { opacity: 0.55; }
       `}</style>
     </div>
   );

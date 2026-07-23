@@ -14,8 +14,9 @@
     "reconnectMinMs": "Backoff inicial al fallar serie o red (ms)",
     "reconnectMaxMs": "Tope de backoff (ms)",
     "offlineCache": "false por defecto. true = cachea allowlist y decide local si no hay internet",
+    "localFirstMode": "false por defecto. Requiere offlineCache. Decide siempre con caché vigente (sin esperar kiosk-scan)",
     "offlineCacheRefreshMs": "Cada cuánto pedir allowlist con internet (default 900000 = 15 min)",
-    "offlineCacheMaxAgeHours": "Si la lista es más vieja, denegar offline (default 24). Evita usar una lista de hace días",
+    "offlineCacheMaxAgeHours": "Si la lista es más vieja, denegar offline / no usar local-first (default 24)",
     "offlineAllowlistFile": "Ruta del JSON de allowlist (opcional)",
     "offlineQueueFile": "Ruta de la cola de eventos offline (opcional)"
   },
@@ -33,6 +34,7 @@
   "reconnectMinMs": 2000,
   "reconnectMaxMs": 60000,
   "offlineCache": false,
+  "localFirstMode": false,
   "offlineCacheRefreshMs": 900000,
   "offlineCacheMaxAgeHours": 24
 }

@@ -293,6 +293,75 @@ describe('lectores — helpers', () => {
     assert.equal(secondHb.forceResync, false);
   });
 
+  it('heartbeat guarda puertoDetectado e inputModeDetectado', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector COM',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso'
+    });
+
+    const touched = await bag.api.touchHeartbeat({
+      username: created.username,
+      lectorId: created.lector.id,
+      serialPort: 'COM3',
+      inputMode: 'serial'
+    });
+    assert.equal(touched.puertoDetectado, 'COM3');
+    assert.equal(touched.inputModeDetectado, 'serial');
+    const stored = bag.lectores.get(created.lector.id);
+    assert.equal(stored.puertoDetectado, 'COM3');
+    assert.equal(stored.inputModeDetectado, 'serial');
+  });
+
+  it('updateLector persiste offline/localFirst y sale en el JSON descargable', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector Offline',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso'
+    });
+    assert.equal(created.config.offlineCache, false);
+    assert.equal(created.config.localFirstMode, false);
+
+    const { lector } = await bag.api.updateLector(created.lector.id, {
+      nombre: 'Lector Offline',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso',
+      offlineCache: true,
+      localFirstMode: true,
+      offlineCacheRefreshMinutes: 10,
+      offlineCacheMaxAgeHours: 12
+    });
+    assert.equal(lector.offlineCache, true);
+    assert.equal(lector.localFirstMode, true);
+    assert.equal(lector.offlineCacheRefreshMs, 10 * 60_000);
+    assert.equal(lector.offlineCacheMaxAgeHours, 12);
+
+    const cfg = await bag.api.buildConfigForDownload(created.lector.id, {
+      apiBaseUrl: 'https://bacarguard.web.app/api'
+    });
+    assert.equal(cfg.offlineCache, true);
+    assert.equal(cfg.localFirstMode, true);
+    assert.equal(cfg.offlineCacheRefreshMs, 10 * 60_000);
+    assert.equal(cfg.offlineCacheMaxAgeHours, 12);
+  });
+
+  it('localFirstMode se fuerza a false si offlineCache está apagado', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector Guard',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso',
+      offlineCache: false,
+      localFirstMode: true
+    });
+    assert.equal(created.lector.offlineCache, false);
+    assert.equal(created.lector.localFirstMode, false);
+    assert.equal(created.config.localFirstMode, false);
+  });
+
   it('resolveAuthUsername prioriza username sobre id (bug heartbeat)', () => {
     const { resolveAuthUsername } = bag.api;
     // Caso del bug: JWT con id interno distinto del username legible.
