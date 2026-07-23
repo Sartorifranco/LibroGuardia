@@ -67,7 +67,9 @@ const readSpreadsheetRows = (filePath) => {
   if (ext === '.csv' || !ext) {
     const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
     const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    const transportLines = lines.filter((line) => /^\d{3,5},/.test(line));
+    // Legajo con o sin comillas: 2794,... | "2794",...
+    const transportLineRe = /^"?\d{3,5}"?,/;
+    const transportLines = lines.filter((line) => transportLineRe.test(line));
     if (transportLines.length) {
       return transportLines.map((line) => ({ _transportCsv: line }));
     }
@@ -91,10 +93,11 @@ const readSpreadsheetRows = (filePath) => {
   const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
   if (rows.length && Object.keys(rows[0] || {}).length === 1) {
     const firstKey = Object.keys(rows[0])[0];
-    if (/^\d{3,5},/.test(String(firstKey))) {
+    const transportLineRe = /^"?\d{3,5}"?,/;
+    if (transportLineRe.test(String(firstKey))) {
       return rows.map((row) => {
-        const line = Object.keys(row).find((key) => /^\d{3,5},/.test(String(key)))
-          || Object.values(row).find((value) => /^\d{3,5},/.test(String(value)));
+        const line = Object.keys(row).find((key) => transportLineRe.test(String(key)))
+          || Object.values(row).find((value) => transportLineRe.test(String(value)));
         return line ? { _transportCsv: String(line).replace(/^Legajo\s+/i, '') } : row;
       }).filter((row) => row._transportCsv || Object.values(row).some((v) => String(v).trim()));
     }

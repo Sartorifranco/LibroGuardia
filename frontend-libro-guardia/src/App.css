@@ -3298,6 +3298,74 @@ input[type="datetime-local"].input-field {
   padding: 1rem;
 }
 
+.people-access-table tbody tr.people-access-row.is-inactive {
+  opacity: 0.72;
+}
+
+.people-access-inactive-tag {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #b45309;
+  margin-left: 0.35rem;
+}
+
+.people-access-basic-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.people-access-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.people-access-field .input-field {
+  font-weight: 500;
+  color: var(--text, #111);
+}
+
+.people-access-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+@media (max-width: 520px) {
+  .people-access-field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.people-access-field--checkbox {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-weight: 500;
+  color: var(--text, #111);
+}
+
+.people-access-field--checkbox input {
+  margin-top: 0.2rem;
+}
+
+.people-access-doors-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.people-access-badge--none {
+  background: #f3f4f6;
+  color: #4b5563;
+  border: 1px solid #e5e7eb;
+}
+
 .door-access-editor {
   margin-top: 0.25rem;
 }

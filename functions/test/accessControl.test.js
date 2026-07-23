@@ -29,6 +29,39 @@ test('persona inactiva se deniega sin consultar authorizations', async () => {
   assert.equal(mock.authQueries.length, 0);
 });
 
+test('persona inactiva se deniega aunque tenga allowedDoorIds', async () => {
+  const mock = createMockFirestore({
+    people: [{
+      id: 'p-inactiva-doors',
+      dniNormalized: '22222222',
+      nombre: 'Ana Inactiva',
+      nameKey: 'ana inactiva',
+      active: false,
+      allowedDoorIds: ['puerta-p1', 'puerta-p2']
+    }],
+    authorizations: [{
+      id: 'auth-perm',
+      personId: 'p-inactiva-doors',
+      type: 'permanent',
+      active: true
+    }]
+  });
+
+  const accessControl = installFirestoreMock(mock);
+  const result = await accessControl.decidirAcceso({
+    dni: '22222222',
+    nombre: 'Ana',
+    apellido: 'Inactiva',
+    tipoMovimiento: 'ingreso',
+    doorId: 'puerta-p1',
+    referenceDate
+  });
+
+  assert.equal(result.authorized, false);
+  assert.equal(result.denialReason, 'persona_inactiva');
+  assert.equal(mock.authQueries.length, 0);
+});
+
 test('resolución por nameKey completa el DNI y autoriza con citación', async () => {
   const mock = createMockFirestore({
     people: [{

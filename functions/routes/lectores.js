@@ -17,6 +17,7 @@ const {
   regenerateCredentials,
   buildConfigForDownload,
   touchHeartbeat,
+  resolveAuthUsername,
   resolveApiBaseUrl,
   resolveConnectionStatus
 } = require('../lib/lectores');
@@ -155,7 +156,8 @@ router.get('/api/admin/lectores/:id/config', auth, requirePermission('lectores.m
  */
 router.post('/api/lectores/heartbeat', auth, async (req, res) => {
   try {
-    const username = req.user?.id || req.user?.username;
+    // Preferir username del JWT (no el id interno). Ver resolveAuthUsername.
+    const username = resolveAuthUsername(req.user);
     const lector = await touchHeartbeat({
       username,
       lectorId: req.body?.lectorId || null,

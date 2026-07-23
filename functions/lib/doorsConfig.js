@@ -9,6 +9,13 @@ const DOOR_DRIVERS = ['sr201', 'generic_http'];
 const READER_DIRECTIONS = ['ingreso', 'egreso', 'ambos'];
 
 /**
+ * Quién dispara físicamente el relé de la puerta:
+ *   'cloud' → la Cloud Function (driver directo / túnel). Comportamiento actual.
+ *   'local' → la mini PC de la puerta (door-reader-bridge) dispara por la LAN.
+ */
+const RELAY_MODES = ['cloud', 'local'];
+
+/**
  * Prefijo de lector en la lectura USB (diagrama planta):
  *   INGRESO_P1#30111222  → readerId=INGRESO_P1, payload=30111222
  *   EGRESO_P1#30111222
@@ -50,6 +57,7 @@ const DEFAULT_DOOR = {
   },
   pulseMode: 'inherit',
   pulseSeconds: 3,
+  relayMode: 'cloud',
   authMethods: ['dni', 'credential'],
   readerIds: ['default'],
   /** Lectores con dirección fija opcional. direction: ingreso | egreso | ambos */
@@ -191,6 +199,7 @@ const normalizeDoor = (door = {}, index = 0) => {
     device: normalizeDevice(door.device),
     pulseMode: ['inherit', 'jog', 'timed'].includes(door.pulseMode) ? door.pulseMode : 'inherit',
     pulseSeconds: Number(door.pulseSeconds) || DEFAULT_DOOR.pulseSeconds,
+    relayMode: door.relayMode === 'local' ? 'local' : 'cloud',
     authMethods: normalizeAuthMethods(door.authMethods),
     readers,
     readerIds,
@@ -339,6 +348,7 @@ module.exports = {
   AUTH_METHODS,
   DOOR_DRIVERS,
   READER_DIRECTIONS,
+  RELAY_MODES,
   DEFAULT_DOOR,
   DEFAULT_AIRLOCK_GROUP,
   DEFAULT_DOORS_CONFIG,

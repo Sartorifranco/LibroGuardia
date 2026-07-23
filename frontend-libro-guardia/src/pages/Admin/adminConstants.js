@@ -4,7 +4,7 @@ export const ADMIN_SECTION_META = {
   doors: { title: 'Puertas y acceso', description: 'SR201, multi-puerta, autenticación y estancos en un solo lugar.' },
   peopleAccess: {
     title: 'Acceso a puertas (personal)',
-    description: 'Por persona: todas las puertas o un subconjunto. Auditoría rápida desde el listado.'
+    description: 'Por persona: solo las puertas marcadas explícitamente. Sin lista = ninguna puerta.'
   },
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
   nomina: { title: 'Nómina de personal', description: 'Base de empleados, turnos y tipos de autorización.' },

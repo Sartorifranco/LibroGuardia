@@ -39,3 +39,5 @@ functions/.env
 
 # Resúmenes locales de scripts de backfill
 functions/scripts/citaciones-backfill-summary-*.json
+functions/migrate-dedupe-dirty-people.dry-run.json
+functions/migrate-dedupe-dirty-people.apply.json

@@ -152,7 +152,15 @@ router.post('/api/auth/login', async (req, res) => {
     const roleMeta = await getRoleById(user.role);
     const passwordVersion = getPasswordVersion(user);
     const token = jwt.sign(
-      { id: snap.id, role: user.role, permissions, passwordVersion },
+      {
+        id: snap.id,
+        // Claim explícito para endpoints que identifican por username
+        // (p.ej. heartbeat → usuarioSistemaId). No asumir que id === username.
+        username: user.username || snap.id,
+        role: user.role,
+        permissions,
+        passwordVersion
+      },
       getJwtSecret(),
       { expiresIn: '8h' }
     );

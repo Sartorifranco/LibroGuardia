@@ -75,6 +75,7 @@ const normalizeDoorLocal = (door = {}, fallbackCode = 'P1') => {
     },
     pulseMode: door.pulseMode || 'inherit',
     pulseSeconds: Number(door.pulseSeconds) || 3,
+    relayMode: door.relayMode === 'local' ? 'local' : 'cloud',
     authMethods: door.authMethods?.length ? door.authMethods : ['dni', 'credential', 'manual'],
     readers,
     readerIds: readers.map((r) => r.id),
@@ -245,6 +246,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
         readerIds: readers.map((r) => r.id),
         pulseMode: 'timed',
         pulseSeconds,
+        relayMode: door.relayMode === 'local' ? 'local' : 'cloud',
         airlockGroupId: door.airlockGroupId || null,
         airlockRole: door.airlockRole || null,
         device: {
@@ -300,12 +302,15 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
 
   const saveCurrentDoor = async () => {
     if (!draft) return;
+    const isLocalRelay = draft.relayMode === 'local';
     await onPending(`save-door-${draft._localId}`, async () => {
       if (!String(draft.device?.host || '').trim()) {
         throw new Error('Indicá la IP de la placa SR201');
       }
-      if (!String(globalAccess.bridgeUrl || '').trim()) {
-        throw new Error('Primero guardá la conexión a planta (URL del túnel)');
+      // En modo local el disparo lo hace la mini PC de la puerta por la LAN:
+      // no hace falta túnel/puente para esta puerta.
+      if (!isLocalRelay && !String(globalAccess.bridgeUrl || '').trim()) {
+        throw new Error('Primero guardá la conexión a planta (URL del túnel), o poné esta puerta en modo local');
       }
       const normalized = normalizeDoorLocal(draft, draft.doorCode);
       const exists = doors.some((d) => d._localId === normalized._localId);
@@ -633,6 +638,22 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
               <p className="door-card__hint">
                 Misma IP en dos puertas = una placa con canal 1 y canal 2. Una puerta usa un solo canal.
               </p>
+              <label className="door-field" style={{ marginBottom: '0.75rem' }}>
+                <span>¿Cómo se dispara el relé de esta puerta?</span>
+                <select
+                  className="input-field"
+                  value={draft.relayMode || 'cloud'}
+                  onChange={(e) => patchDraft({ relayMode: e.target.value === 'local' ? 'local' : 'cloud' })}
+                >
+                  <option value="cloud">Desde la nube (necesita túnel/puente)</option>
+                  <option value="local">Desde la mini PC local de la puerta (sin túnel, más simple)</option>
+                </select>
+                <small className="door-card__hint" style={{ marginTop: '0.35rem' }}>
+                  {draft.relayMode === 'local'
+                    ? 'La nube sólo autoriza; la mini PC de la puerta abre el relé por la red local. No hace falta configurar “Conexión a planta” (túnel) para esta puerta. El botón “Probar pulso” de acá abajo usa la nube, así que en modo local probalo desde la propia mini PC.'
+                    : 'La Cloud Function abre el relé (directo o vía túnel/puente). Requiere “Conexión a planta” configurada.'}
+                </small>
+              </label>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
                 <label className="door-field">
                   <span>IP de la placa</span>

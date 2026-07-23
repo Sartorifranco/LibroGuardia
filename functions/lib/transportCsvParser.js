@@ -31,7 +31,8 @@ const parseTransportDate = (value) => {
   return null;
 };
 
-const TRANSPORT_CSV_LINE = /^\d{3,5},/;
+// Acepta legajo con o sin comillas: 2794,"Nombre",...  |  "2794","Nombre",...
+const TRANSPORT_CSV_LINE = /^"?\d{3,5}"?,/;
 
 const parseCsvFields = (line = '') => {
   const fields = [];
@@ -184,7 +185,7 @@ const looksLikeBrokenTransportCitacion = (citacion = {}) => {
   ].filter(Boolean);
   return candidates.some((value) => looksLikeTransportCsvLine(value)
     || String(value).includes(',"')
-    || /^Legajo\s+\d{3,5},/i.test(String(value)));
+    || /^Legajo\s+"?\d{3,5}"?,/i.test(String(value)));
 };
 
 /**

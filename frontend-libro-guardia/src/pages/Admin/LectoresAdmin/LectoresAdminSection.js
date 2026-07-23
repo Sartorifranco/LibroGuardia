@@ -47,6 +47,13 @@ const DIRECTION_LABELS = {
   ambos: 'Ambos'
 };
 
+const emptyCreateForm = () => ({
+  nombre: '',
+  doorId: '',
+  readerId: '',
+  direction: 'ingreso'
+});
+
 function downloadJson(filename, data) {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -72,6 +79,11 @@ function formatUltimaConexion(value) {
   }
 }
 
+function readersForDoorId(doors, doorId) {
+  const door = doors.find((d) => d.id === doorId);
+  return Array.isArray(door?.readers) ? door.readers : [];
+}
+
 function CredentialsOnceModal({ title, password, config, onClose }) {
   if (!password && !config) return null;
   return (
@@ -87,9 +99,9 @@ function CredentialsOnceModal({ title, password, config, onClose }) {
           Esta contraseña se muestra <strong>una sola vez</strong>. Descargá el JSON y copialo a la mini PC
           como <code>door-reader.config.json</code>. Si la perdés, regenerá credenciales.
         </p>
-        <label className="field-label">Contraseña generada</label>
+        <label className="historial-meta">Contraseña generada</label>
         <input className="input-field" readOnly value={password || ''} onFocus={(e) => e.target.select()} />
-          <div className="admin-form-actions" style={{ marginTop: '1rem' }}>
+        <div className="flex flex-wrap gap-2" style={{ marginTop: '1rem' }}>
           <PendingButton
             type="button"
             className="btn btn-primary"
@@ -110,6 +122,112 @@ function CredentialsOnceModal({ title, password, config, onClose }) {
   );
 }
 
+/** Modal de edición (position: fixed, centrado — mismo patrón que CredentialsOnceModal). */
+function EditLectorModal({
+  draft,
+  doors,
+  pendingAction,
+  onChange,
+  onDoorChange,
+  onReaderChange,
+  onSave,
+  onClose
+}) {
+  if (!draft) return null;
+  const readers = readersForDoorId(doors, draft.doorId);
+
+  return (
+    <div className="admin-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-lector-title">
+      <div className="admin-modal admin-modal--wide">
+        <div className="admin-modal__head">
+          <h4 id="edit-lector-title">Editar lector</h4>
+          <button type="button" className="admin-icon-btn" onClick={onClose} aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="historial-meta" style={{ marginBottom: '0.75rem' }}>
+          Si cambiás puerta o readerId, actualizá también el <code>door-reader.config.json</code> en la mini PC
+          (o regenerá y volvé a copiar el archivo).
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSave();
+          }}
+        >
+          <div className="admin-form-grid">
+            <label>
+              <span className="historial-meta">Nombre</span>
+              <input
+                className="input-field"
+                value={draft.nombre}
+                onChange={(e) => onChange({ nombre: e.target.value })}
+                placeholder="Ej. Ingreso Puerta 1"
+                required
+                autoFocus
+              />
+            </label>
+            <label>
+              <span className="historial-meta">Puerta</span>
+              <select
+                className="input-field"
+                value={draft.doorId}
+                onChange={(e) => onDoorChange(e.target.value)}
+                required
+              >
+                <option value="">Elegir puerta…</option>
+                {doors.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name || d.id}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="historial-meta">Reader ID</span>
+              <select
+                className="input-field"
+                value={draft.readerId}
+                onChange={(e) => onReaderChange(e.target.value)}
+                required
+                disabled={!draft.doorId}
+              >
+                <option value="">Elegir lector de la puerta…</option>
+                {readers.map((r) => (
+                  <option key={r.id} value={r.id}>{r.id} ({r.direction || 'ambos'})</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span className="historial-meta">Sentido</span>
+              <select
+                className="input-field"
+                value={draft.direction}
+                onChange={(e) => onChange({ direction: e.target.value })}
+              >
+                <option value="ingreso">Ingreso</option>
+                <option value="egreso">Egreso</option>
+                <option value="ambos">Ambos</option>
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2" style={{ marginTop: '1rem' }}>
+            <PendingButton
+              type="submit"
+              className="btn btn-primary"
+              actionId="updateLector"
+              pendingAction={pendingAction}
+            >
+              <Pencil size={16} /> Guardar cambios
+            </PendingButton>
+            <button type="button" className="btn btn-secondary" onClick={onClose}>
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function LectoresAdminSection({ pendingAction, runAction }) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -118,19 +236,16 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   const [lectores, setLectores] = useState([]);
   const [doors, setDoors] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editingId, setEditingId] = useState(null);
-  const [nombre, setNombre] = useState('');
-  const [doorId, setDoorId] = useState('');
-  const [readerId, setReaderId] = useState('');
-  const [direction, setDirection] = useState('ingreso');
+  const [createForm, setCreateForm] = useState(emptyCreateForm);
+  const [editDraft, setEditDraft] = useState(null);
   const [onceModal, setOnceModal] = useState(null);
 
   const canManage = hasPermission(currentUser, 'lectores.manage');
 
-  const readersForDoor = useMemo(() => {
-    const door = doors.find((d) => d.id === doorId);
-    return Array.isArray(door?.readers) ? door.readers : [];
-  }, [doors, doorId]);
+  const createReaders = useMemo(
+    () => readersForDoorId(doors, createForm.doorId),
+    [doors, createForm.doorId]
+  );
 
   const load = useCallback(async () => {
     if (!canManage) return;
@@ -153,71 +268,81 @@ function LectoresAdminSection({ pendingAction, runAction }) {
     load();
   }, [load]);
 
-  const resetForm = () => {
-    setEditingId(null);
-    setNombre('');
-    setDoorId('');
-    setReaderId('');
-    setDirection('ingreso');
+  const applyDoorToForm = (prev, nextDoorId) => {
+    const door = doors.find((d) => d.id === nextDoorId);
+    const first = door?.readers?.[0];
+    const dir = first?.direction;
+    return {
+      ...prev,
+      doorId: nextDoorId,
+      readerId: first?.id || '',
+      direction: (dir === 'ingreso' || dir === 'egreso' || dir === 'ambos') ? dir : prev.direction
+    };
+  };
+
+  const applyReaderToForm = (prev, nextReaderId, doorId) => {
+    const reader = readersForDoorId(doors, doorId).find((r) => r.id === nextReaderId);
+    const dir = reader?.direction;
+    return {
+      ...prev,
+      readerId: nextReaderId,
+      direction: (dir === 'ingreso' || dir === 'egreso' || dir === 'ambos') ? dir : prev.direction
+    };
   };
 
   const startEdit = (row) => {
-    setEditingId(row.id);
-    setNombre(row.nombre || '');
-    setDoorId(row.doorId || '');
-    setReaderId(row.readerId || '');
-    setDirection(row.direction || 'ingreso');
+    setEditDraft({
+      id: row.id,
+      nombre: row.nombre || '',
+      doorId: row.doorId || '',
+      readerId: row.readerId || '',
+      direction: row.direction || 'ingreso'
+    });
   };
 
-  const handleDoorChange = (nextDoorId) => {
-    setDoorId(nextDoorId);
-    const door = doors.find((d) => d.id === nextDoorId);
-    const first = door?.readers?.[0]?.id || '';
-    setReaderId(first);
-    const dir = door?.readers?.[0]?.direction;
-    if (dir === 'ingreso' || dir === 'egreso' || dir === 'ambos') setDirection(dir);
-  };
+  const closeEdit = () => setEditDraft(null);
 
-  const handleReaderChange = (nextReaderId) => {
-    setReaderId(nextReaderId);
-    const reader = readersForDoor.find((r) => r.id === nextReaderId);
-    if (reader?.direction === 'ingreso' || reader?.direction === 'egreso' || reader?.direction === 'ambos') {
-      setDirection(reader.direction);
-    }
-  };
-
-  const handleSubmit = async (e) => {
+  const handleCreateSubmit = async (e) => {
     e.preventDefault();
     if (!canManage) return;
-    await runAction(editingId ? 'updateLector' : 'createLector', async () => {
+    const { nombre, doorId, readerId, direction } = createForm;
+    await runAction('createLector', async () => {
       try {
-        if (editingId) {
-          const data = await apiFetch(`/admin/lectores/${editingId}`, {
-            method: 'PUT',
-            token: authToken,
-            body: { nombre, doorId, readerId, direction }
-          });
-          setLectores((prev) => prev.map((x) => (x.id === editingId ? data.lector : x)));
-          showSuccess(data.message || 'Lector actualizado');
-          resetForm();
-        } else {
-          const data = await apiFetch('/admin/lectores', {
-            method: 'POST',
-            token: authToken,
-            body: { nombre, doorId, readerId, direction }
-          });
-          setLectores((prev) => [...prev, data.lector].sort((a, b) =>
-            String(a.nombre).localeCompare(String(b.nombre))));
-          setOnceModal({
-            title: 'Lector creado — guardá la contraseña',
-            password: data.password,
-            config: data.config
-          });
-          showSuccess('Lector creado');
-          resetForm();
-        }
+        const data = await apiFetch('/admin/lectores', {
+          method: 'POST',
+          token: authToken,
+          body: { nombre, doorId, readerId, direction }
+        });
+        setLectores((prev) => [...prev, data.lector].sort((a, b) =>
+          String(a.nombre).localeCompare(String(b.nombre))));
+        setOnceModal({
+          title: 'Lector creado — guardá la contraseña',
+          password: data.password,
+          config: data.config
+        });
+        showSuccess('Lector creado');
+        setCreateForm(emptyCreateForm());
       } catch (err) {
         showError(err.message || 'Error al guardar lector');
+      }
+    });
+  };
+
+  const handleEditSave = async () => {
+    if (!canManage || !editDraft?.id) return;
+    const { id, nombre, doorId, readerId, direction } = editDraft;
+    await runAction('updateLector', async () => {
+      try {
+        const data = await apiFetch(`/admin/lectores/${id}`, {
+          method: 'PUT',
+          token: authToken,
+          body: { nombre, doorId, readerId, direction }
+        });
+        setLectores((prev) => prev.map((x) => (x.id === id ? data.lector : x)));
+        showSuccess(data.message || 'Lector actualizado');
+        closeEdit();
+      } catch (err) {
+        showError(err.message || 'Error al actualizar lector');
       }
     });
   };
@@ -234,7 +359,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       try {
         await apiFetch(`/admin/lectores/${row.id}`, { method: 'DELETE', token: authToken });
         setLectores((prev) => prev.filter((x) => x.id !== row.id));
-        if (editingId === row.id) resetForm();
+        if (editDraft?.id === row.id) closeEdit();
         showSuccess('Lector eliminado');
       } catch (err) {
         showError(err.message || 'Error al eliminar');
@@ -295,18 +420,31 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         onClose={() => setOnceModal(null)}
       />
 
+      <EditLectorModal
+        draft={editDraft}
+        doors={doors}
+        pendingAction={pendingAction}
+        onChange={(patch) => setEditDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
+        onDoorChange={(nextDoorId) => setEditDraft((prev) => (prev ? applyDoorToForm(prev, nextDoorId) : prev))}
+        onReaderChange={(nextReaderId) => setEditDraft((prev) => (
+          prev ? applyReaderToForm(prev, nextReaderId, prev.doorId) : prev
+        ))}
+        onSave={handleEditSave}
+        onClose={closeEdit}
+      />
+
       <AdminBlock
-        title={editingId ? 'Editar lector' : 'Nuevo lector'}
+        title="Nuevo lector"
         description="Al crear se genera el usuario kiosk (solo access.kiosk) y un JSON listo para la Raspberry Pi / mini PC."
       >
-        <AdminFormCard onSubmit={handleSubmit}>
+        <AdminFormCard onSubmit={handleCreateSubmit}>
           <div className="admin-form-grid">
             <label>
               <span className="historial-meta">Nombre</span>
               <input
                 className="input-field"
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
+                value={createForm.nombre}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, nombre: e.target.value }))}
                 placeholder="Ej. Ingreso Puerta 1"
                 required
               />
@@ -315,8 +453,8 @@ function LectoresAdminSection({ pendingAction, runAction }) {
               <span className="historial-meta">Puerta</span>
               <select
                 className="input-field"
-                value={doorId}
-                onChange={(e) => handleDoorChange(e.target.value)}
+                value={createForm.doorId}
+                onChange={(e) => setCreateForm((prev) => applyDoorToForm(prev, e.target.value))}
                 required
               >
                 <option value="">Elegir puerta…</option>
@@ -329,13 +467,13 @@ function LectoresAdminSection({ pendingAction, runAction }) {
               <span className="historial-meta">Reader ID</span>
               <select
                 className="input-field"
-                value={readerId}
-                onChange={(e) => handleReaderChange(e.target.value)}
+                value={createForm.readerId}
+                onChange={(e) => setCreateForm((prev) => applyReaderToForm(prev, e.target.value, prev.doorId))}
                 required
-                disabled={!doorId}
+                disabled={!createForm.doorId}
               >
                 <option value="">Elegir lector de la puerta…</option>
-                {readersForDoor.map((r) => (
+                {createReaders.map((r) => (
                   <option key={r.id} value={r.id}>{r.id} ({r.direction || 'ambos'})</option>
                 ))}
               </select>
@@ -344,8 +482,8 @@ function LectoresAdminSection({ pendingAction, runAction }) {
               <span className="historial-meta">Sentido</span>
               <select
                 className="input-field"
-                value={direction}
-                onChange={(e) => setDirection(e.target.value)}
+                value={createForm.direction}
+                onChange={(e) => setCreateForm((prev) => ({ ...prev, direction: e.target.value }))}
               >
                 <option value="ingreso">Ingreso</option>
                 <option value="egreso">Egreso</option>
@@ -353,26 +491,15 @@ function LectoresAdminSection({ pendingAction, runAction }) {
               </select>
             </label>
           </div>
-          {editingId && (
-            <p className="historial-meta" style={{ marginTop: '0.75rem' }}>
-              Si cambiás puerta o readerId, actualizá también el <code>door-reader.config.json</code> en la mini PC
-              (o regenerá y volvé a copiar el archivo).
-            </p>
-          )}
           <div className="flex flex-wrap gap-2" style={{ marginTop: '0.75rem' }}>
             <PendingButton
               type="submit"
               className="btn btn-primary"
-              actionId={editingId ? 'updateLector' : 'createLector'}
+              actionId="createLector"
               pendingAction={pendingAction}
             >
-              {editingId ? <><Pencil size={16} /> Guardar</> : <><PlusCircle size={16} /> Crear lector</>}
+              <PlusCircle size={16} /> Crear lector
             </PendingButton>
-            {editingId && (
-              <button type="button" className="btn btn-secondary" onClick={resetForm}>
-                Cancelar
-              </button>
-            )}
           </div>
         </AdminFormCard>
       </AdminBlock>
@@ -473,7 +600,10 @@ function LectoresAdminSection({ pendingAction, runAction }) {
           padding: 1.25rem;
           max-width: 32rem;
           width: 100%;
+          max-height: calc(100vh - 2rem);
+          overflow: auto;
         }
+        .admin-modal--wide { max-width: 40rem; }
         .admin-modal__head {
           display: flex; justify-content: space-between; align-items: center;
           margin-bottom: 0.75rem;

@@ -326,11 +326,11 @@ const decidirAcceso = async ({
     }
   }
 
-  // Credencial huérfana no llega acá; persona: usar people.allowedDoorIds.
+  // Persona: usar people.allowedDoorIds (lista vacía/ausente = ninguna puerta).
   // Si la autorización trae lista propia, tiene prioridad (casos especiales).
   let allowedDoorIds = authorization?.allowedDoorIds != null
     ? authorization.allowedDoorIds
-    : (resolved.person?.allowedDoorIds ?? null);
+    : (resolved.person?.allowedDoorIds ?? []);
 
   let visitaId = null;
 
@@ -644,10 +644,11 @@ const triggerAccessIfAuthorized = async ({
 };
 
 const processKioskScan = async ({ rawData, username, doorId = null, readerId = 'default' }) => {
-  const { openDoor, resolveDoorContext } = require('./doorController');
+  const { openDoor, resolveDoorContext, buildRelayConfigForDoor } = require('./doorController');
   const { resolveScanContext } = require('./lib/accessAuthMethods');
   const { inferMovementTypeForToday } = require('./lib/inferMovementType');
   const { parseReaderPrefixedScan, resolveReaderFixedMovement } = require('./lib/doorsConfig');
+  const { shouldAttemptRelay, resolveRelayMode, buildLocalRelayPayload } = require('./lib/relayDispatch');
 
   const prefixed = parseReaderPrefixedScan(rawData);
   const effectiveRawData = prefixed?.payload || rawData;
@@ -804,11 +805,16 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
   let relayError = null;
   let airlock = airlockState ? { groupId: door.airlockGroupId, state: airlockState } : null;
 
+  // 'cloud' (default): la nube dispara el relé. 'local': lo dispara el bridge de la puerta.
+  const relayMode = resolveRelayMode(door);
+
   const responsePayload = {
     ok: true,
     authorized,
     movementType,
     movementLabel: movementType === 'egreso' ? 'Egreso' : 'Ingreso',
+    relayMode,
+    localRelay: null,
     message,
     authorizationLabel: movementType === 'egreso'
       ? 'Egreso'
@@ -827,14 +833,39 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     airlock
   };
 
-  const shouldTryRelay = !isGuardDesk
-    && movementType === 'ingreso'
-    && authorized
-    && config.enabled
-    && config.triggerOn === 'ingreso'
-    && door.autoOpenOnAuth !== false;
+  const shouldTryRelay = shouldAttemptRelay({
+    isGuardDesk,
+    movementType,
+    authorized,
+    config,
+    door
+  });
 
-  if (shouldTryRelay) {
+  if (shouldTryRelay && relayMode === 'local') {
+    // MODO LOCAL: la nube NO dispara el relé. Sólo confirma autorización y
+    // devuelve los datos de conexión para que el bridge de la puerta lo abra
+    // directo por la LAN (sin túnel público). El disparo físico ocurre allá.
+    const relayConfig = buildRelayConfigForDoor(door, config);
+    responsePayload.localRelay = buildLocalRelayPayload(relayConfig);
+    responsePayload.relayTriggered = false;
+    logAccessEvent({
+      type: 'authorized',
+      movementType: 'ingreso',
+      idNumber,
+      name: result.personName,
+      entrySource: 'kiosk',
+      entryId: result.entryId,
+      username,
+      reason: result.authorizationType,
+      authorizationType: result.authorizationType,
+      relayTriggered: false,
+      relayMode: 'local',
+      note: 'Relé delegado al bridge local de la puerta (no disparado desde la nube)',
+      doorId: door.id,
+      authMethod: scan.authMethod
+    }).catch(() => {});
+  } else if (shouldTryRelay) {
+    // MODO CLOUD (default): comportamiento actual — la nube dispara el relé.
     try {
       const openResult = await openDoor({
         doorId: door.id,
@@ -888,6 +919,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     db.collection('entries').doc(result.entryId).update({
       relayTriggered,
       relayError,
+      relayMode,
       doorId: door.id,
       doorName: door.name,
       authMethod: scan.authMethod,

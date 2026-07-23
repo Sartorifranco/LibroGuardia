@@ -8,7 +8,6 @@ import { apiFetch } from '../services/api';
  */
 function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
   const [people, setPeople] = useState([]);
-  const [unrestrictedCount, setUnrestrictedCount] = useState(0);
   const [note, setNote] = useState('');
   const [query, setQuery] = useState('');
   const [searchHits, setSearchHits] = useState([]);
@@ -23,7 +22,6 @@ function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
         allowForbidden: true
       });
       setPeople(data.people || []);
-      setUnrestrictedCount(data.unrestrictedCount || 0);
       setNote(data.note || '');
     } catch (err) {
       onError?.(err.message || 'No se pudieron cargar personas de la puerta');
@@ -92,6 +90,12 @@ function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
     );
   }
 
+  const doorsCountLabel = (p) => {
+    const n = Array.isArray(p.allowedDoorIds) ? p.allowedDoorIds.length : 0;
+    if (n === 0) return ' · sin puertas';
+    return ` · ${n} puerta${n === 1 ? '' : 's'}`;
+  };
+
   return (
     <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border, #e5e5e5)' }}>
       <h5 className="theme-section-title" style={{ fontSize: '0.95rem', marginBottom: '0.35rem' }}>
@@ -99,7 +103,6 @@ function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
       </h5>
       <p className="historial-meta" style={{ marginBottom: '0.5rem' }}>
         {doorName || doorId}
-        {unrestrictedCount > 0 ? ` · ${unrestrictedCount} con acceso total (todas las puertas)` : ''}
       </p>
       {note && <p className="historial-meta" style={{ marginBottom: '0.5rem' }}>{note}</p>}
 
@@ -129,7 +132,7 @@ function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
               <span>
                 {p.name}
                 {p.idNumber ? ` (${p.idNumber})` : ''}
-                {!p.allowedDoorIds ? ' · acceso total' : ''}
+                {doorsCountLabel(p)}
               </span>
               <button type="button" className="btn btn-secondary-small" onClick={() => addPerson(p.id)}>
                 <UserPlus size={14} /> Agregar
@@ -142,7 +145,7 @@ function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
       {loading ? (
         <p className="historial-meta">Cargando…</p>
       ) : people.length === 0 ? (
-        <p className="historial-meta">Nadie con lista restringida que incluya esta puerta.</p>
+        <p className="historial-meta">Nadie autorizado explícitamente en esta puerta.</p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {people.map((p) => (

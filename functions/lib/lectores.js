@@ -306,6 +306,17 @@ const buildConfigForDownload = async (id, { apiBaseUrl, includePassword = false,
 };
 
 /**
+ * Username de autenticación para match contra `usuarioSistemaId`.
+ * Preferir claim `username` del JWT; `id` es solo fallback (hoy el doc id = username,
+ * pero no debe usarse como identidad legible cuando ambos existen y difieren).
+ */
+const resolveAuthUsername = (user) => {
+  const fromUsername = String(user?.username || '').trim();
+  if (fromUsername) return fromUsername.toLowerCase();
+  return String(user?.id || '').trim().toLowerCase();
+};
+
+/**
  * Heartbeat del bridge: actualiza ultimaConexion del lector del usuario kiosk.
  */
 const touchHeartbeat = async ({ username, lectorId = null, doorId = null, readerId = null }) => {
@@ -378,6 +389,7 @@ module.exports = {
   deleteLector,
   regenerateCredentials,
   buildConfigForDownload,
+  resolveAuthUsername,
   touchHeartbeat,
   validateDoorAndReader
 };

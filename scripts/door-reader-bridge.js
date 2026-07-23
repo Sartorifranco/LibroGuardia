@@ -28,6 +28,14 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
+// Driver SR201 (sólo usa 'net', sin Firebase) — reusado del mismo módulo que
+// producción y que scripts/test-lector-rele.js (framing/TCP ya validado).
+const {
+  sendTcpCommand,
+  sendTimedPulseTcp,
+  buildPulseCommand
+} = require('../functions/lib/doorDrivers/sr201');
+
 const DEFAULTS = {
   serialPort: 'COM3',
   baudRate: 9600,
@@ -119,6 +127,37 @@ const formatChunk = (buf) => {
     pretty: bytes.map(formatByte).join(''),
     hex: bytes.map((b) => b.toString(16).padStart(2, '0')).join(' ')
   };
+};
+
+/**
+ * MODO LOCAL: dispara el relé SR201 directo por la LAN, con los datos de
+ * conexión (host/puerto/canal/pulseSeconds) que devuelve /api/access/kiosk-scan
+ * cuando la puerta está en relayMode 'local'. Reusa el driver ya validado.
+ *
+ * No bloquea: en 'timed' el ON confirma y el OFF sigue async (mismo criterio
+ * que producción), así el escaneo queda libre para la próxima lectura.
+ */
+const fireLocalRelay = async (cfg, localRelay = {}) => {
+  const host = String(localRelay.host || '').trim();
+  const port = Number(localRelay.port) || 6722;
+  const channel = Number(localRelay.channel) || 1;
+  const mode = localRelay.pulseMode === 'jog' ? 'jog' : 'timed';
+  const seconds = Math.max(1, Math.min(99, Number(localRelay.pulseSeconds) || 3));
+
+  if (!host) {
+    throw new Error('localRelay sin host (la puerta en modo local necesita IP de la placa)');
+  }
+
+  if (mode === 'timed') {
+    const timed = await sendTimedPulseTcp(host, port, channel, seconds, 4000, {
+      waitForComplete: false
+    });
+    return { via: 'tcp-local', host, port, channel, mode, seconds, ...timed };
+  }
+
+  const command = buildPulseCommand(channel, 'jog', seconds);
+  const tcp = await sendTcpCommand(host, port, command);
+  return { via: 'tcp-local', host, port, channel, mode, command, ...tcp };
 };
 
 const requestJson = (method, urlString, { headers = {}, body } = {}) =>
@@ -526,10 +565,28 @@ const main = async () => {
         ok: data.ok,
         movementType: data.movementType,
         message: data.message,
+        relayMode: data.relayMode || 'cloud',
         relayTriggered: data.relayTriggered,
         relayError: data.relayError || null,
         elapsedMs
       });
+
+      // MODO LOCAL: la nube autorizó pero NO disparó el relé; lo hacemos acá.
+      if (data.authorized && data.relayMode === 'local' && data.localRelay) {
+        const tRelay = Date.now();
+        try {
+          const relayResult = await fireLocalRelay(cfg, data.localRelay);
+          log(cfg, 'info', 'Relé local disparado (sin túnel)', {
+            ...relayResult,
+            relayMs: Date.now() - tRelay
+          });
+        } catch (relayErr) {
+          log(cfg, 'error', 'Fallo al disparar relé local', {
+            error: relayErr.message,
+            localRelay: data.localRelay
+          });
+        }
+      }
     } catch (err) {
       log(cfg, 'error', 'Fallo al procesar escaneo', {
         error: err.message,

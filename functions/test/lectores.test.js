@@ -266,6 +266,54 @@ describe('lectores — helpers', () => {
     assert.equal(stored.ultimaConexion, 'SERVER_TIMESTAMP');
   });
 
+  it('resolveAuthUsername prioriza username sobre id (bug heartbeat)', () => {
+    const { resolveAuthUsername } = bag.api;
+    // Caso del bug: JWT con id interno distinto del username legible.
+    assert.equal(
+      resolveAuthUsername({ id: 'uuid-interno-abc', username: 'kiosk.puerta-p1' }),
+      'kiosk.puerta-p1'
+    );
+    // Fallback cuando el JWT aún no trae username (tokens viejos).
+    assert.equal(
+      resolveAuthUsername({ id: 'kiosk.puerta-p1' }),
+      'kiosk.puerta-p1'
+    );
+    assert.equal(resolveAuthUsername({}), '');
+  });
+
+  it('heartbeat falla con id interno y pasa con username del JWT', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector ID vs Username',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso'
+    });
+
+    const jwtPayload = {
+      id: 'uuid-interno-distinto-del-username',
+      username: created.username
+    };
+
+    // Orden viejo (bug): id || username → usa el id interno → no matchea usuarioSistemaId
+    const buggyUsername = jwtPayload.id || jwtPayload.username;
+    await assert.rejects(
+      () => bag.api.touchHeartbeat({
+        username: buggyUsername,
+        lectorId: created.lector.id
+      }),
+      (err) => err.status === 403
+    );
+
+    // Fix: username || id vía resolveAuthUsername
+    const fixedUsername = bag.api.resolveAuthUsername(jwtPayload);
+    assert.equal(fixedUsername, created.username);
+    const touched = await bag.api.touchHeartbeat({
+      username: fixedUsername,
+      lectorId: created.lector.id
+    });
+    assert.equal(touched.ultimaConexion, 'SERVER_TIMESTAMP');
+  });
+
   it('deleteLector borra también el usuario de sistema', async () => {
     const created = await bag.api.createLector({
       nombre: 'Lector Del',

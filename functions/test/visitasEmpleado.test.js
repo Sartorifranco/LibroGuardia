@@ -78,6 +78,19 @@ describe('visitasAccess — match acceso', () => {
     assert.equal(r.reason, 'puerta_no_autorizada');
   });
 
+  it('rechaza visita sin allowedDoorIds (ninguna puerta)', async () => {
+    const now = new Date('2026-07-22T16:30:00.000Z');
+    const r = await findEligibleVisita({
+      dniNormalized: '30111222',
+      doorId: 'molinete-a',
+      movementType: 'ingreso',
+      now,
+      visitasDocs: [{ ...baseVisita, allowedDoorIds: [] }]
+    });
+    assert.equal(r.visita, null);
+    assert.equal(r.reason, 'puerta_no_autorizada');
+  });
+
   it('egreso solo con estado ingreso_registrado', async () => {
     const now = new Date('2026-07-22T20:00:00.000Z');
     const pending = await findEligibleVisita({

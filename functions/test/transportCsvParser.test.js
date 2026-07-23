@@ -69,4 +69,41 @@ describe('transportCsvParser', () => {
     const permanent = { type: 'permanent', name: 'CORDOBA Omar', legajo: '100' };
     assert.equal(hydrateAuthorizationForRead(permanent), permanent);
   });
+
+  it('parsea línea colapsada con legajo sin comillas (formato que ya andaba)', () => {
+    const unquoted = '2924,"Heredia Juan Ignacio","Veeduria","Veedor","28-May-2026",800,"",0,0';
+    const parsed = parseTransportCsvLine(unquoted);
+    assert.equal(parsed.legajo, '2924');
+    assert.equal(parsed.name, 'Heredia Juan Ignacio');
+    assert.equal(parsed.startDate, '2026-05-28');
+    assert.equal(parsed.appointmentTime, '08:00');
+
+    const expanded = expandTransportRow({ legajo: unquoted });
+    assert.equal(expanded.legajo, '2924');
+    assert.equal(expanded.per__des, 'Heredia Juan Ignacio');
+  });
+
+  it('parsea línea colapsada con legajo entre comillas (formato que fallaba)', () => {
+    const quoted = '"2794","Aguilar Edgardo Marcelo","Operaciones","Chofer Con Firma","15-Dic-2023",700,"15-Dic-2023",0,0';
+    const parsed = parseTransportCsvLine(quoted);
+    assert.equal(parsed.legajo, '2794');
+    assert.equal(parsed.name, 'Aguilar Edgardo Marcelo');
+    assert.equal(parsed.centroCosto, 'Operaciones');
+    assert.equal(parsed.role, 'Chofer Con Firma');
+    assert.equal(parsed.startDate, '2023-12-15');
+    assert.equal(parsed.appointmentTime, '07:00');
+
+    const expanded = expandTransportRow({ legajo: quoted });
+    assert.equal(expanded.legajo, '2794');
+    assert.equal(expanded.per__des, 'Aguilar Edgardo Marcelo');
+    assert.equal(expanded.sector__des, 'Operaciones');
+    assert.equal(expanded.appointmentTime, '07:00');
+
+    const withLegajoPrefix = expandTransportRow({
+      legajo: `Legajo ${quoted}`,
+      nombre: `Legajo ${quoted}`
+    });
+    assert.equal(withLegajoPrefix.legajo, '2794');
+    assert.equal(withLegajoPrefix.per__des, 'Aguilar Edgardo Marcelo');
+  });
 });

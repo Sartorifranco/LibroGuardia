@@ -1,28 +1,27 @@
 /**
- * Restricción de ingreso por puerta (lista individual por persona/autorización).
+ * Restricción de ingreso por puerta (lista individual por persona/autorización/visita).
  *
- * Semántica de allowedDoorIds:
- * - null / undefined / campo ausente / []  →  TODAS las puertas (sin restricción)
+ * Semántica GLOBAL de allowedDoorIds (permanente, no configurable por puerta):
+ * - null / undefined / campo ausente / []  →  NINGUNA puerta (rechazo)
  * - array con ≥1 doorId  →  SOLO esas puertas
  *
- * Motivo: las personas ya cargadas no tienen el campo; tratar vacío/ausente como
- * "todas" preserva el comportamiento actual sin migración masiva. La UI de
- * "Solo estas puertas" siempre guarda un array no vacío.
+ * Si no hay doorId en el contexto (p.ej. evaluación sin puerta), no se aplica
+ * la restricción (no hay puerta concreta que validar).
  */
 
 const normalizeAllowedDoorIds = (value) => {
-  if (value == null) return null;
-  if (!Array.isArray(value)) return null;
-  const ids = [...new Set(value.map((id) => String(id || '').trim()).filter(Boolean))];
-  return ids.length ? ids : null;
+  if (value == null) return [];
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((id) => String(id || '').trim()).filter(Boolean))];
 };
 
 /** true si el ingreso por doorId está permitido según la lista. */
 const isDoorAllowedForIngreso = (allowedDoorIds, doorId) => {
   const door = String(doorId || '').trim();
+  // Sin puerta concreta no hay restricción que aplicar.
   if (!door) return true;
   const list = normalizeAllowedDoorIds(allowedDoorIds);
-  if (!list) return true;
+  if (!list.length) return false;
   return list.includes(door);
 };
 
@@ -54,22 +53,21 @@ const applyDoorRestrictionForIngreso = ({
   };
 };
 
-/** Agrega doorId a la lista; si era “todas”, pasa a [doorId] (modo restringido). */
+/** Agrega doorId a la lista (null/[] → [doorId]). */
 const addDoorToAllowedList = (current, doorId) => {
   const door = String(doorId || '').trim();
   if (!door) return normalizeAllowedDoorIds(current);
   const list = normalizeAllowedDoorIds(current);
-  if (!list) return [door];
   if (list.includes(door)) return list;
   return [...list, door];
 };
 
-/** Quita doorId; si la lista queda vacía → null (todas de nuevo). */
+/** Quita doorId; si la lista queda vacía → [] (ninguna puerta). */
 const removeDoorFromAllowedList = (current, doorId) => {
   const door = String(doorId || '').trim();
   const list = normalizeAllowedDoorIds(current);
-  if (!list) return null;
-  return normalizeAllowedDoorIds(list.filter((id) => id !== door));
+  if (!door) return list;
+  return list.filter((id) => id !== door);
 };
 
 module.exports = {
