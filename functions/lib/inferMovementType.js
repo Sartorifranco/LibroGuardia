@@ -1,6 +1,7 @@
 const { db } = require('../firestore');
 const { getArgentinaDateParts } = require('./normalize');
 const { normalizeIdNumber } = require('../dniParser');
+const { mark: profileMark } = require('./kioskProfile');
 
 const inferNextMovementFromEntries = (entries = []) => {
   if (!entries.length) return 'ingreso';
@@ -45,6 +46,7 @@ const inferMovementTypeForToday = async ({
       .orderBy('timestamp', 'desc')
       .limit(12)
       .get();
+    profileMark('inferMovement.queryEntriesByPersonId');
     const matches = filterTodayAuthorized(snap.docs, today, { personId, dni });
     return inferNextMovementFromEntries(matches);
   }
@@ -55,6 +57,7 @@ const inferMovementTypeForToday = async ({
     .orderBy('timestamp', 'desc')
     .limit(120)
     .get();
+  profileMark('inferMovement.queryEntriesByTypeFallback');
   const matches = filterTodayAuthorized(snap.docs, today, { personId: null, dni });
   return inferNextMovementFromEntries(matches);
 };

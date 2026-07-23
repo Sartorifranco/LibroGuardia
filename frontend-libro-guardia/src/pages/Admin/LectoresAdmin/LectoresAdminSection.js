@@ -4,6 +4,7 @@ import {
   KeyRound,
   Pencil,
   PlusCircle,
+  RefreshCw,
   ScanLine,
   Trash2,
   X
@@ -405,6 +406,23 @@ function LectoresAdminSection({ pendingAction, runAction }) {
     });
   };
 
+  const handleForceResync = async (row) => {
+    await runAction(`resync-${row.id}`, async () => {
+      try {
+        await apiFetch(`/admin/lectores/${row.id}/force-resync`, {
+          method: 'POST',
+          token: authToken
+        });
+        setLectores((prev) => prev.map((x) => (
+          x.id === row.id ? { ...x, forceResync: true } : x
+        )));
+        showSuccess('Pedido enviado. La mini PC lo aplica en el próximo heartbeat (hasta ~5 min).');
+      } catch (err) {
+        showError(err.message || 'Error al pedir sincronización');
+      }
+    });
+  };
+
   if (!canManage) {
     return <p className="theme-section-desc">Sin permiso lectores.manage.</p>;
   }
@@ -504,7 +522,10 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         </AdminFormCard>
       </AdminBlock>
 
-      <AdminBlock title={`Lectores (${lectores.length})`}>
+      <AdminBlock
+        title={`Lectores (${lectores.length})`}
+        description="“Sincronizar ahora” marca forceResync en el lector: la mini PC refresca la allowlist offline en el próximo heartbeat (hasta ~5 minutos), no al instante."
+      >
         {loading ? (
           <AdminLoading label="Cargando lectores…" />
         ) : lectores.length === 0 ? (
@@ -549,6 +570,14 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                       <div className="admin-row-actions">
                         <button type="button" className="admin-icon-btn" title="Editar" onClick={() => startEdit(row)}>
                           <Pencil size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-icon-btn"
+                          title="Sincronizar ahora (próximo heartbeat, hasta ~5 min)"
+                          onClick={() => handleForceResync(row)}
+                        >
+                          <RefreshCw size={16} />
                         </button>
                         <button type="button" className="admin-icon-btn" title="Descargar config" onClick={() => handleDownloadConfig(row)}>
                           <Download size={16} />

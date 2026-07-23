@@ -59,6 +59,12 @@ describe('LectoresAdminSection — modal de edición', () => {
           }
         };
       }
+      if (path === '/admin/lectores/lec-1/force-resync') {
+        return {
+          message: 'Resincronización pedida',
+          lector: { id: 'lec-1', forceResync: true }
+        };
+      }
       return {};
     });
   });
@@ -90,5 +96,29 @@ describe('LectoresAdminSection — modal de edición', () => {
 
     // El formulario de alta arriba sigue siendo "Nuevo lector", no "Editar".
     expect(screen.getByText('Nuevo lector')).toBeInTheDocument();
+  });
+
+  it('al hacer click en Sincronizar ahora pide force-resync', async () => {
+    render(
+      <LectoresAdminSection
+        pendingAction={null}
+        runAction={async (_id, fn) => fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Ingreso Puerta 1')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTitle(/sincronizar ahora/i));
+
+    await waitFor(() => {
+      expect(apiFetch).toHaveBeenCalledWith(
+        '/admin/lectores/lec-1/force-resync',
+        expect.objectContaining({ method: 'POST', token: 'token-test' })
+      );
+    });
+
+    expect(screen.getByText(/próximo heartbeat/i)).toBeInTheDocument();
   });
 });

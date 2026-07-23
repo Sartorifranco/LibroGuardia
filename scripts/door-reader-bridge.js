@@ -36,6 +36,8 @@ const {
   buildPulseCommand
 } = require('../functions/lib/doorDrivers/sr201');
 
+const { parseScanData, normalizeIdNumber } = require('../functions/dniParser');
+
 const DEFAULTS = {
   serialPort: 'COM3',
   baudRate: 9600,
@@ -48,7 +50,16 @@ const DEFAULTS = {
   logFile: '',
   reconnectMinMs: 2000,
   reconnectMaxMs: 60000,
-  inputMode: 'serial' // serial | stdin
+  inputMode: 'serial', // serial | stdin
+  /** Modo offline opcional: cachea allowlist y decide local si cae la red. */
+  offlineCache: false,
+  offlineCacheRefreshMs: 15 * 60 * 1000,
+  /** Si la lista tiene más de N horas, no confiar y denegar offline. */
+  offlineCacheMaxAgeHours: 24,
+  offlineAllowlistFile: '',
+  offlineQueueFile: '',
+  onlineScanTimeoutMs: 12000,
+  allowlistTimeoutMs: 120000
 };
 
 const CONTROL_NAMES = {
@@ -70,6 +81,12 @@ const loadConfig = () => {
   }
 
   const env = process.env;
+  const offlineCache = (() => {
+    const raw = env.OFFLINE_CACHE != null ? env.OFFLINE_CACHE : fileCfg.offlineCache;
+    if (raw === true || raw === '1' || String(raw).toLowerCase() === 'true') return true;
+    return false;
+  })();
+
   const cfg = {
     serialPort: String(env.SERIAL_PORT || fileCfg.serialPort || DEFAULTS.serialPort).trim(),
     baudRate: Number(env.SERIAL_BAUD || fileCfg.baudRate || DEFAULTS.baudRate) || DEFAULTS.baudRate,
@@ -85,6 +102,29 @@ const loadConfig = () => {
     reconnectMinMs: Number(env.RECONNECT_MIN_MS || fileCfg.reconnectMinMs || DEFAULTS.reconnectMinMs),
     reconnectMaxMs: Number(env.RECONNECT_MAX_MS || fileCfg.reconnectMaxMs || DEFAULTS.reconnectMaxMs),
     inputMode: String(env.INPUT_MODE || fileCfg.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
+    offlineCache,
+    offlineCacheRefreshMs: Number(
+      env.OFFLINE_CACHE_REFRESH_MS || fileCfg.offlineCacheRefreshMs || DEFAULTS.offlineCacheRefreshMs
+    ) || DEFAULTS.offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours: Number(
+      env.OFFLINE_CACHE_MAX_AGE_HOURS || fileCfg.offlineCacheMaxAgeHours || DEFAULTS.offlineCacheMaxAgeHours
+    ) || DEFAULTS.offlineCacheMaxAgeHours,
+    offlineAllowlistFile: String(
+      env.OFFLINE_ALLOWLIST_FILE
+      || fileCfg.offlineAllowlistFile
+      || path.join(path.dirname(configPath), `door-allowlist-${String(env.DOOR_ID || fileCfg.doorId || 'door').trim()}.json`)
+    ).trim(),
+    offlineQueueFile: String(
+      env.OFFLINE_QUEUE_FILE
+      || fileCfg.offlineQueueFile
+      || path.join(path.dirname(configPath), `offline-queue-${String(env.DOOR_ID || fileCfg.doorId || 'door').trim()}.json`)
+    ).trim(),
+    onlineScanTimeoutMs: Number(
+      env.ONLINE_SCAN_TIMEOUT_MS || fileCfg.onlineScanTimeoutMs || DEFAULTS.onlineScanTimeoutMs
+    ) || DEFAULTS.onlineScanTimeoutMs,
+    allowlistTimeoutMs: Number(
+      env.ALLOWLIST_TIMEOUT_MS || fileCfg.allowlistTimeoutMs || DEFAULTS.allowlistTimeoutMs
+    ) || DEFAULTS.allowlistTimeoutMs,
     configPath
   };
 
@@ -160,7 +200,7 @@ const fireLocalRelay = async (cfg, localRelay = {}) => {
   return { via: 'tcp-local', host, port, channel, mode, command, ...tcp };
 };
 
-const requestJson = (method, urlString, { headers = {}, body } = {}) =>
+const requestJson = (method, urlString, { headers = {}, body, timeoutMs = 25000 } = {}) =>
   new Promise((resolve, reject) => {
     const url = new URL(urlString);
     const lib = url.protocol === 'https:' ? https : http;
@@ -187,12 +227,73 @@ const requestJson = (method, urlString, { headers = {}, body } = {}) =>
       });
     });
     req.on('error', reject);
-    req.setTimeout(25000, () => {
+    req.setTimeout(timeoutMs, () => {
       req.destroy(new Error('Timeout de red'));
     });
     if (payload) req.write(payload);
     req.end();
   });
+
+const isNetworkError = (err) => {
+  if (!err) return false;
+  const msg = String(err.message || err);
+  return /timeout|ECONN|ENOTFOUND|EAI_AGAIN|network|socket|TLS|SSL|getaddrinfo|EHOSTUNREACH|ENETUNREACH/i.test(msg);
+};
+
+const readJsonFile = (filePath, fallback) => {
+  try {
+    if (!fs.existsSync(filePath)) return fallback;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return fallback;
+  }
+};
+
+const writeJsonFile = (filePath, data) => {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  fs.renameSync(tmp, filePath);
+};
+
+const createOfflineLocalId = () =>
+  `off_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+const extractScanIdentity = (rawData) => {
+  const parsed = parseScanData(rawData);
+  const dni = normalizeIdNumber(parsed.idNumber || '');
+  return {
+    dniNormalized: dni || '',
+    nombre: parsed.name || [parsed.lastName, parsed.firstName].filter(Boolean).join(' ').trim(),
+    format: parsed.format || 'unknown'
+  };
+};
+
+const allowlistEntryStillValid = (entry, now = new Date()) => {
+  if (!entry) return false;
+  if (!entry.validUntil) return true;
+  const until = Date.parse(entry.validUntil);
+  if (!Number.isFinite(until)) return true;
+  return until >= now.getTime();
+};
+
+const findAllowlistMatch = (allowlist, dniNormalized, now = new Date()) => {
+  const dni = normalizeIdNumber(dniNormalized);
+  if (!dni || !allowlist?.entries) return null;
+  const hit = allowlist.entries.find((e) => normalizeIdNumber(e.dniNormalized) === dni);
+  if (!hit) return null;
+  if (!allowlistEntryStillValid(hit, now)) return null;
+  return hit;
+};
+
+const isAllowlistFresh = (allowlist, maxAgeHours) => {
+  if (!allowlist?.generatedAt) return false;
+  const at = Date.parse(allowlist.generatedAt);
+  if (!Number.isFinite(at)) return false;
+  const maxMs = Math.max(1, Number(maxAgeHours) || 24) * 60 * 60 * 1000;
+  return (Date.now() - at) <= maxMs;
+};
 
 const createApiClient = (cfg) => {
   let token = null;
@@ -223,19 +324,15 @@ const createApiClient = (cfg) => {
     return token;
   };
 
-  const kioskScan = async (rawData) => {
+  const authorizedRequest = async (method, pathSuffix, { body, timeoutMs } = {}) => {
     const doCall = async () => {
       const bearer = await ensureToken();
-      return requestJson('POST', `${cfg.apiBaseUrl}/access/kiosk-scan`, {
+      return requestJson(method, `${cfg.apiBaseUrl}${pathSuffix}`, {
         headers: { Authorization: `Bearer ${bearer}` },
-        body: {
-          rawData,
-          doorId: cfg.doorId,
-          readerId: cfg.readerId
-        }
+        body,
+        timeoutMs
       });
     };
-
     let res = await doCall();
     if (res.status === 401) {
       log(cfg, 'warn', 'Token expirado o inválido (401) — re-login');
@@ -246,27 +343,36 @@ const createApiClient = (cfg) => {
     return res;
   };
 
-  const heartbeat = async () => {
-    const doCall = async () => {
-      const bearer = await ensureToken();
-      return requestJson('POST', `${cfg.apiBaseUrl}/lectores/heartbeat`, {
-        headers: { Authorization: `Bearer ${bearer}` },
-        body: {
-          doorId: cfg.doorId,
-          readerId: cfg.readerId,
-          ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {})
-        }
-      });
-    };
+  const kioskScan = async (rawData, { timeoutMs } = {}) =>
+    authorizedRequest('POST', '/access/kiosk-scan', {
+      body: {
+        rawData,
+        doorId: cfg.doorId,
+        readerId: cfg.readerId
+      },
+      timeoutMs: timeoutMs || cfg.onlineScanTimeoutMs || 25000
+    });
 
-    let res = await doCall();
-    if (res.status === 401) {
-      token = null;
-      await login();
-      res = await doCall();
-    }
-    return res;
-  };
+  const heartbeat = async () =>
+    authorizedRequest('POST', '/lectores/heartbeat', {
+      body: {
+        doorId: cfg.doorId,
+        readerId: cfg.readerId,
+        ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {})
+      },
+      timeoutMs: 20000
+    });
+
+  const fetchDoorAllowlist = async () =>
+    authorizedRequest('GET', `/access/door-allowlist/${encodeURIComponent(cfg.doorId)}`, {
+      timeoutMs: cfg.allowlistTimeoutMs || 120000
+    });
+
+  const postOfflineEntries = async (events) =>
+    authorizedRequest('POST', '/access/offline-entries', {
+      body: { events },
+      timeoutMs: 60000
+    });
 
   const withNetworkRetry = async (fn, label) => {
     for (;;) {
@@ -289,7 +395,14 @@ const createApiClient = (cfg) => {
     }
   };
 
-  return { login, kioskScan, heartbeat, withNetworkRetry };
+  return {
+    login,
+    kioskScan,
+    heartbeat,
+    fetchDoorAllowlist,
+    postOfflineEntries,
+    withNetworkRetry
+  };
 };
 
 const loadSerialPort = () => {
@@ -495,6 +608,153 @@ const main = async () => {
   let stopping = false;
   const shouldStop = () => stopping;
 
+  let cachedAllowlist = cfg.offlineCache
+    ? readJsonFile(cfg.offlineAllowlistFile, null)
+    : null;
+  let offlineQueue = cfg.offlineCache
+    ? readJsonFile(cfg.offlineQueueFile, [])
+    : [];
+  if (!Array.isArray(offlineQueue)) offlineQueue = [];
+
+  const persistQueue = () => {
+    if (!cfg.offlineCache) return;
+    writeJsonFile(cfg.offlineQueueFile, offlineQueue);
+  };
+
+  const persistAllowlist = (data) => {
+    cachedAllowlist = data;
+    writeJsonFile(cfg.offlineAllowlistFile, data);
+  };
+
+  const enqueueOfflineEvent = (event) => {
+    offlineQueue.push(event);
+    persistQueue();
+  };
+
+  const refreshAllowlist = async (reason = 'scheduled') => {
+    if (!cfg.offlineCache) return false;
+    const res = await api.fetchDoorAllowlist();
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(res.data?.message || `allowlist HTTP ${res.status}`);
+    }
+    persistAllowlist(res.data);
+    log(cfg, 'info', 'Allowlist offline actualizada', {
+      reason,
+      count: res.data?.count,
+      generatedAt: res.data?.generatedAt,
+      file: cfg.offlineAllowlistFile
+    });
+    return true;
+  };
+
+  const flushOfflineQueue = async () => {
+    if (!cfg.offlineCache || offlineQueue.length === 0) return;
+    const batch = [...offlineQueue];
+    const res = await api.postOfflineEntries(batch);
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(res.data?.message || `offline-entries HTTP ${res.status}`);
+    }
+    const failed = (res.data?.results || []).filter((r) => r.status === 'error');
+    if (failed.length) {
+      const failedIds = new Set(failed.map((f) => f.offlineLocalId).filter(Boolean));
+      offlineQueue = batch.filter((e) => failedIds.has(e.offlineLocalId));
+      persistQueue();
+      log(cfg, 'warn', 'Cola offline parcialmente sincronizada', {
+        accepted: res.data?.accepted,
+        skipped: res.data?.skipped,
+        remaining: offlineQueue.length
+      });
+      return;
+    }
+    offlineQueue = [];
+    persistQueue();
+    log(cfg, 'info', 'Cola offline sincronizada', {
+      accepted: res.data?.accepted,
+      skipped: res.data?.skipped
+    });
+  };
+
+  const decideOffline = async (rawData) => {
+    const identity = extractScanIdentity(rawData);
+    const now = new Date();
+
+    if (!cachedAllowlist || !isAllowlistFresh(cachedAllowlist, cfg.offlineCacheMaxAgeHours)) {
+      log(cfg, 'warn', 'Offline: allowlist ausente o vencida — denegado', {
+        hasCache: Boolean(cachedAllowlist),
+        generatedAt: cachedAllowlist?.generatedAt || null,
+        maxAgeHours: cfg.offlineCacheMaxAgeHours
+      });
+      const offlineLocalId = createOfflineLocalId();
+      enqueueOfflineEvent({
+        offlineLocalId,
+        doorId: cfg.doorId,
+        readerId: cfg.readerId,
+        movementType: 'ingreso',
+        timestamp: now.toISOString(),
+        dniNormalized: identity.dniNormalized,
+        nombre: identity.nombre,
+        authorized: false,
+        denialReason: 'offline_allowlist_stale',
+        relayTriggered: false
+      });
+      return {
+        authorized: false,
+        message: 'Sin conexión y lista local vencida o ausente. Acceso denegado.',
+        offline: true
+      };
+    }
+
+    if (!identity.dniNormalized) {
+      return {
+        authorized: false,
+        message: 'No se pudo leer el documento (modo offline).',
+        offline: true
+      };
+    }
+
+    const match = findAllowlistMatch(cachedAllowlist, identity.dniNormalized, now);
+    const authorized = Boolean(match);
+    const offlineLocalId = createOfflineLocalId();
+    let relayTriggered = false;
+
+    if (authorized
+      && cachedAllowlist.relayMode === 'local'
+      && cachedAllowlist.localRelay) {
+      try {
+        await fireLocalRelay(cfg, cachedAllowlist.localRelay);
+        relayTriggered = true;
+      } catch (relayErr) {
+        log(cfg, 'error', 'Fallo relé local (offline)', { error: relayErr.message });
+      }
+    }
+
+    enqueueOfflineEvent({
+      offlineLocalId,
+      doorId: cfg.doorId,
+      readerId: cfg.readerId,
+      movementType: 'ingreso',
+      timestamp: now.toISOString(),
+      dniNormalized: identity.dniNormalized,
+      nombre: match?.nombre || identity.nombre,
+      personId: match?.personId || null,
+      authorizationType: match?.authorizationType || null,
+      authorized,
+      denialReason: authorized ? null : 'offline_not_in_allowlist',
+      relayTriggered
+    });
+
+    return {
+      authorized,
+      message: authorized
+        ? `Offline OK: ${match.nombre || identity.dniNormalized}`
+        : 'Offline: no autorizado en lista local',
+      offline: true,
+      localRelay: cachedAllowlist.localRelay || null,
+      relayMode: cachedAllowlist.relayMode || 'local',
+      relayTriggered
+    };
+  };
+
   log(cfg, 'info', 'door-reader-bridge iniciando', {
     doorId: cfg.doorId,
     readerId: cfg.readerId,
@@ -502,10 +762,21 @@ const main = async () => {
     inputMode: cfg.inputMode,
     serialPort: cfg.serialPort,
     baudRate: cfg.baudRate,
+    offlineCache: cfg.offlineCache,
     configPath: cfg.configPath
   });
 
   await api.withNetworkRetry(() => api.login(), 'login');
+
+  if (cfg.offlineCache) {
+    try {
+      await refreshAllowlist('startup');
+    } catch (err) {
+      log(cfg, 'warn', 'No se pudo cargar allowlist al iniciar (se usará caché en disco si hay)', {
+        error: err.message
+      });
+    }
+  }
 
   const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 5 * 60 * 1000);
   const sendHeartbeat = async () => {
@@ -514,8 +785,24 @@ const main = async () => {
       if (res.status >= 200 && res.status < 300) {
         log(cfg, 'info', 'Heartbeat OK', {
           lectorId: res.data?.lectorId,
-          status: res.data?.connectionStatus
+          status: res.data?.connectionStatus,
+          forceResync: Boolean(res.data?.forceResync)
         });
+
+        if (cfg.offlineCache) {
+          try {
+            await flushOfflineQueue();
+          } catch (flushErr) {
+            log(cfg, 'warn', 'No se pudo vaciar cola offline', { error: flushErr.message });
+          }
+          if (res.data?.forceResync) {
+            try {
+              await refreshAllowlist('forceResync');
+            } catch (syncErr) {
+              log(cfg, 'warn', 'forceResync falló', { error: syncErr.message });
+            }
+          }
+        }
       } else {
         log(cfg, 'warn', 'Heartbeat rechazado', {
           status: res.status,
@@ -528,6 +815,15 @@ const main = async () => {
   };
   sendHeartbeat();
   const heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS);
+
+  let allowlistTimer = null;
+  if (cfg.offlineCache) {
+    allowlistTimer = setInterval(() => {
+      refreshAllowlist('interval').catch((err) => {
+        log(cfg, 'warn', 'Refresh periódico de allowlist falló', { error: err.message });
+      });
+    }, cfg.offlineCacheRefreshMs);
+  }
 
   let busy = false;
   const handleFrame = async ({ text, pretty, hex, reason }) => {
@@ -552,14 +848,33 @@ const main = async () => {
         preview: text.slice(0, 80)
       });
 
-      const res = await api.withNetworkRetry(
-        () => api.kioskScan(text),
-        'kiosk-scan'
-      );
+      let res;
+      let usedOffline = false;
+
+      if (cfg.offlineCache) {
+        try {
+          res = await api.kioskScan(text);
+        } catch (err) {
+          if (isNetworkError(err)) {
+            log(cfg, 'warn', 'kiosk-scan sin red — modo offline', { error: err.message });
+            const offlineResult = await decideOffline(text);
+            usedOffline = true;
+            res = { status: 200, data: offlineResult };
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        res = await api.withNetworkRetry(
+          () => api.kioskScan(text),
+          'kiosk-scan'
+        );
+      }
+
       const data = res.data || {};
       const elapsedMs = Date.now() - t0;
       const level = data.authorized ? 'info' : 'warn';
-      log(cfg, level, 'Resultado kiosk-scan', {
+      log(cfg, level, usedOffline ? 'Resultado offline' : 'Resultado kiosk-scan', {
         status: res.status,
         authorized: data.authorized,
         ok: data.ok,
@@ -568,11 +883,13 @@ const main = async () => {
         relayMode: data.relayMode || 'cloud',
         relayTriggered: data.relayTriggered,
         relayError: data.relayError || null,
+        offline: Boolean(data.offline || usedOffline),
         elapsedMs
       });
 
-      // MODO LOCAL: la nube autorizó pero NO disparó el relé; lo hacemos acá.
-      if (data.authorized && data.relayMode === 'local' && data.localRelay) {
+      // MODO LOCAL online: la nube autorizó pero NO disparó el relé; lo hacemos acá.
+      // (En offline, decideOffline ya disparó el relé si correspondía.)
+      if (!usedOffline && data.authorized && data.relayMode === 'local' && data.localRelay) {
         const tRelay = Date.now();
         try {
           const relayResult = await fireLocalRelay(cfg, data.localRelay);
@@ -601,6 +918,7 @@ const main = async () => {
     if (stopping) return;
     stopping = true;
     clearInterval(heartbeatTimer);
+    if (allowlistTimer) clearInterval(allowlistTimer);
     log(cfg, 'info', 'Cerrando door-reader-bridge…');
     setTimeout(() => process.exit(0), 500);
   };
@@ -626,5 +944,9 @@ module.exports = {
   loadConfig,
   createSerialFramer,
   formatChunk,
+  isNetworkError,
+  isAllowlistFresh,
+  findAllowlistMatch,
+  extractScanIdentity,
   DEFAULTS
 };

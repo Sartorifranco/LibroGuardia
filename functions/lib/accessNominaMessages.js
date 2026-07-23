@@ -9,12 +9,16 @@ const {
 const { isCitacionRequiredArea, isSistemasArea } = require('./centroCostoGroups');
 const { resolveShiftSchedule } = require('./shiftParser');
 const { hydrateAuthorizationForRead } = require('./transportCsvParser');
+const { mark: profileMark } = require('./kioskProfile');
 
 const SHIFT_EARLY_MINUTES = 30;
 const SHIFT_LATE_MINUTES = 15;
 
 let citacionesTodayCache = { date: null, data: null, at: 0 };
 const CITACIONES_CACHE_MS = 45_000;
+
+/** Caché de próxima citación por persona (mismo TTL que citaciones de hoy). */
+const nextCitacionCache = new Map();
 
 const getCitacionesTodayCached = async (dateString) => {
   const now = Date.now();
@@ -23,10 +27,12 @@ const getCitacionesTodayCached = async (dateString) => {
     && citacionesTodayCache.data
     && now - citacionesTodayCache.at < CITACIONES_CACHE_MS
   ) {
+    profileMark('nomina.loadCitacionesToday.cacheHit');
     return citacionesTodayCache.data;
   }
   const data = await loadCitacionesToday(dateString);
   citacionesTodayCache = { date: dateString, data, at: now };
+  profileMark('nomina.loadCitacionesToday');
   return data;
 };
 
@@ -47,7 +53,10 @@ const findPersonalMaster = async ({ personId, dniNormalized, legajoNormalized })
       .where('source', '==', 'nomina')
       .limit(1)
       .get();
-    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    if (!snap.empty) {
+      profileMark('nomina.findPersonalMaster.byPersonId');
+      return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    }
   }
 
   if (dniNormalized) {
@@ -56,7 +65,10 @@ const findPersonalMaster = async ({ personId, dniNormalized, legajoNormalized })
       .where('source', '==', 'nomina')
       .limit(1)
       .get();
-    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    if (!snap.empty) {
+      profileMark('nomina.findPersonalMaster.byDni');
+      return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    }
   }
 
   if (legajoNormalized) {
@@ -65,20 +77,32 @@ const findPersonalMaster = async ({ personId, dniNormalized, legajoNormalized })
       .where('source', '==', 'nomina')
       .limit(1)
       .get();
-    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    if (!snap.empty) {
+      profileMark('nomina.findPersonalMaster.byLegajo');
+      return { id: snap.docs[0].id, ...snap.docs[0].data() };
+    }
   }
 
+  profileMark('nomina.findPersonalMaster.miss');
   return null;
 };
 
 const findNextCitacionDate = async (employee, afterDate) => {
   const dni = employee.idNumberNormalized || normalizeIdNumber(employee.idNumber);
   const legajo = normalizeLegajo(employee.legajoNormalized || employee.legajo);
+  const cacheKey = `${legajo || ''}|${dni || ''}|${afterDate}`;
+  const cached = nextCitacionCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.at < CITACIONES_CACHE_MS) {
+    profileMark('nomina.findNextCitacionDate.cacheHit');
+    return cached.value;
+  }
 
   const snap = await db.collection('authorizations')
     .where('active', '==', true)
     .where('type', '==', 'citacion')
     .get();
+  profileMark('nomina.findNextCitacionDate');
 
   const future = snap.docs
     .map((doc) => hydrateAuthorizationForRead({ id: doc.id, ...doc.data() }))
@@ -93,7 +117,9 @@ const findNextCitacionDate = async (employee, afterDate) => {
     })
     .sort((a, b) => (a.startDate || '').localeCompare(b.startDate || ''));
 
-  return future[0] || null;
+  const value = future[0] || null;
+  nextCitacionCache.set(cacheKey, { at: now, value });
+  return value;
 };
 
 const formatShiftDays = (shift) => {
@@ -141,17 +167,39 @@ const checkShiftTimeAccess = (timeWindow, referenceDate, timeString) => {
   };
 };
 
+/**
+ * Prefetch independiente: personalMaster + citaciones de hoy (en paralelo).
+ * Usado por processKioskScan para solapar con validarAcceso.
+ */
+const prefetchNominaAccessData = async ({
+  personId = null,
+  dniNormalized = '',
+  referenceDate = new Date()
+} = {}) => {
+  const { dateString } = getArgentinaDateParts(referenceDate);
+  const [employee, citacionesToday] = await Promise.all([
+    findPersonalMaster({ personId, dniNormalized }),
+    getCitacionesTodayCached(dateString)
+  ]);
+  profileMark('nomina.prefetchParallel');
+  return { employee, citacionesToday, dateString };
+};
+
 const buildNominaAccessMessage = async ({
   personId,
   dniNormalized,
   personName = '',
-  referenceDate = new Date()
+  referenceDate = new Date(),
+  prefetched = null
 }) => {
-  const employee = await findPersonalMaster({ personId, dniNormalized });
+  const employee = prefetched && Object.prototype.hasOwnProperty.call(prefetched, 'employee')
+    ? prefetched.employee
+    : await findPersonalMaster({ personId, dniNormalized });
   if (!employee || employee.active === false) return null;
 
   const { dateString, dayCode, timeString } = getArgentinaDateParts(referenceDate);
-  const citacionesToday = await getCitacionesTodayCached(dateString);
+  const citacionesToday = prefetched?.citacionesToday
+    || await getCitacionesTodayCached(dateString);
   const shift = resolveShiftSchedule(employee);
   const name = personName || employee.name || 'Esta persona';
   const centro = employee.centroCosto || employee.company || '';
@@ -193,6 +241,7 @@ const buildNominaAccessMessage = async ({
     };
   }
 
+  // Solo en denegación por falta de citación hoy (mensaje informativo).
   if (evaluation.reason === 'sin_citacion_hoy' && isCitacionRequiredArea(centro)) {
     const next = await findNextCitacionDate(employee, dateString);
     const nextLabel = next
@@ -227,6 +276,7 @@ const buildNominaAccessMessage = async ({
 
 module.exports = {
   buildNominaAccessMessage,
+  prefetchNominaAccessData,
   findPersonalMaster,
   SHIFT_EARLY_MINUTES,
   SHIFT_LATE_MINUTES

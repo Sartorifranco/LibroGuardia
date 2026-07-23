@@ -17,6 +17,7 @@ const {
   regenerateCredentials,
   buildConfigForDownload,
   touchHeartbeat,
+  requestForceResync,
   resolveAuthUsername,
   resolveApiBaseUrl,
   resolveConnectionStatus
@@ -151,8 +152,42 @@ router.get('/api/admin/lectores/:id/config', auth, requirePermission('lectores.m
 });
 
 /**
+ * Pide al bridge que refresque la allowlist offline en el próximo heartbeat (hasta ~5 min).
+ */
+router.post(
+  '/api/admin/lectores/:id/force-resync',
+  auth,
+  requirePermission('lectores.manage'),
+  async (req, res) => {
+    try {
+      const lector = await requestForceResync(req.params.id);
+      logAdminAction({
+        req,
+        action: 'lector.force_resync',
+        targetType: 'lector',
+        targetId: lector.id,
+        after: { forceResync: true }
+      }).catch(() => {});
+      res.json({
+        message: 'Resincronización pedida. Se aplica en el próximo heartbeat de la mini PC (hasta ~5 minutos).',
+        lector: {
+          ...lector,
+          connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
+        }
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al pedir resincronización',
+        code: err.code
+      });
+    }
+  }
+);
+
+/**
  * Heartbeat del door-reader-bridge (usuario kiosk).
  * Solo actualiza ultimaConexion — sin disparar relé ni parsear lecturas.
+ * Incluye forceResync (one-shot) si el admin pidió refrescar la allowlist offline.
  */
 router.post('/api/lectores/heartbeat', auth, async (req, res) => {
   try {
@@ -168,7 +203,8 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       ok: true,
       lectorId: lector.id,
       ultimaConexion: lector.ultimaConexion,
-      connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
+      connectionStatus: resolveConnectionStatus(lector.ultimaConexion),
+      forceResync: Boolean(lector.forceResync)
     });
   } catch (err) {
     res.status(err.status || 500).json({

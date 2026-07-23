@@ -49,6 +49,7 @@ const toLectorJson = (doc) => {
     direction: data.direction || 'ambos',
     usuarioSistemaId: data.usuarioSistemaId || '',
     ultimaConexion: data.ultimaConexion || null,
+    forceResync: Boolean(data.forceResync),
     createdAt: data.createdAt || null,
     updatedAt: data.updatedAt || null
   };
@@ -123,7 +124,10 @@ const buildDoorReaderConfig = ({
   inputMode: 'serial',
   logFile: '/var/log/door-reader-bridge.log',
   reconnectMinMs: 2000,
-  reconnectMaxMs: 60000
+  reconnectMaxMs: 60000,
+  offlineCache: false,
+  offlineCacheRefreshMs: 900000,
+  offlineCacheMaxAgeHours: 24
 });
 
 const ensureKioskRole = async () => {
@@ -318,12 +322,14 @@ const resolveAuthUsername = (user) => {
 
 /**
  * Heartbeat del bridge: actualiza ultimaConexion del lector del usuario kiosk.
+ * Si forceResync estaba en true, lo consume (pasa a false) y lo reporta en la respuesta.
  */
 const touchHeartbeat = async ({ username, lectorId = null, doorId = null, readerId = null }) => {
   const uid = String(username || '').trim().toLowerCase();
   if (!uid) throw httpError(401, 'No autenticado');
 
   let ref = null;
+  let beforeData = {};
   if (lectorId) {
     const snap = await db.collection(LECTORES).doc(lectorId).get();
     if (!snap.exists) throw httpError(404, 'Lector no encontrado');
@@ -332,6 +338,7 @@ const touchHeartbeat = async ({ username, lectorId = null, doorId = null, reader
       throw httpError(403, 'Este lector no pertenece al usuario autenticado');
     }
     ref = snap.ref || db.collection(LECTORES).doc(lectorId);
+    beforeData = data;
   } else {
     let query = db.collection(LECTORES).where('usuarioSistemaId', '==', uid).limit(1);
     const snap = await query.get();
@@ -344,9 +351,11 @@ const touchHeartbeat = async ({ username, lectorId = null, doorId = null, reader
       const match = byDoor.docs.find((d) => String(d.data().usuarioSistemaId || '').toLowerCase() === uid);
       if (match) {
         ref = match.ref;
+        beforeData = match.data() || {};
       }
     } else if (!snap.empty) {
       ref = snap.docs[0].ref;
+      beforeData = snap.docs[0].data() || {};
     }
   }
 
@@ -358,13 +367,37 @@ const touchHeartbeat = async ({ username, lectorId = null, doorId = null, reader
     );
   }
 
-  await ref.set({
+  const forceResync = Boolean(beforeData.forceResync);
+  const patch = {
     ultimaConexion: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  };
+  if (forceResync) {
+    patch.forceResync = false;
+  }
+
+  await ref.set(patch, { merge: true });
 
   const after = await ref.get();
-  return toLectorJson(after);
+  return {
+    ...toLectorJson(after),
+    forceResync
+  };
+};
+
+/**
+ * Marca forceResync=true para que el bridge refresque la allowlist en el próximo heartbeat.
+ */
+const requestForceResync = async (id) => {
+  const lector = await getLectorById(id);
+  await db.collection(LECTORES).doc(id).set({
+    forceResync: true,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  return {
+    ...lector,
+    forceResync: true
+  };
 };
 
 module.exports = {
@@ -391,5 +424,6 @@ module.exports = {
   buildConfigForDownload,
   resolveAuthUsername,
   touchHeartbeat,
+  requestForceResync,
   validateDoorAndReader
 };

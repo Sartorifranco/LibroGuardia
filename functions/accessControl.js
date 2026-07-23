@@ -17,7 +17,7 @@ const {
   TOLERANCIA_MINUTOS,
   evaluateAuthorizationCandidates
 } = require('./lib/accessValidation');
-const { buildNominaAccessMessage } = require('./lib/accessNominaMessages');
+const { buildNominaAccessMessage, prefetchNominaAccessData } = require('./lib/accessNominaMessages');
 const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
 const { applyDoorRestrictionForIngreso } = require('./lib/doorAccess');
 const {
@@ -25,6 +25,7 @@ const {
   markVisitaEstado,
   nextEstadoForMovement
 } = require('./lib/visitasAccess');
+const { runWithKioskProfile, mark: profileMark, finish: profileFinish } = require('./lib/kioskProfile');
 
 const findPersonalMaster = async (idNumber) => {
   const idNumberNormalized = normalizeIdNumber(idNumber);
@@ -53,6 +54,7 @@ const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
       .where('dniNormalized', '==', dniNormalized)
       .limit(1)
       .get();
+    profileMark('resolvePerson.queryByDni');
     if (!snap.empty) {
       personDoc = snap.docs[0];
       resolutionPath = 'dni';
@@ -64,6 +66,7 @@ const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
       .where('nameKey', '==', nameKey)
       .limit(1)
       .get();
+    profileMark('resolvePerson.queryByNameKey');
     if (!snap.empty) {
       personDoc = snap.docs[0];
       resolutionPath = 'nameKey';
@@ -77,6 +80,7 @@ const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
           idNumberNormalized: dniNormalized,
           updatedAt: FieldValue.serverTimestamp()
         });
+        profileMark('resolvePerson.backfillDni');
         console.log('[accessControl] DNI completado en people por nameKey', {
           personId: personDoc.id,
           dniNormalized
@@ -134,6 +138,7 @@ const fetchPrimaryAuthorizations = async (personId, today) => {
       .where('appointmentDate', '==', today)
       .get()
   ]);
+  profileMark('decidirAcceso.fetchPrimaryAuthorizations');
 
   return {
     permanentDocs: mapAuthorizationDocs(permanentSnap),
@@ -150,6 +155,7 @@ const fetchRangeAuthorizations = async (personId, today) => {
     .where('type', 'in', ['visita', 'visit', 'temporal'])
     .where('startDate', '<=', today)
     .get();
+  profileMark('decidirAcceso.fetchRangeAuthorizations');
 
   return mapAuthorizationDocs(snap).filter((auth) => {
     const endDate = auth.endDate || auth.startDate;
@@ -200,6 +206,7 @@ const writeAccessEntry = async ({
   };
 
   const entryRef = await db.collection('entries').add(payload);
+  profileMark('validarAcceso.writeAccessEntry');
   return entryRef.id;
 };
 
@@ -209,14 +216,16 @@ const decidirAcceso = async ({
   apellido = '',
   tipoMovimiento = 'ingreso',
   referenceDate = new Date(),
-  doorId = null
+  doorId = null,
+  resolvedPerson = null
 }) => {
   const { dateString: today, dayCode } = getArgentinaDateParts(referenceDate);
   const dniNormalized = normalizeDni(dni);
   const nameSnapshot = buildFullName(nombre, apellido);
 
   if (tipoMovimiento === 'egreso') {
-    const resolved = await resolvePersonForValidarAcceso({ dni, nombre, apellido });
+    const resolved = resolvedPerson || await resolvePersonForValidarAcceso({ dni, nombre, apellido });
+    profileMark(resolvedPerson ? 'decidirAcceso.resolvePerson.reused' : 'decidirAcceso.resolvePerson');
     const visitaMatch = await findEligibleVisita({
       dniNormalized: dniNormalized || resolved.dniNormalized,
       doorId,
@@ -261,7 +270,8 @@ const decidirAcceso = async ({
     };
   }
 
-  const resolved = await resolvePersonForValidarAcceso({ dni, nombre, apellido });
+  const resolved = resolvedPerson || await resolvePersonForValidarAcceso({ dni, nombre, apellido });
+  profileMark(resolvedPerson ? 'decidirAcceso.resolvePerson.reused' : 'decidirAcceso.resolvePerson');
   let authorization = null;
   let authorizationType = null;
   let authorized = false;
@@ -307,6 +317,7 @@ const decidirAcceso = async ({
         referenceDate: today,
         person: resolved.person
       });
+      profileMark('decidirAcceso.legacyAuthorizationFallback');
     }
 
     if (authorization) {
@@ -342,6 +353,7 @@ const decidirAcceso = async ({
       doorId,
       movementType: 'ingreso'
     });
+    profileMark('decidirAcceso.findEligibleVisita');
     if (visitaMatch.visita) {
       authorized = true;
       denialReason = null;
@@ -415,14 +427,23 @@ const validarAcceso = async ({
   tipoMovimiento = 'ingreso',
   channel = 'molinete',
   guardId = null,
-  doorId = null
+  doorId = null,
+  resolvedPerson = null
 }) => {
   const dniNormalized = normalizeDni(dni);
   const nameSnapshot = buildFullName(nombre, apellido);
 
   let decision;
   try {
-    decision = await decidirAcceso({ dni, nombre, apellido, tipoMovimiento, doorId });
+    decision = await decidirAcceso({
+      dni,
+      nombre,
+      apellido,
+      tipoMovimiento,
+      doorId,
+      resolvedPerson
+    });
+    profileMark('validarAcceso.decidirAcceso.done');
   } catch (err) {
     console.error('[accessControl] Error interno en validarAcceso', err);
     decision = {
@@ -643,12 +664,14 @@ const triggerAccessIfAuthorized = async ({
   }
 };
 
-const processKioskScan = async ({ rawData, username, doorId = null, readerId = 'default' }) => {
+const processKioskScan = async ({ rawData, username, doorId = null, readerId = 'default' }) =>
+  runWithKioskProfile({ doorId, readerId, username }, async () => {
   const { openDoor, resolveDoorContext, buildRelayConfigForDoor } = require('./doorController');
   const { resolveScanContext } = require('./lib/accessAuthMethods');
   const { inferMovementTypeForToday } = require('./lib/inferMovementType');
   const { parseReaderPrefixedScan, resolveReaderFixedMovement } = require('./lib/doorsConfig');
   const { shouldAttemptRelay, resolveRelayMode, buildLocalRelayPayload } = require('./lib/relayDispatch');
+  profileMark('kiosk.requireModules');
 
   const prefixed = parseReaderPrefixedScan(rawData);
   const effectiveRawData = prefixed?.payload || rawData;
@@ -659,9 +682,12 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     resolveDoorContext({ doorId, readerId: effectiveReaderId }),
     getAccessControlConfig()
   ]);
+  profileMark('kiosk.doorContext+accessConfig');
   const scan = await resolveScanContext({ rawData: effectiveRawData, door });
+  profileMark('kiosk.resolveScanContext');
 
   if (!scan.ok) {
+    profileFinish({ ok: false, reason: 'scan_not_ok' });
     return {
       ok: false,
       authorized: false,
@@ -700,6 +726,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     || [lastName, firstName].filter(Boolean).join(' ').trim();
 
   if (!idNumber && !fallbackName && scan.authMethod !== 'credential') {
+    profileFinish({ ok: false, reason: 'unreadable_document' });
     return {
       ok: false,
       authorized: false,
@@ -714,6 +741,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     nombre: firstName,
     apellido: lastName
   });
+  profileMark('kiosk.resolvePerson_preValidar');
 
   const fixedMovement = prefixed?.direction
     || resolveReaderFixedMovement(door, effectiveReaderId);
@@ -722,8 +750,10 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       personId: resolvedPerson.personId,
       dniNormalized: idNumber || resolvedPerson.dniNormalized
     });
+  profileMark('kiosk.inferMovementType');
 
   let result;
+  let nominaPrefetch = null;
   if (scan.authMethod === 'credential' && scan.authorization && !scan.person) {
     result = {
       authorized: true,
@@ -741,19 +771,31 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       tipoMovimiento: 'egreso',
       channel: 'molinete',
       guardId: username,
-      doorId: door.id
+      doorId: door.id,
+      resolvedPerson
     });
   } else {
-    result = await validarAcceso({
-      dni: idNumber,
-      nombre: firstName,
-      apellido: lastName,
-      tipoMovimiento: 'ingreso',
-      channel: 'molinete',
-      guardId: username,
-      doorId: door.id
-    });
+    // validarAcceso (auth) y prefetch de nómina son independientes tras resolver persona.
+    const [accessResult, prefetch] = await Promise.all([
+      validarAcceso({
+        dni: idNumber,
+        nombre: firstName,
+        apellido: lastName,
+        tipoMovimiento: 'ingreso',
+        channel: 'molinete',
+        guardId: username,
+        doorId: door.id,
+        resolvedPerson
+      }),
+      prefetchNominaAccessData({
+        personId: resolvedPerson.personId,
+        dniNormalized: idNumber || resolvedPerson.dniNormalized
+      })
+    ]);
+    result = accessResult;
+    nominaPrefetch = prefetch;
   }
+  profileMark('kiosk.validarAcceso+nominaPrefetch');
 
   let authorized = movementType === 'egreso' ? true : result.authorized;
   let denialReason = result.denialReason;
@@ -767,8 +809,10 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     const nominaAccess = await buildNominaAccessMessage({
       personId: result.personId,
       dniNormalized: idNumber,
-      personName: result.personName
+      personName: result.personName,
+      prefetched: nominaPrefetch
     });
+    profileMark('kiosk.buildNominaAccessMessage');
 
     if (nominaAccess) {
       message = nominaAccess.message;
@@ -799,6 +843,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     if (!doorCheck.authorized && doorCheck.message) {
       message = doorCheck.message;
     }
+    profileMark('kiosk.applyDoorRestriction');
   }
 
   let relayTriggered = false;
@@ -864,6 +909,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       doorId: door.id,
       authMethod: scan.authMethod
     }).catch(() => {});
+    profileMark('kiosk.localRelay.fireAndForgetLog');
   } else if (shouldTryRelay) {
     // MODO CLOUD (default): comportamiento actual — la nube dispara el relé.
     try {
@@ -875,6 +921,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
         authMethod: scan.authMethod,
         movementType: 'ingreso'
       });
+      profileMark('kiosk.openDoor.cloudRelay');
       relayTriggered = true;
       airlock = openResult.airlock || airlock;
       responsePayload.relayTriggered = true;
@@ -897,6 +944,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
         doorId: door.id,
         authMethod: scan.authMethod
       }).catch(() => {});
+      profileMark('kiosk.openDoor.cloudRelayError');
     }
   } else if (movementType === 'ingreso' && !authorized) {
     logAccessEvent({
@@ -913,6 +961,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       doorId: door.id,
       authMethod: scan.authMethod
     }).catch(() => {});
+    profileMark('kiosk.denied.fireAndForgetLog');
   }
 
   if (result.entryId) {
@@ -930,10 +979,19 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     }).catch((err) => {
       console.error('[accessControl] No se pudo actualizar entry de kiosk', err.message);
     });
+    profileMark('kiosk.entryUpdate.fireAndForget');
   }
 
+  profileFinish({
+    ok: true,
+    authorized,
+    movementType,
+    relayMode,
+    personId: result.personId || null,
+    entryId: result.entryId || null
+  });
   return responsePayload;
-};
+});
 
 const manualOpenDoor = async ({
   username,

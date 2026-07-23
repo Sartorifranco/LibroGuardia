@@ -12,7 +12,12 @@
     "inputMode": "serial = hardware; stdin = prueba pegando rawData en consola",
     "logFile": "Ruta opcional de log a disco además de la consola",
     "reconnectMinMs": "Backoff inicial al fallar serie o red (ms)",
-    "reconnectMaxMs": "Tope de backoff (ms)"
+    "reconnectMaxMs": "Tope de backoff (ms)",
+    "offlineCache": "false por defecto. true = cachea allowlist y decide local si no hay internet",
+    "offlineCacheRefreshMs": "Cada cuánto pedir allowlist con internet (default 900000 = 15 min)",
+    "offlineCacheMaxAgeHours": "Si la lista es más vieja, denegar offline (default 24). Evita usar una lista de hace días",
+    "offlineAllowlistFile": "Ruta del JSON de allowlist (opcional)",
+    "offlineQueueFile": "Ruta de la cola de eventos offline (opcional)"
   },
   "apiBaseUrl": "https://bacarguard.web.app/api",
   "username": "kiosk.puerta-entrada",
@@ -26,5 +31,8 @@
   "inputMode": "serial",
   "logFile": "C:\\Logs\\door-reader-bridge.log",
   "reconnectMinMs": 2000,
-  "reconnectMaxMs": 60000
+  "reconnectMaxMs": 60000,
+  "offlineCache": false,
+  "offlineCacheRefreshMs": 900000,
+  "offlineCacheMaxAgeHours": 24
 }

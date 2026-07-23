@@ -26,6 +26,8 @@ const {
   processKioskScan,
   validarAcceso
 } = require('../accessControl');
+const { buildDoorAllowlist } = require('../lib/doorAllowlist');
+const { ingestOfflineEntries } = require('../lib/offlineEntries');
 const {
   checkAccessStatus,
   preRegisterVisitor,
@@ -324,6 +326,7 @@ router.post('/api/guard/exceptional-entry', auth, requirePermission('access.exce
 });
 
 router.post('/api/access/kiosk-scan', auth, async (req, res) => {
+  const t0 = Date.now();
   try {
     const { rawData } = req.body;
     if (!rawData?.trim()) {
@@ -337,8 +340,19 @@ router.post('/api/access/kiosk-scan', auth, async (req, res) => {
       readerId: req.body?.readerId || 'default'
     });
 
+    console.log('[kiosk-scan-http]', JSON.stringify({
+      wallMs: Date.now() - t0,
+      authorized: result?.authorized,
+      movementType: result?.movementType,
+      relayMode: result?.relayMode,
+      doorId: result?.door?.id || null
+    }));
     res.json(result);
   } catch (err) {
+    console.log('[kiosk-scan-http]', JSON.stringify({
+      wallMs: Date.now() - t0,
+      error: err.message
+    }));
     res.status(500).json({ message: 'Error en control de acceso', error: err.message });
   }
 });
@@ -431,5 +445,53 @@ router.post('/api/scan/resolve', auth, requirePermission('master.personal.read')
     res.status(500).json({ message: 'Error al resolver escaneo', error: err.message });
   }
 });
+
+/**
+ * Allowlist offline por puerta: resultado ya calculado con decidirAcceso.
+ * El bridge la cachea localmente cuando offlineCache está activo.
+ */
+router.get(
+  '/api/access/door-allowlist/:doorId',
+  auth,
+  requirePermission('access.kiosk'),
+  async (req, res) => {
+    try {
+      const allowlist = await buildDoorAllowlist(req.params.doorId);
+      res.json(allowlist);
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al armar allowlist',
+        code: err.code
+      });
+    }
+  }
+);
+
+/**
+ * Lote de eventos registrados en la mini PC sin internet.
+ * Idempotente por offlineLocalId.
+ */
+router.post(
+  '/api/access/offline-entries',
+  auth,
+  requirePermission('access.kiosk'),
+  async (req, res) => {
+    try {
+      const events = req.body?.events || req.body?.entries || [];
+      const result = await ingestOfflineEntries(events, {
+        actorId: req.user?.id || req.user?.username || null
+      });
+      res.json({
+        ok: true,
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al sincronizar entradas offline',
+        code: err.code
+      });
+    }
+  }
+);
 
 module.exports = router;

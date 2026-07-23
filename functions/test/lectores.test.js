@@ -261,9 +261,36 @@ describe('lectores — helpers', () => {
       lectorId: created.lector.id
     });
     assert.equal(touched.ultimaConexion, 'SERVER_TIMESTAMP');
+    assert.equal(touched.forceResync, false);
 
     const stored = bag.lectores.get(created.lector.id);
     assert.equal(stored.ultimaConexion, 'SERVER_TIMESTAMP');
+  });
+
+  it('forceResync: requestForceResync + heartbeat lo consume una sola vez', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector Resync',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso'
+    });
+
+    const requested = await bag.api.requestForceResync(created.lector.id);
+    assert.equal(requested.forceResync, true);
+    assert.equal(bag.lectores.get(created.lector.id).forceResync, true);
+
+    const firstHb = await bag.api.touchHeartbeat({
+      username: created.username,
+      lectorId: created.lector.id
+    });
+    assert.equal(firstHb.forceResync, true);
+    assert.equal(bag.lectores.get(created.lector.id).forceResync, false);
+
+    const secondHb = await bag.api.touchHeartbeat({
+      username: created.username,
+      lectorId: created.lector.id
+    });
+    assert.equal(secondHb.forceResync, false);
   });
 
   it('resolveAuthUsername prioriza username sobre id (bug heartbeat)', () => {
