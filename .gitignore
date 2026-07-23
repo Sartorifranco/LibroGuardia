@@ -33,6 +33,9 @@ scripts/sr201-bridge.config.json
 scripts/door-reader.config.json
 scripts/door-reader.config.*.json
 !scripts/door-reader.config.example.json
+# Caché/cola offline del door-reader-bridge (runtime local)
+scripts/door-allowlist-*.json
+scripts/offline-queue-*.json
 functions/node_modules/
 functions/serviceAccountKey.json
 functions/.env
