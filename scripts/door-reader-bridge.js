@@ -1,9 +1,17 @@
 /**
- * Puente de producción (mini PC por puerta):
- *   lector GADNIC CODBAR14 (RS-232) → POST /api/access/kiosk-scan
+ * Puente de producción (estación = uno o varios lectores en el mismo proceso):
+ *   lector(es) GADNIC CODBAR14 (RS-232) → POST /api/access/kiosk-scan
  *
- * NO dispara el relé en local: eso lo hace Cloud Functions vía sr201-bridge + túnel
- * (triggerRelay rechaza IPs privadas sin bridgeUrl).
+ * Formato config:
+ *   - Nuevo: { apiBaseUrl, readers: [...], localServerPort?, localServerSecret? }
+ *   - Legacy (retrocompat): un solo lector plano en la raíz (doorId/username/…).
+ *
+ * Servidor HTTP local (opcional, solo LAN — sin túnel):
+ *   GET  /status          estado de todos los lectores
+ *   POST /open/:doorId    dispara relé local si esta estación maneja esa puerta
+ *   Auth: Authorization: Bearer <localServerSecret>
+ *
+ * Relé en modo local: TCP directo a la placa SR201 (fireLocalRelay).
  *
  * Framing serie: mismo criterio validado en scripts/test-lector-rele.js
  * (buffer hasta CR / CRLF / LF, o silencio idleMs).
@@ -64,12 +72,176 @@ const DEFAULTS = {
   offlineAllowlistFile: '',
   offlineQueueFile: '',
   onlineScanTimeoutMs: 12000,
-  allowlistTimeoutMs: 120000
+  allowlistTimeoutMs: 120000,
+  /** Puerto HTTP local (0 = deshabilitado). Solo LAN; sin túnel. */
+  localServerPort: 0,
+  localServerHost: '0.0.0.0',
+  localServerSecret: ''
 };
 
 const CONTROL_NAMES = {
   0: 'NUL', 7: 'BEL', 8: 'BS', 9: 'TAB', 10: 'LF', 11: 'VT', 12: 'FF',
   13: 'CR', 27: 'ESC', 32: 'SPC'
+};
+
+const parseBool = (raw, fallback = false) => {
+  if (raw === true || raw === '1' || String(raw).toLowerCase() === 'true') return true;
+  if (raw === false || raw === '0' || String(raw).toLowerCase() === 'false') return false;
+  return fallback;
+};
+
+/**
+ * Normaliza un lector individual (campos por puerta) + defaults de estación.
+ * @param {object} raw — entrada del array readers o del JSON legacy plano
+ * @param {object} shared — apiBaseUrl, reconnect, logFile, configPath, idleMs
+ */
+const normalizeReaderConfig = (raw = {}, shared = {}) => {
+  const configPath = shared.configPath || path.join(__dirname, 'door-reader.config.json');
+  const offlineCache = parseBool(raw.offlineCache, false);
+  let localFirstMode = parseBool(raw.localFirstMode, false);
+  if (!offlineCache) localFirstMode = false;
+
+  const doorId = String(raw.doorId || '').trim();
+  const readerId = String(raw.readerId || DEFAULTS.readerId).trim();
+  const doorKey = doorId || 'door';
+
+  return {
+    apiBaseUrl: String(shared.apiBaseUrl || '').replace(/\/$/, ''),
+    username: String(raw.username || '').trim(),
+    password: String(raw.password || ''),
+    doorId,
+    readerId,
+    lectorId: String(raw.lectorId || '').trim(),
+    serialPort: String(raw.serialPort || DEFAULTS.serialPort).trim(),
+    baudRate: Number(raw.baudRate) || DEFAULTS.baudRate,
+    idleMs: Number(raw.idleMs != null ? raw.idleMs : shared.idleMs) || DEFAULTS.idleMs,
+    inputMode: String(raw.inputMode || shared.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
+    logFile: String(raw.logFile || shared.logFile || DEFAULTS.logFile).trim(),
+    reconnectMinMs: Number(shared.reconnectMinMs) || DEFAULTS.reconnectMinMs,
+    reconnectMaxMs: Number(shared.reconnectMaxMs) || DEFAULTS.reconnectMaxMs,
+    offlineCache,
+    localFirstMode,
+    offlineCacheRefreshMs: Number(raw.offlineCacheRefreshMs) || DEFAULTS.offlineCacheRefreshMs,
+    offlineCacheMaxAgeHours: Number(raw.offlineCacheMaxAgeHours) || DEFAULTS.offlineCacheMaxAgeHours,
+    offlineAllowlistFile: String(
+      raw.offlineAllowlistFile
+      || path.join(path.dirname(configPath), `door-allowlist-${doorKey}-${readerId}.json`)
+    ).trim(),
+    offlineQueueFile: String(
+      raw.offlineQueueFile
+      || path.join(path.dirname(configPath), `offline-queue-${doorKey}-${readerId}.json`)
+    ).trim(),
+    onlineScanTimeoutMs: Number(raw.onlineScanTimeoutMs) || DEFAULTS.onlineScanTimeoutMs,
+    allowlistTimeoutMs: Number(raw.allowlistTimeoutMs) || DEFAULTS.allowlistTimeoutMs,
+    configPath
+  };
+};
+
+/**
+ * Formato nuevo: { apiBaseUrl, readers: [...] }
+ * Formato viejo (retrocompat): un solo lector en la raíz (doorId/username/…).
+ * Env vars solo aplican al formato viejo / al primer lector (estaciones ya instaladas).
+ */
+const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = '') => {
+  const resolvedPath = configPath
+    || env.DOOR_READER_CONFIG
+    || path.join(__dirname, 'door-reader.config.json');
+
+  const apiBaseUrl = String(env.API_BASE_URL || fileCfg.apiBaseUrl || DEFAULTS.apiBaseUrl)
+    .replace(/\/$/, '');
+  const shared = {
+    apiBaseUrl,
+    logFile: String(env.LOG_FILE || fileCfg.logFile || DEFAULTS.logFile).trim(),
+    reconnectMinMs: Number(env.RECONNECT_MIN_MS || fileCfg.reconnectMinMs || DEFAULTS.reconnectMinMs),
+    reconnectMaxMs: Number(env.RECONNECT_MAX_MS || fileCfg.reconnectMaxMs || DEFAULTS.reconnectMaxMs),
+    idleMs: Number(env.IDLE_MS || fileCfg.idleMs || DEFAULTS.idleMs) || DEFAULTS.idleMs,
+    inputMode: String(env.INPUT_MODE || fileCfg.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
+    configPath: resolvedPath
+  };
+
+  let rawReaders;
+  if (Array.isArray(fileCfg.readers) && fileCfg.readers.length > 0) {
+    rawReaders = fileCfg.readers;
+  } else {
+    // Legacy: un lector plano (+ overrides por env, como hasta ahora).
+    // Archivos de caché conservan el nombre histórico (sin readerId) para no
+    // invalidar allowlists ya generadas en estaciones instaladas.
+    const legacyDoorId = String(env.DOOR_ID || fileCfg.doorId || 'door').trim();
+    const legacyDir = path.dirname(resolvedPath);
+    rawReaders = [{
+      serialPort: env.SERIAL_PORT || fileCfg.serialPort,
+      baudRate: env.SERIAL_BAUD || fileCfg.baudRate,
+      idleMs: env.IDLE_MS || fileCfg.idleMs,
+      username: env.KIOSK_USERNAME || fileCfg.username,
+      password: env.KIOSK_PASSWORD || fileCfg.password,
+      doorId: env.DOOR_ID || fileCfg.doorId,
+      readerId: env.READER_ID || fileCfg.readerId,
+      lectorId: env.LECTOR_ID || fileCfg.lectorId,
+      inputMode: env.INPUT_MODE || fileCfg.inputMode,
+      offlineCache: env.OFFLINE_CACHE != null ? env.OFFLINE_CACHE : fileCfg.offlineCache,
+      localFirstMode: env.LOCAL_FIRST_MODE != null ? env.LOCAL_FIRST_MODE : fileCfg.localFirstMode,
+      offlineCacheRefreshMs: env.OFFLINE_CACHE_REFRESH_MS || fileCfg.offlineCacheRefreshMs,
+      offlineCacheMaxAgeHours: env.OFFLINE_CACHE_MAX_AGE_HOURS || fileCfg.offlineCacheMaxAgeHours,
+      offlineAllowlistFile: env.OFFLINE_ALLOWLIST_FILE
+        || fileCfg.offlineAllowlistFile
+        || path.join(legacyDir, `door-allowlist-${legacyDoorId}.json`),
+      offlineQueueFile: env.OFFLINE_QUEUE_FILE
+        || fileCfg.offlineQueueFile
+        || path.join(legacyDir, `offline-queue-${legacyDoorId}.json`),
+      onlineScanTimeoutMs: env.ONLINE_SCAN_TIMEOUT_MS || fileCfg.onlineScanTimeoutMs,
+      allowlistTimeoutMs: env.ALLOWLIST_TIMEOUT_MS || fileCfg.allowlistTimeoutMs,
+      logFile: env.LOG_FILE || fileCfg.logFile
+    }];
+  }
+
+  const readers = rawReaders.map((r) => normalizeReaderConfig(r, shared));
+
+  if (!apiBaseUrl) {
+    throw new Error('Falta apiBaseUrl (ej. https://bacarguard.web.app/api)');
+  }
+  readers.forEach((r, idx) => {
+    if (!r.username || !r.password) {
+      throw new Error(`Lector[${idx}]: faltan username/password del usuario kiosk`);
+    }
+    if (!r.doorId) {
+      throw new Error(`Lector[${idx}]: falta doorId`);
+    }
+  });
+
+  const stdinCount = readers.filter((r) => r.inputMode === 'stdin').length;
+  if (stdinCount > 1) {
+    throw new Error('Solo un lector puede usar inputMode "stdin" por estación');
+  }
+
+  const localServerPort = Number(
+    env.LOCAL_SERVER_PORT != null ? env.LOCAL_SERVER_PORT : fileCfg.localServerPort
+  );
+  const localServerSecret = String(
+    env.LOCAL_SERVER_SECRET != null ? env.LOCAL_SERVER_SECRET : (fileCfg.localServerSecret || '')
+  ).trim();
+  const localServerHost = String(
+    env.LOCAL_SERVER_HOST || fileCfg.localServerHost || DEFAULTS.localServerHost
+  ).trim() || DEFAULTS.localServerHost;
+
+  if (Number.isFinite(localServerPort) && localServerPort > 0 && !localServerSecret) {
+    throw new Error(
+      'localServerPort > 0 requiere localServerSecret (mismo criterio que bridgeSecret)'
+    );
+  }
+
+  return {
+    apiBaseUrl,
+    logFile: shared.logFile,
+    reconnectMinMs: shared.reconnectMinMs,
+    reconnectMaxMs: shared.reconnectMaxMs,
+    configPath: resolvedPath,
+    localServerPort: Number.isFinite(localServerPort) && localServerPort > 0
+      ? Math.floor(localServerPort)
+      : 0,
+    localServerHost,
+    localServerSecret,
+    readers
+  };
 };
 
 const loadConfig = () => {
@@ -85,75 +257,7 @@ const loadConfig = () => {
     throw new Error(`No existe el archivo de config: ${configPath}`);
   }
 
-  const env = process.env;
-  const parseBool = (raw, fallback = false) => {
-    if (raw === true || raw === '1' || String(raw).toLowerCase() === 'true') return true;
-    if (raw === false || raw === '0' || String(raw).toLowerCase() === 'false') return false;
-    return fallback;
-  };
-
-  const offlineCache = parseBool(
-    env.OFFLINE_CACHE != null ? env.OFFLINE_CACHE : fileCfg.offlineCache,
-    false
-  );
-  let localFirstMode = parseBool(
-    env.LOCAL_FIRST_MODE != null ? env.LOCAL_FIRST_MODE : fileCfg.localFirstMode,
-    false
-  );
-  if (!offlineCache) localFirstMode = false;
-
-  const cfg = {
-    serialPort: String(env.SERIAL_PORT || fileCfg.serialPort || DEFAULTS.serialPort).trim(),
-    baudRate: Number(env.SERIAL_BAUD || fileCfg.baudRate || DEFAULTS.baudRate) || DEFAULTS.baudRate,
-    idleMs: Number(env.IDLE_MS || fileCfg.idleMs || DEFAULTS.idleMs) || DEFAULTS.idleMs,
-    apiBaseUrl: String(env.API_BASE_URL || fileCfg.apiBaseUrl || DEFAULTS.apiBaseUrl)
-      .replace(/\/$/, ''),
-    username: String(env.KIOSK_USERNAME || fileCfg.username || DEFAULTS.username).trim(),
-    password: String(env.KIOSK_PASSWORD || fileCfg.password || DEFAULTS.password),
-    doorId: String(env.DOOR_ID || fileCfg.doorId || DEFAULTS.doorId).trim(),
-    readerId: String(env.READER_ID || fileCfg.readerId || DEFAULTS.readerId).trim(),
-    lectorId: String(env.LECTOR_ID || fileCfg.lectorId || '').trim(),
-    logFile: String(env.LOG_FILE || fileCfg.logFile || DEFAULTS.logFile).trim(),
-    reconnectMinMs: Number(env.RECONNECT_MIN_MS || fileCfg.reconnectMinMs || DEFAULTS.reconnectMinMs),
-    reconnectMaxMs: Number(env.RECONNECT_MAX_MS || fileCfg.reconnectMaxMs || DEFAULTS.reconnectMaxMs),
-    inputMode: String(env.INPUT_MODE || fileCfg.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
-    offlineCache,
-    localFirstMode,
-    offlineCacheRefreshMs: Number(
-      env.OFFLINE_CACHE_REFRESH_MS || fileCfg.offlineCacheRefreshMs || DEFAULTS.offlineCacheRefreshMs
-    ) || DEFAULTS.offlineCacheRefreshMs,
-    offlineCacheMaxAgeHours: Number(
-      env.OFFLINE_CACHE_MAX_AGE_HOURS || fileCfg.offlineCacheMaxAgeHours || DEFAULTS.offlineCacheMaxAgeHours
-    ) || DEFAULTS.offlineCacheMaxAgeHours,
-    offlineAllowlistFile: String(
-      env.OFFLINE_ALLOWLIST_FILE
-      || fileCfg.offlineAllowlistFile
-      || path.join(path.dirname(configPath), `door-allowlist-${String(env.DOOR_ID || fileCfg.doorId || 'door').trim()}.json`)
-    ).trim(),
-    offlineQueueFile: String(
-      env.OFFLINE_QUEUE_FILE
-      || fileCfg.offlineQueueFile
-      || path.join(path.dirname(configPath), `offline-queue-${String(env.DOOR_ID || fileCfg.doorId || 'door').trim()}.json`)
-    ).trim(),
-    onlineScanTimeoutMs: Number(
-      env.ONLINE_SCAN_TIMEOUT_MS || fileCfg.onlineScanTimeoutMs || DEFAULTS.onlineScanTimeoutMs
-    ) || DEFAULTS.onlineScanTimeoutMs,
-    allowlistTimeoutMs: Number(
-      env.ALLOWLIST_TIMEOUT_MS || fileCfg.allowlistTimeoutMs || DEFAULTS.allowlistTimeoutMs
-    ) || DEFAULTS.allowlistTimeoutMs,
-    configPath
-  };
-
-  if (!cfg.apiBaseUrl) {
-    throw new Error('Falta apiBaseUrl (ej. https://bacarguard.web.app/api)');
-  }
-  if (!cfg.username || !cfg.password) {
-    throw new Error('Faltan username/password del usuario kiosk de esta puerta');
-  }
-  if (!cfg.doorId) {
-    throw new Error('Falta doorId (ID de la puerta en Admin → Puertas)');
-  }
-  return cfg;
+  return normalizeStationConfig(fileCfg, process.env, configPath);
 };
 
 const log = (cfg, level, message, extra) => {
@@ -555,9 +659,11 @@ const openSerialOnce = (cfg) => new Promise((resolve, reject) => {
 /**
  * Mantiene el puerto serie abierto con reconexión y backoff.
  * Nunca termina el loop salvo shutdown.
+ * @param {{ onConnected?: () => void, onDisconnected?: () => void }} [hooks]
  */
-const runSerialLoop = async (cfg, onFrame, shouldStop) => {
+const runSerialLoop = async (cfg, onFrame, shouldStop, hooks = {}) => {
   let backoff = cfg.reconnectMinMs;
+  const { onConnected, onDisconnected } = hooks;
 
   while (!shouldStop()) {
     let port = null;
@@ -566,6 +672,7 @@ const runSerialLoop = async (cfg, onFrame, shouldStop) => {
     try {
       port = await openSerialOnce(cfg);
       backoff = cfg.reconnectMinMs;
+      onConnected?.();
       log(cfg, 'info', 'Puerto serie abierto', {
         port: cfg.serialPort,
         baud: cfg.baudRate
@@ -578,6 +685,7 @@ const runSerialLoop = async (cfg, onFrame, shouldStop) => {
         };
         const onClose = () => {
           log(cfg, 'warn', 'Puerto serie cerrado');
+          onDisconnected?.();
           cleanup();
           resolve();
         };
@@ -595,10 +703,12 @@ const runSerialLoop = async (cfg, onFrame, shouldStop) => {
         if (shouldStop()) {
           cleanup();
           try { if (port.isOpen) port.close(); } catch (_e) { /* ignore */ }
+          onDisconnected?.();
           resolve();
         }
       });
     } catch (err) {
+      onDisconnected?.();
       log(cfg, 'error', 'Fallo serie, reintento', {
         error: err.message,
         waitMs: backoff
@@ -616,6 +726,151 @@ const runSerialLoop = async (cfg, onFrame, shouldStop) => {
   }
 };
 
+/**
+ * Extrae el secreto de Authorization Bearer o X-Station-Secret / X-Bridge-Secret.
+ */
+const extractStationSecret = (req) => {
+  const header = String(req.headers.authorization || '');
+  if (header.startsWith('Bearer ')) return header.slice(7).trim();
+  const alt = req.headers['x-station-secret'] || req.headers['x-bridge-secret'];
+  return String(alt || '').trim();
+};
+
+/**
+ * Servidor HTTP local de la estación (solo LAN). Endpoints:
+ *   GET  /status
+ *   POST /open/:doorId
+ *
+ * @param {{ host: string, port: number, secret: string, getStatus: Function, openDoor: Function, logFn?: Function }} opts
+ * @returns {Promise<{ server: import('http').Server, port: number, close: () => Promise<void> }>}
+ */
+const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
+  const host = String(opts.host || DEFAULTS.localServerHost).trim() || DEFAULTS.localServerHost;
+  const port = Number(opts.port);
+  const secret = String(opts.secret || '').trim();
+  const getStatus = opts.getStatus;
+  const openDoor = opts.openDoor;
+  const logFn = opts.logFn || (() => {});
+
+  if (!Number.isFinite(port) || port <= 0) {
+    reject(new Error('createLocalStationServer: puerto inválido'));
+    return;
+  }
+  if (!secret) {
+    reject(new Error('createLocalStationServer: secret obligatorio'));
+    return;
+  }
+
+  const sendJson = (res, statusCode, body) => {
+    const payload = JSON.stringify(body);
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(payload),
+      'Cache-Control': 'no-store'
+    });
+    res.end(payload);
+  };
+
+  const requireAuth = (req, res) => {
+    if (extractStationSecret(req) !== secret) {
+      sendJson(res, 401, { ok: false, message: 'Secreto de estación inválido' });
+      return false;
+    }
+    return true;
+  };
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+      const method = (req.method || 'GET').toUpperCase();
+
+      if (method === 'GET' && url.pathname === '/status') {
+        if (!requireAuth(req, res)) return;
+        const status = await Promise.resolve(getStatus());
+        sendJson(res, 200, { ok: true, ...status });
+        return;
+      }
+
+      const openMatch = url.pathname.match(/^\/open\/([^/]+)\/?$/);
+      if (method === 'POST' && openMatch) {
+        if (!requireAuth(req, res)) return;
+        const doorId = decodeURIComponent(openMatch[1]);
+        const result = await Promise.resolve(openDoor(doorId));
+        if (result && result.notFound) {
+          sendJson(res, 404, {
+            ok: false,
+            message: `Esta estación no maneja la puerta "${doorId}"`
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          doorId,
+          message: 'Relé local disparado',
+          ...(result && typeof result === 'object' ? result : {})
+        });
+        return;
+      }
+
+      sendJson(res, 404, { ok: false, message: 'No encontrado' });
+    } catch (err) {
+      logFn('error', 'Error en servidor local de estación', { error: err.message });
+      sendJson(res, 500, { ok: false, message: err.message || 'Error interno' });
+    }
+  });
+
+  server.on('error', reject);
+  server.listen(port, host, () => {
+    const addr = server.address();
+    const boundPort = typeof addr === 'object' && addr ? addr.port : port;
+    logFn('info', 'Servidor local de estación escuchando', { host, port: boundPort });
+    resolve({
+      server,
+      port: boundPort,
+      host,
+      close: () => new Promise((resClose, rejClose) => {
+        server.close((err) => (err ? rejClose(err) : resClose()));
+      })
+    });
+  });
+});
+
+/**
+ * Arma getStatus / openDoor a partir de los runtimes de lectores.
+ */
+const buildStationLocalHandlers = (runtimes = []) => {
+  const byDoorId = new Map();
+  runtimes.forEach((rt) => {
+    const doorId = String(rt?.cfg?.doorId || '').trim();
+    if (!doorId) return;
+    if (!byDoorId.has(doorId)) byDoorId.set(doorId, []);
+    byDoorId.get(doorId).push(rt);
+  });
+
+  return {
+    getStatus: () => ({
+      readers: runtimes.map((rt) => (typeof rt.getStatus === 'function' ? rt.getStatus() : {
+        doorId: rt.cfg?.doorId,
+        readerId: rt.cfg?.readerId,
+        connected: false
+      }))
+    }),
+    openDoor: async (doorId) => {
+      const key = String(doorId || '').trim();
+      const list = byDoorId.get(key);
+      if (!list || list.length === 0) return { notFound: true };
+      // Una puerta puede tener varios lectores en la misma estación; basta
+      // disparar el relé una vez (mismo localRelay en allowlist de esa puerta).
+      const rt = list[0];
+      if (typeof rt.openLocal !== 'function') {
+        throw new Error('Runtime sin openLocal');
+      }
+      const relay = await rt.openLocal();
+      return { notFound: false, relay };
+    }
+  };
+};
+
 const startStdinReader = (cfg, onFrame) => {
   const framer = createSerialFramer(cfg, onFrame);
   process.stdin.resume();
@@ -626,11 +881,13 @@ const startStdinReader = (cfg, onFrame) => {
   return () => framer.destroy();
 };
 
-const main = async () => {
-  const cfg = loadConfig();
+/**
+ * Runtime independiente por lector (serie, login, caché, cola, heartbeat).
+ * @returns {Promise<{ stop: () => void, cfg: object, getStatus: () => object, openLocal: () => Promise<object> }>}
+ */
+const startReaderRuntime = async (cfg, { shouldStop }) => {
   const api = createApiClient(cfg);
-  let stopping = false;
-  const shouldStop = () => stopping;
+  const cleanups = [];
 
   let cachedAllowlist = cfg.offlineCache
     ? readJsonFile(cfg.offlineAllowlistFile, null)
@@ -640,6 +897,10 @@ const main = async () => {
     : [];
   if (!Array.isArray(offlineQueue)) offlineQueue = [];
 
+  let serialConnected = cfg.inputMode === 'stdin';
+  let lastScanAt = null;
+  let lastLocalRelay = cachedAllowlist?.localRelay || null;
+
   const persistQueue = () => {
     if (!cfg.offlineCache) return;
     writeJsonFile(cfg.offlineQueueFile, offlineQueue);
@@ -647,6 +908,7 @@ const main = async () => {
 
   const persistAllowlist = (data) => {
     cachedAllowlist = data;
+    if (data?.localRelay?.host) lastLocalRelay = data.localRelay;
     writeJsonFile(cfg.offlineAllowlistFile, data);
   };
 
@@ -777,7 +1039,6 @@ const main = async () => {
       relayTriggered
     });
 
-    // Reportar a la nube en background (misma cola / idempotencia).
     flushOfflineQueue().catch((err) => {
       log(cfg, 'warn', `Cola ${label}: sync diferido falló (reintento en heartbeat)`, {
         error: err.message
@@ -802,7 +1063,7 @@ const main = async () => {
     label: 'offline'
   });
 
-  log(cfg, 'info', 'door-reader-bridge iniciando', {
+  log(cfg, 'info', 'Lector iniciando', {
     doorId: cfg.doorId,
     readerId: cfg.readerId,
     apiBaseUrl: cfg.apiBaseUrl,
@@ -810,8 +1071,7 @@ const main = async () => {
     serialPort: cfg.serialPort,
     baudRate: cfg.baudRate,
     offlineCache: cfg.offlineCache,
-    localFirstMode: cfg.localFirstMode,
-    configPath: cfg.configPath
+    localFirstMode: cfg.localFirstMode
   });
 
   await api.withNetworkRetry(() => api.login(), 'login');
@@ -863,6 +1123,7 @@ const main = async () => {
   };
   sendHeartbeat();
   const heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS);
+  cleanups.push(() => clearInterval(heartbeatTimer));
 
   let allowlistTimer = null;
   if (cfg.offlineCache) {
@@ -871,6 +1132,7 @@ const main = async () => {
         log(cfg, 'warn', 'Refresh periódico de allowlist falló', { error: err.message });
       });
     }, cfg.offlineCacheRefreshMs);
+    cleanups.push(() => clearInterval(allowlistTimer));
   }
 
   let busy = false;
@@ -887,9 +1149,12 @@ const main = async () => {
     }
 
     busy = true;
+    lastScanAt = new Date().toISOString();
     const t0 = Date.now();
     try {
       log(cfg, 'info', 'Escaneo recibido', {
+        doorId: cfg.doorId,
+        readerId: cfg.readerId,
         reason,
         pretty: pretty.slice(0, 160),
         hex: hex.slice(0, 120),
@@ -941,6 +1206,7 @@ const main = async () => {
         ? 'Resultado local-first'
         : (usedOffline ? 'Resultado offline' : 'Resultado kiosk-scan');
       log(cfg, level, resultLabel, {
+        doorId: cfg.doorId,
         status: res.status,
         authorized: data.authorized,
         ok: data.ok,
@@ -954,8 +1220,10 @@ const main = async () => {
         elapsedMs
       });
 
-      // MODO LOCAL online: la nube autorizó pero NO disparó el relé; lo hacemos acá.
-      // (En offline/local-first, decideFromCache ya disparó el relé si correspondía.)
+      if (data.localRelay?.host) {
+        lastLocalRelay = data.localRelay;
+      }
+
       if (!usedOffline && data.authorized && data.relayMode === 'local' && data.localRelay) {
         const tRelay = Date.now();
         try {
@@ -981,23 +1249,108 @@ const main = async () => {
     }
   };
 
+  const getStatus = () => ({
+    doorId: cfg.doorId,
+    readerId: cfg.readerId,
+    serialPort: cfg.serialPort,
+    connected: Boolean(serialConnected),
+    lastScanAt,
+    offlineCacheEnabled: Boolean(cfg.offlineCache),
+    allowlistFresh: cfg.offlineCache
+      ? Boolean(cachedAllowlist)
+        && isAllowlistFresh(cachedAllowlist, cfg.offlineCacheMaxAgeHours)
+      : null,
+    allowlistGeneratedAt: cachedAllowlist?.generatedAt || null
+  });
+
+  const openLocal = async () => {
+    const relay = lastLocalRelay || cachedAllowlist?.localRelay || null;
+    if (!relay?.host) {
+      throw new Error(
+        `Sin datos de relé local para ${cfg.doorId} (falta allowlist/caché con localRelay)`
+      );
+    }
+    const result = await fireLocalRelay(cfg, relay);
+    log(cfg, 'info', 'Relé local disparado vía servidor de estación', {
+      doorId: cfg.doorId,
+      host: relay.host,
+      channel: relay.channel
+    });
+    return result;
+  };
+
+  const stop = () => {
+    cleanups.forEach((fn) => {
+      try { fn(); } catch (_e) { /* ignore */ }
+    });
+  };
+
+  if (cfg.inputMode === 'stdin') {
+    const destroy = startStdinReader(cfg, handleFrame);
+    cleanups.push(destroy);
+    return { stop, cfg, getStatus, openLocal };
+  }
+
+  // Serie: loop en background (no bloquea otros lectores de la estación).
+  runSerialLoop(cfg, handleFrame, shouldStop, {
+    onConnected: () => { serialConnected = true; },
+    onDisconnected: () => { serialConnected = false; }
+  }).catch((err) => {
+    log(cfg, 'error', 'Loop serie terminó con error', { error: err.message });
+  });
+
+  return { stop, cfg, getStatus, openLocal };
+};
+
+const main = async () => {
+  const station = loadConfig();
+  let stopping = false;
+  const shouldStop = () => stopping;
+  const runtimes = [];
+  let localServer = null;
+
+  log({ logFile: station.logFile }, 'info', 'door-reader-bridge estación iniciando', {
+    apiBaseUrl: station.apiBaseUrl,
+    readers: station.readers.length,
+    configPath: station.configPath,
+    localServerPort: station.localServerPort || null,
+    doors: station.readers.map((r) => `${r.doorId}/${r.readerId}@${r.serialPort}`)
+  });
+
+  for (const readerCfg of station.readers) {
+    const runtime = await startReaderRuntime(readerCfg, { shouldStop });
+    runtimes.push(runtime);
+  }
+
+  if (station.localServerPort > 0) {
+    const handlers = buildStationLocalHandlers(runtimes);
+    localServer = await createLocalStationServer({
+      host: station.localServerHost,
+      port: station.localServerPort,
+      secret: station.localServerSecret,
+      getStatus: handlers.getStatus,
+      openDoor: handlers.openDoor,
+      logFn: (level, message, extra) => log({ logFile: station.logFile }, level, message, extra)
+    });
+  }
+
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
-    clearInterval(heartbeatTimer);
-    if (allowlistTimer) clearInterval(allowlistTimer);
-    log(cfg, 'info', 'Cerrando door-reader-bridge…');
+    runtimes.forEach((rt) => {
+      try { rt.stop(); } catch (_e) { /* ignore */ }
+    });
+    if (localServer) {
+      localServer.close().catch(() => {});
+    }
+    log({ logFile: station.logFile }, 'info', 'Cerrando door-reader-bridge…');
     setTimeout(() => process.exit(0), 500);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  if (cfg.inputMode === 'stdin') {
-    startStdinReader(cfg, handleFrame);
-    return;
-  }
-
-  await runSerialLoop(cfg, handleFrame, shouldStop);
+  // Mantener el proceso vivo (los loops serie/stdin corren en background).
+  await new Promise(() => {});
 };
 
 if (require.main === module) {
@@ -1009,6 +1362,8 @@ if (require.main === module) {
 
 module.exports = {
   loadConfig,
+  normalizeStationConfig,
+  normalizeReaderConfig,
   createSerialFramer,
   formatChunk,
   isNetworkError,
@@ -1016,6 +1371,10 @@ module.exports = {
   canDecideLocalFirst,
   findAllowlistMatch,
   extractScanIdentity,
+  extractStationSecret,
+  createLocalStationServer,
+  buildStationLocalHandlers,
+  fireLocalRelay,
   /**
    * Camino de decisión testable (sin I/O de red real).
    * Si local-first + caché vigente → no invoca kioskScanFn.

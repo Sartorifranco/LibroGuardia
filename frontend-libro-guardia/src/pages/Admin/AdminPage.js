@@ -16,7 +16,8 @@ import {
   Building2,
   MapPin,
   Satellite,
-  ScanLine
+  ScanLine,
+  Server
 } from 'lucide-react';
 import { hasPermission } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
@@ -39,6 +40,7 @@ import NotificationsAdminSection from './NotificationsAdmin/NotificationsAdminSe
 import EmpresasAdminSection from './EmpresasAdmin/EmpresasAdminSection';
 import DestinosAdminSection from './DestinosAdmin/DestinosAdminSection';
 import LectoresAdminSection from './LectoresAdmin/LectoresAdminSection';
+import EstacionesAdminSection from './EstacionesAdmin/EstacionesAdminSection';
 import './admin-ui.css';
 
 /** Grupos de navegación admin (orden de producto). */
@@ -85,6 +87,12 @@ const ADMIN_NAV_GROUPS = [
         id: 'lectores',
         label: 'Lectores',
         icon: ScanLine,
+        match: (u) => hasPermission(u, 'lectores.manage')
+      },
+      {
+        id: 'estaciones',
+        label: 'Estaciones',
+        icon: Server,
         match: (u) => hasPermission(u, 'lectores.manage')
       },
       {
@@ -296,6 +304,10 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
 
             {adminSection === 'lectores' && hasPermission(currentUser, 'lectores.manage') && (
               <LectoresAdminSection pendingAction={pendingAction} runAction={runAction} />
+            )}
+
+            {adminSection === 'estaciones' && hasPermission(currentUser, 'lectores.manage') && (
+              <EstacionesAdminSection pendingAction={pendingAction} runAction={runAction} />
             )}
 
             {adminSection === 'roles' && (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) && (

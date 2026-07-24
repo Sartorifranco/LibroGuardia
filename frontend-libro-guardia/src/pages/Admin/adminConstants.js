@@ -22,6 +22,10 @@ export const ADMIN_SECTION_META = {
     title: 'Lectores físicos',
     description: 'Asignación de mini PC + GADNIC a cada puerta: usuario kiosk, config JSON y estado de conexión.'
   },
+  estaciones: {
+    title: 'Estaciones',
+    description: 'Agrupá varios lectores en un mismo proceso (USB directo o Raspberry Pi) y descargá un JSON unificado con servidor LAN.'
+  },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
   activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },

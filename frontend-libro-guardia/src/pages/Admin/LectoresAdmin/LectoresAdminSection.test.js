@@ -65,6 +65,23 @@ describe('LectoresAdminSection — modal de edición', () => {
           lector: { id: 'lec-1', forceResync: true }
         };
       }
+      if (path === '/admin/lectores/lec-1/pairing-code') {
+        return {
+          code: '482915',
+          expiresAt: new Date(Date.now() + 600000).toISOString(),
+          expiresInSeconds: 600,
+          lectorId: 'lec-1',
+          lectorNombre: 'Ingreso Puerta 1',
+          doorId: 'puerta-p1',
+          readerId: 'INGRESO_P1'
+        };
+      }
+      if (path === '/admin/lectores/lec-1/clear-login-failures') {
+        return {
+          message: 'Se destrabaron los intentos de login de “kiosk.puerta-p1.ingreso-p1”.',
+          username: 'kiosk.puerta-p1.ingreso-p1'
+        };
+      }
       return {};
     });
   });
@@ -120,5 +137,53 @@ describe('LectoresAdminSection — modal de edición', () => {
     });
 
     expect(screen.getByText(/próximo heartbeat/i)).toBeInTheDocument();
+  });
+
+  it('genera código de instalación y lo muestra grande', async () => {
+    render(
+      <LectoresAdminSection
+        pendingAction={null}
+        runAction={async (_id, fn) => fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Ingreso Puerta 1')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTitle('Generar código de instalación'));
+
+    await waitFor(() => {
+      expect(apiFetch).toHaveBeenCalledWith(
+        '/admin/lectores/lec-1/pairing-code',
+        expect.objectContaining({ method: 'POST', token: 'token-test' })
+      );
+    });
+
+    const dialog = await screen.findByRole('dialog', { name: /código de instalación/i });
+    expect(within(dialog).getByLabelText(/código 482915/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/expira en 10 minutos/i)).toBeInTheDocument();
+  });
+
+  it('destrabar login llama al endpoint y confirma', async () => {
+    render(
+      <LectoresAdminSection
+        pendingAction={null}
+        runAction={async (_id, fn) => fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Ingreso Puerta 1')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTitle('Destrabar intentos de login'));
+
+    await waitFor(() => {
+      expect(apiFetch).toHaveBeenCalledWith(
+        '/admin/lectores/lec-1/clear-login-failures',
+        expect.objectContaining({ method: 'POST', token: 'token-test' })
+      );
+    });
   });
 });

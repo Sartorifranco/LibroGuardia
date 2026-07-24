@@ -11,6 +11,7 @@ const installLectoresMock = () => {
   const users = new Map();
   const roles = new Map();
   const lectores = new Map();
+  const estaciones = new Map();
   let autoId = 0;
 
   const makeDocRef = (collectionName, id) => ({
@@ -18,7 +19,8 @@ const installLectoresMock = () => {
     async get() {
       const store = collectionName === 'users' ? users
         : collectionName === 'roles' ? roles
-          : lectores;
+          : collectionName === 'estaciones' ? estaciones
+            : lectores;
       const data = store.get(id);
       return {
         exists: Boolean(data),
@@ -30,21 +32,24 @@ const installLectoresMock = () => {
     async set(payload, opts = {}) {
       const store = collectionName === 'users' ? users
         : collectionName === 'roles' ? roles
-          : lectores;
+          : collectionName === 'estaciones' ? estaciones
+            : lectores;
       const prev = store.get(id) || {};
       store.set(id, opts.merge ? { ...prev, ...payload } : { ...payload });
     },
     async update(payload) {
       const store = collectionName === 'users' ? users
         : collectionName === 'roles' ? roles
-          : lectores;
+          : collectionName === 'estaciones' ? estaciones
+            : lectores;
       const prev = store.get(id) || {};
       store.set(id, { ...prev, ...payload });
     },
     async delete() {
       const store = collectionName === 'users' ? users
         : collectionName === 'roles' ? roles
-          : lectores;
+          : collectionName === 'estaciones' ? estaciones
+            : lectores;
       store.delete(id);
     }
   });
@@ -62,7 +67,8 @@ const installLectoresMock = () => {
     async get() {
       const store = collectionName === 'users' ? users
         : collectionName === 'roles' ? roles
-          : lectores;
+          : collectionName === 'estaciones' ? estaciones
+            : lectores;
       let rows = [...store.entries()].map(([id, data]) => ({ id, ...data }));
       const limitFilter = filters.find((f) => f.limit != null);
       const active = filters.filter((f) => f.limit == null);
@@ -146,6 +152,7 @@ const installLectoresMock = () => {
     users,
     roles,
     lectores,
+    estaciones,
     api: require('../lib/lectores')
   };
 };

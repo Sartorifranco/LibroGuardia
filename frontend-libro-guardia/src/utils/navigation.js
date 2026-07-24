@@ -64,6 +64,7 @@ export const ADMIN_SECTION_SEGMENTS = {
   empresas: 'empresas',
   destinos: 'destinos',
   lectores: 'lectores',
+  estaciones: 'estaciones',
   permissions: 'permissions'
 };
 
@@ -126,6 +127,7 @@ const ADMIN_DEFAULT_SECTION_ORDER = [
     match: (u) => hasPermission(u, 'access.doors.manage') || hasPermission(u, 'access.control')
   },
   { id: 'lectores', match: (u) => hasPermission(u, 'lectores.manage') },
+  { id: 'estaciones', match: (u) => hasPermission(u, 'lectores.manage') },
   { id: 'notifications', match: (u) => hasPermission(u, 'notifications.config') },
   { id: 'access', match: (u) => hasPermission(u, 'access.control') },
   { id: 'nomina', match: (u) => hasPermission(u, 'master.nomina.write') },

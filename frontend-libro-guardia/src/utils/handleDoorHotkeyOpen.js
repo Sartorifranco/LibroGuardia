@@ -45,7 +45,7 @@ export async function handleDoorHotkeyOpen({
   }
 
   try {
-    const result = await openManualDoor({ authToken, doorId });
+    const result = await openManualDoor({ authToken, doorId, door });
     return { handled: true, slot, doorId, result };
   } catch (err) {
     return { handled: true, slot, doorId, error: err.message || 'Error al abrir' };

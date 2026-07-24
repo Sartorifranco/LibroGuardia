@@ -95,18 +95,47 @@ Al escanear un DNI deberías ver bytes crudos con `[CR]` al final y el texto PDF
 
 ---
 
+---
+
 ## 3. Usuario de sistema (solo `access.kiosk`)
 
-**Recomendado:** Admin → **Lectores** → crear el lector. El panel genera el usuario kiosk,
-muestra la contraseña **una sola vez** y descarga el `door-reader.config.json` listo para la mini PC.
+**Recomendado (emparejamiento):** Admin → **Lectores** → crear el lector → botón **Generar código de instalación** (6 dígitos, 10 min, un solo uso). En la mini PC corré `instalar-lector.cmd` (ver sección 4).
 
-**Manual (legado):** un usuario por puerta desde Admin → Usuarios + rol `kiosk_puerta`.
+**Alternativa manual:** el panel también puede mostrar la contraseña una sola vez / **Descargar config** (JSON sin password en re-descarga; regenerá credenciales si la perdiste).
+
+**Legado:** un usuario por puerta desde Admin → Usuarios + rol `kiosk_puerta`.
 
 El bridge hace `POST /api/auth/login`, heartbeat cada 5 min a `/api/lectores/heartbeat`, y re-loguea ante `401` o JWT vencido (~8 h).
 
 ---
 
-## 4. Instalar door-reader-bridge (Windows — PC de validación / mini PC)
+## 4. Instalar door-reader-bridge (Windows)
+
+### Flujo recomendado — código + servicio (NSSM)
+
+1. En Admin → Lectores, generá el **código de instalación** del lector.
+2. En la mini PC, copiá la carpeta `scripts` del repo (o el paquete de despliegue) y asegurate de tener **Node.js LTS**.
+3. Doble clic en `scripts\instalar-lector.cmd` (**Ejecutar como administrador**).
+4. Pegá el código de 6 dígitos (y confirmá la URL de API si te la pide; default `https://bacarguard.web.app/api`).
+
+El script:
+
+- Canjea el código en `POST /api/auth/pairing-exchange` (obtiene JSON + password nueva).
+- Guarda `door-reader.config.json` en la misma carpeta `scripts`.
+- Corre `npm install`.
+- Registra `door-reader-bridge.js` como servicio Windows con **NSSM** (arranque automático + reinicio si se cae).
+
+**NSSM:** si no está en el PATH, el instalador **lo descarga solo** (portable 2.24 en `scripts\tools\nssm\`). No hace falta instalarlo a mano salvo que la PC no tenga salida a internet hacia `nssm.cc`.
+
+Después de esta única vez **no hace falta** volver a abrir PowerShell para ese lector.
+
+```powershell
+# Equivalente sin .cmd (también como Administrador):
+cd C:\ruta\LibroGuardia\scripts
+powershell -ExecutionPolicy Bypass -File .\instalar-lector.ps1 -Code 482915
+```
+
+### Alternativa manual — JSON + consola (sin NSSM)
 
 ```powershell
 cd C:\ruta\LibroGuardia\scripts
@@ -140,7 +169,7 @@ node C:\ruta\LibroGuardia\scripts\door-reader-bridge.js
 
 Al arrancar: `Sesión kiosk OK`. Al escanear: `Escaneo recibido` → `Resultado kiosk-scan` con `authorized: true/false` y `relayTriggered` / `relayError`.
 
-### Servicio permanente (Windows — NSSM o Tarea programada)
+### Servicio permanente a mano (si no usaste el instalador)
 
 **Opción A — NSSM**
 
@@ -152,7 +181,7 @@ nssm set LibroGuardiaDoorReader Start SERVICE_AUTO_START
 nssm start LibroGuardiaDoorReader
 ```
 
-**Opción B — Tarea programada** al inicio de sesión / arranque, con el mismo `node …door-reader-bridge.js` y variable `DOOR_READER_CONFIG`.
+**Opción B — Tarea programada** al inicio de sesión / arranque, con el mismo `node …door-reader-bridge.js` y variable `DOOR_READER_CONFIG` (ver `install-sr201-bridge-autostart.ps1` como referencia de patrón).
 
 El proceso reconecta el COM y reintenta la red con backoff; no hace falta reiniciarlo ante un glitch corto.
 

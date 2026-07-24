@@ -13,8 +13,12 @@ const {
   recordFailedLogin,
   clearLoginFailures,
   getClientIp,
-  LOCKOUT_MESSAGE
+  LOCKOUT_MESSAGE,
+  checkPairingRateLimit,
+  recordPairingFailure
 } = require('../lib/loginRateLimit');
+const { exchangePairingCode } = require('../lib/lectorPairing');
+const { resolveApiBaseUrl } = require('../lib/lectores');
 const { seedInitialUsers, isBootstrapCompleted, INITIAL_USERS } = require('../seedUsers');
 const { changeOwnPassword } = require('../lib/changePassword');
 const { selfRegisterEmployee } = require('../lib/selfRegister');
@@ -184,6 +188,47 @@ router.post('/api/auth/login', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: 'Error al iniciar sesión', error: err.message });
+  }
+});
+
+/**
+ * Público: canjea código de 6 dígitos → config completa del lector (password nueva).
+ * Rate limit por IP (mismo criterio que login) + mensaje genérico ante código inválido.
+ */
+router.post('/api/auth/pairing-exchange', async (req, res) => {
+  try {
+    const clientIp = getClientIp(req);
+    const rate = await checkPairingRateLimit(db, { ip: clientIp });
+    if (rate.blocked) {
+      return res.status(429).json({
+        message: rate.message || LOCKOUT_MESSAGE,
+        retryAfterSeconds: rate.retryAfterSeconds
+      });
+    }
+
+    const apiBaseUrl = resolveApiBaseUrl(req);
+    const result = await exchangePairingCode(req.body?.code || req.body?.pairingCode, {
+      apiBaseUrl
+    });
+    res.json(result);
+  } catch (err) {
+    if (err.code === 'invalid_pairing_code' || err.status === 400) {
+      const afterFail = await recordPairingFailure(db, FieldValue, { ip: getClientIp(req) });
+      if (afterFail.blocked) {
+        return res.status(429).json({
+          message: afterFail.message || LOCKOUT_MESSAGE,
+          retryAfterSeconds: afterFail.retryAfterSeconds
+        });
+      }
+      return res.status(400).json({
+        message: err.message || 'Código inválido o expirado',
+        code: 'invalid_pairing_code'
+      });
+    }
+    res.status(err.status || 500).json({
+      message: err.message || 'Error en emparejamiento',
+      code: err.code
+    });
   }
 });
 

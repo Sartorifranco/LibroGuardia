@@ -7,7 +7,8 @@ import {
   KeyRound,
   CreditCard,
   ScanFace,
-  Hand
+  Hand,
+  WifiOff
 } from 'lucide-react';
 import { hasPermission } from '../utils/permissions';
 import { useAuth } from '../context/AuthContext';
@@ -22,6 +23,12 @@ import {
   clearDoorHotkeys
 } from '../utils/doorHotkeys';
 import { handleDoorHotkeyOpen } from '../utils/handleDoorHotkeyOpen';
+import {
+  cacheGuardDoors,
+  loadCachedGuardDoors,
+  probeLocalStationsForDoors,
+  mergeStationStatusIntoDoors
+} from '../utils/localStationClient';
 
 const AUTH_METHOD_META = {
   dni: { label: 'DNI', icon: KeyRound },
@@ -60,6 +67,8 @@ function DigitalDoorPanel({
   const [helpOpen, setHelpOpen] = useState(false);
   const [hotkeys, setHotkeys] = useState(() => loadDoorHotkeys());
   const [assignSlot, setAssignSlot] = useState(null);
+  /** 'cloud' | 'local-fallback' | 'offline' */
+  const [connectivityMode, setConnectivityMode] = useState('cloud');
 
   const allowed = canManualOpen || hasPermission(currentUser, 'access.manual_open');
 
@@ -75,9 +84,34 @@ function DigitalDoorPanel({
       const data = await apiFetch('/guard/doors', { token: authToken, allowForbidden: true });
       const list = (data.doors || []).filter((d) => d.manualOpenAllowed !== false && d.active !== false);
       setDoors(list);
+      cacheGuardDoors(list);
+      setConnectivityMode('cloud');
       setLoadError(list.length ? '' : 'No hay puertas activas con apertura manual.');
     } catch (err) {
-      setLoadError(err.message || 'No se pudieron cargar las puertas');
+      const cached = loadCachedGuardDoors();
+      const cachedDoors = (cached?.doors || []).filter(
+        (d) => d.manualOpenAllowed !== false && d.active !== false
+      );
+      if (cachedDoors.length) {
+        try {
+          const probes = await probeLocalStationsForDoors(cachedDoors);
+          const anyOk = probes.some((p) => p.ok);
+          const merged = mergeStationStatusIntoDoors(cachedDoors, probes);
+          setDoors(merged);
+          setConnectivityMode(anyOk ? 'local-fallback' : 'offline');
+          setLoadError(anyOk
+            ? ''
+            : 'Sin internet y ninguna estación local respondió. Revisá la red de planta.');
+        } catch (probeErr) {
+          setDoors(cachedDoors);
+          setConnectivityMode('offline');
+          setLoadError(probeErr.message || 'Sin internet ni estaciones locales');
+        }
+      } else {
+        setDoors([]);
+        setConnectivityMode('offline');
+        setLoadError(err.message || 'No se pudieron cargar las puertas');
+      }
     } finally {
       setLoading(false);
     }
@@ -102,15 +136,21 @@ function DigitalDoorPanel({
     if (!ok) return;
     setOpeningId(door.id);
     try {
-      const data = await openManualDoor({ authToken, doorId: door.id });
-      showSuccess(data.message || `${label} abierta`);
+      const data = await openManualDoor({
+        authToken,
+        doorId: door.id,
+        door,
+        forceLocal: connectivityMode === 'local-fallback' || connectivityMode === 'offline'
+      });
+      const viaNote = data.via === 'local' ? ' (red local)' : '';
+      showSuccess((data.message || `${label} abierta`) + viaNote);
       reload();
     } catch (err) {
       showError(err.message || 'Error al abrir la puerta');
     } finally {
       setOpeningId(null);
     }
-  }, [authToken, confirm, openingId, reload, showError, showSuccess]);
+  }, [authToken, confirm, openingId, reload, showError, showSuccess, connectivityMode]);
 
   useEffect(() => {
     if (!allowed) return undefined;
@@ -131,7 +171,8 @@ function DigitalDoorPanel({
       }
       if (result.result) {
         const door = doors.find((d) => d.id === result.doorId);
-        showSuccess(result.result.message || `${door?.name || result.doorId} abierta`);
+        const viaNote = result.result.via === 'local' ? ' (red local)' : '';
+        showSuccess((result.result.message || `${door?.name || result.doorId} abierta`) + viaNote);
         reload();
       }
     };
@@ -164,7 +205,7 @@ function DigitalDoorPanel({
   }
 
   return (
-    <section className={`control-doors${compact ? ' control-doors--compact' : ''}`}>
+    <section className={`control-doors${compact ? ' control-doors--compact' : ''}${connectivityMode !== 'cloud' ? ' control-doors--local' : ''}`}>
       <div className="control-doors__header">
         <div>
           <h3>{title}</h3>
@@ -184,12 +225,33 @@ function DigitalDoorPanel({
         </button>
       </div>
 
+      {connectivityMode === 'local-fallback' && (
+        <div className="control-doors__banner control-doors__banner--local" role="status">
+          <WifiOff size={16} aria-hidden />
+          <span>
+            Sin internet — operando por red local (estaciones en planta).
+            La apertura va directo a la mini PC / Raspberry, no a la nube.
+          </span>
+        </div>
+      )}
+      {connectivityMode === 'offline' && (
+        <div className="control-doors__banner control-doors__banner--offline" role="alert">
+          <WifiOff size={16} aria-hidden />
+          <span>
+            Sin internet y sin respuesta de estaciones locales. Revisá cable/Wi‑Fi de planta.
+          </span>
+        </div>
+      )}
+
       {loading && (
         <div className="control-doors__loading">
           <Loader2 className="animate-spin" size={18} /> Cargando puertas…
         </div>
       )}
       {loadError && !doors.length && <p className="control-doors__error">{loadError}</p>}
+      {loadError && doors.length > 0 && connectivityMode !== 'cloud' && (
+        <p className="control-doors__hint">{loadError}</p>
+      )}
 
       <div className="control-doors__grid">
         {doors.map((door) => {
@@ -206,6 +268,13 @@ function DigitalDoorPanel({
                   <h4>{door.name || door.id}</h4>
                   {slot ? (
                     <span className="control-door-card__hotkey">Ctrl+Alt+{slot}</span>
+                  ) : null}
+                  {door.relayMode === 'local' && door.localStation ? (
+                    <span className="control-door-card__local">
+                      LAN ·
+                      {' '}
+                      {door.localStation.direccionRedLocal}
+                    </span>
                   ) : null}
                 </div>
               </div>
@@ -231,6 +300,14 @@ function DigitalDoorPanel({
                   )
                   : 'Sin disparos registrados'}
               </p>
+              {door.localReader && (
+                <p className="control-door-card__local-status">
+                  Lector local:
+                  {' '}
+                  {door.localReader.connected ? 'conectado' : 'desconectado'}
+                  {door.localReader.allowlistFresh === false ? ' · caché vencida' : ''}
+                </p>
+              )}
               <div className="control-door-card__actions">
                 <button
                   type="button"

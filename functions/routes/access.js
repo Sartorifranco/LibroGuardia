@@ -129,8 +129,10 @@ router.post('/api/guard/open-door', auth, requirePermission('access.manual_open'
 router.get('/api/guard/doors', auth, requirePermission('access.manual_open'), async (_req, res) => {
   try {
     const { enrichDoorsWithLastPulse } = require('../lib/doorLastPulse');
+    const { enrichDoorsWithLocalStations } = require('../lib/guardLocalStations');
     const base = await listActiveDoors();
-    const doors = await enrichDoorsWithLastPulse(base.doors || []);
+    const withPulse = await enrichDoorsWithLastPulse(base.doors || []);
+    const doors = await enrichDoorsWithLocalStations(withPulse);
     res.json({ ...base, doors });
   } catch (err) {
     res.status(500).json({ message: err.message });

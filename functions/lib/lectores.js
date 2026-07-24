@@ -106,6 +106,7 @@ const toLectorJson = (doc) => {
     readerId: data.readerId || '',
     direction: data.direction || 'ambos',
     usuarioSistemaId: data.usuarioSistemaId || '',
+    estacionId: data.estacionId || '',
     ultimaConexion: data.ultimaConexion || null,
     forceResync: Boolean(data.forceResync),
     offlineCache: offline.offlineCache,
@@ -165,13 +166,29 @@ const sanitizeLectorFields = (body = {}, previous = {}) => {
   if (!readerId) throw httpError(400, 'readerId es obligatorio');
   const direction = DIRECTIONS.includes(body.direction) ? body.direction : null;
   if (!direction) throw httpError(400, 'direction debe ser ingreso, egreso o ambos');
+
+  // estacionId opcional: vacío = estación de un solo lector (retrocompat).
+  const estacionId = body.estacionId !== undefined
+    ? String(body.estacionId || '').trim()
+    : String(previous.estacionId || '').trim();
+
   return {
     nombre,
     doorId,
     readerId,
     direction,
+    estacionId,
     ...sanitizeOfflineOptions(body, previous)
   };
+};
+
+const assertEstacionExistsIfSet = async (estacionId) => {
+  const id = String(estacionId || '').trim();
+  if (!id) return;
+  const snap = await db.collection('estaciones').doc(id).get();
+  if (!snap.exists) {
+    throw httpError(400, `Estación inexistente: ${id}`, 'unknown_estacion');
+  }
 };
 
 const buildDoorReaderConfig = ({
@@ -302,6 +319,7 @@ const getLectorById = async (id) => {
 const createLector = async (body, { apiBaseUrl } = {}) => {
   const fields = sanitizeLectorFields(body);
   await validateDoorAndReader(fields);
+  await assertEstacionExistsIfSet(fields.estacionId);
 
   const password = generatePassword();
   const username = await allocateUsername(fields.nombre, fields.doorId, fields.readerId);
@@ -343,6 +361,7 @@ const updateLector = async (id, body) => {
   const before = beforeSnap.data() || {};
   const fields = sanitizeLectorFields({ ...before, ...body }, before);
   await validateDoorAndReader(fields);
+  await assertEstacionExistsIfSet(fields.estacionId);
   await ref.set({
     ...fields,
     updatedAt: FieldValue.serverTimestamp()

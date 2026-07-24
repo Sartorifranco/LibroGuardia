@@ -65,7 +65,11 @@ describe('handleDoorHotkeyOpen', () => {
       skipConfirm: true
     });
     expect(result.handled).toBe(true);
-    expect(openManualDoor).toHaveBeenCalledWith({ authToken: 'tok', doorId: 'puerta-1' });
+    expect(openManualDoor).toHaveBeenCalledWith({
+      authToken: 'tok',
+      doorId: 'puerta-1',
+      door: { id: 'puerta-1', name: 'Molinete' }
+    });
   });
 
   test('no llama openManualDoor si el atajo no está asignado', async () => {

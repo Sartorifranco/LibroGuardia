@@ -9,6 +9,8 @@
 const express = require('express');
 const { auth, requirePermission } = require('../middleware/auth');
 const { logAdminAction } = require('../lib/auditLog');
+const { db } = require('../firestore');
+const { clearLoginFailures } = require('../lib/loginRateLimit');
 const {
   listLectores,
   createLector,
@@ -20,8 +22,10 @@ const {
   requestForceResync,
   resolveAuthUsername,
   resolveApiBaseUrl,
-  resolveConnectionStatus
+  resolveConnectionStatus,
+  getLectorById
 } = require('../lib/lectores');
+const { createPairingCode } = require('../lib/lectorPairing');
 
 const router = express.Router();
 
@@ -150,6 +154,73 @@ router.get('/api/admin/lectores/:id/config', auth, requirePermission('lectores.m
     res.status(err.status || 500).json({ message: err.message || 'Error al armar config' });
   }
 });
+
+/**
+ * Código de emparejamiento de 6 dígitos (10 min, un solo uso).
+ * La mini PC lo canjea en POST /api/auth/pairing-exchange.
+ */
+router.post(
+  '/api/admin/lectores/:id/pairing-code',
+  auth,
+  requirePermission('lectores.manage'),
+  async (req, res) => {
+    try {
+      const result = await createPairingCode(req.params.id);
+      logAdminAction({
+        req,
+        action: 'lector.pairing_code',
+        targetType: 'lector',
+        targetId: result.lectorId,
+        after: { expiresAt: result.expiresAt }
+      }).catch(() => {});
+      res.json({
+        message: 'Código generado. Válido 10 minutos, un solo uso.',
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al generar código',
+        code: err.code
+      });
+    }
+  }
+);
+
+/**
+ * Limpia el bloqueo por intentos fallidos del usuario kiosk de este lector.
+ */
+router.post(
+  '/api/admin/lectores/:id/clear-login-failures',
+  auth,
+  requirePermission('lectores.manage'),
+  async (req, res) => {
+    try {
+      const lector = await getLectorById(req.params.id);
+      const username = String(lector.usuarioSistemaId || '').trim().toLowerCase();
+      if (!username) {
+        return res.status(400).json({ message: 'El lector no tiene usuario de sistema' });
+      }
+      await clearLoginFailures(db, { username });
+      logAdminAction({
+        req,
+        action: 'lector.clear_login_failures',
+        targetType: 'lector',
+        targetId: lector.id,
+        after: { username }
+      }).catch(() => {});
+      res.json({
+        message: `Se destrabaron los intentos de login de “${username}”. Ya puede volver a autenticarse.`,
+        username,
+        lectorId: lector.id
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al destrabar login',
+        code: err.code
+      });
+    }
+  }
+);
 
 /**
  * Pide al bridge que refresque la allowlist offline en el próximo heartbeat (hasta ~5 min).

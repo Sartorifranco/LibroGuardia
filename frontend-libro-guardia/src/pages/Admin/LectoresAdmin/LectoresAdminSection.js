@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Download,
+  Hash,
   KeyRound,
   Pencil,
   PlusCircle,
   RefreshCw,
   ScanLine,
   Trash2,
+  Unlock,
   X
 } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
@@ -121,8 +123,8 @@ function CredentialsOnceModal({ title, password, config, onClose }) {
           </button>
         </div>
         <p className="theme-section-desc">
-          Esta contraseña se muestra <strong>una sola vez</strong>. Descargá el JSON y copialo a la mini PC
-          como <code>door-reader.config.json</code>. Si la perdés, regenerá credenciales.
+          Esta contraseña se muestra <strong>una sola vez</strong>. Preferí el flujo de código de instalación
+          en la mini PC (<code>instalar-lector.ps1</code>). Si necesitás el JSON a mano, descargalo abajo.
         </p>
         <label className="historial-meta">Contraseña generada</label>
         <input className="input-field" readOnly value={password || ''} onFocus={(e) => e.target.select()} />
@@ -139,6 +141,61 @@ function CredentialsOnceModal({ title, password, config, onClose }) {
             <Download size={16} /> Descargar JSON completo
           </PendingButton>
           <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Listo
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Modal con código de 6 dígitos para emparejar la mini PC. */
+function PairingCodeModal({ pairing, onClose }) {
+  if (!pairing?.code) return null;
+  const digits = String(pairing.code);
+  return (
+    <div className="admin-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pairing-code-title">
+      <div className="admin-modal">
+        <div className="admin-modal__head">
+          <h4 id="pairing-code-title">Código de instalación</h4>
+          <button type="button" className="admin-icon-btn" onClick={onClose} aria-label="Cerrar">
+            <X size={18} />
+          </button>
+        </div>
+        <p className="theme-section-desc">
+          En la mini PC / Raspberry corré
+          {' '}
+          <code>scripts\\instalar-lector.ps1</code>
+          {' '}
+          y pegá este código.
+          {' '}
+          <strong>Expira en 10 minutos</strong>
+          {' '}
+          y es de un solo uso.
+        </p>
+        {pairing.lectorNombre ? (
+          <p className="historial-meta" style={{ marginBottom: '0.75rem' }}>
+            {pairing.lectorNombre}
+            {pairing.doorId ? ` · ${pairing.doorId}` : ''}
+            {pairing.readerId ? ` / ${pairing.readerId}` : ''}
+          </p>
+        ) : null}
+        <div className="lector-pairing-code" aria-label={`Código ${digits}`}>
+          {digits.split('').map((d, i) => (
+            // eslint-disable-next-line react/no-array-index-key
+            <span key={`${d}-${i}`} className="lector-pairing-code__digit">{d}</span>
+          ))}
+        </div>
+        <p className="theme-section-desc" style={{ marginTop: '1rem' }}>
+          Válido hasta
+          {' '}
+          {pairing.expiresAt
+            ? new Date(pairing.expiresAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+            : '10 minutos'}
+          .
+        </p>
+        <div className="flex flex-wrap gap-2" style={{ marginTop: '1rem' }}>
+          <button type="button" className="btn btn-primary" onClick={onClose}>
             Listo
           </button>
         </div>
@@ -318,6 +375,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [editDraft, setEditDraft] = useState(null);
   const [onceModal, setOnceModal] = useState(null);
+  const [pairingModal, setPairingModal] = useState(null);
 
   const canManage = hasPermission(currentUser, 'lectores.manage');
 
@@ -497,6 +555,49 @@ function LectoresAdminSection({ pendingAction, runAction }) {
     });
   };
 
+  const handleGeneratePairingCode = async (row) => {
+    await runAction(`pairing-${row.id}`, async () => {
+      try {
+        const data = await apiFetch(`/admin/lectores/${row.id}/pairing-code`, {
+          method: 'POST',
+          token: authToken
+        });
+        setPairingModal({
+          code: data.code,
+          expiresAt: data.expiresAt,
+          lectorNombre: data.lectorNombre || row.nombre,
+          doorId: data.doorId || row.doorId,
+          readerId: data.readerId || row.readerId
+        });
+        showSuccess('Código de instalación generado (válido 10 minutos)');
+      } catch (err) {
+        showError(err.message || 'Error al generar código');
+      }
+    });
+  };
+
+  const handleClearLoginFailures = async (row) => {
+    const username = row.usuarioSistemaId || 'este lector';
+    const ok = await confirm({
+      title: 'Destrabar intentos de login',
+      message: `¿Limpiar el bloqueo por intentos fallidos de “${username}”? Podrá volver a autenticarse de inmediato.`,
+      confirmLabel: 'Destrabar',
+      tone: 'default'
+    });
+    if (!ok) return;
+    await runAction(`unlock-${row.id}`, async () => {
+      try {
+        const data = await apiFetch(`/admin/lectores/${row.id}/clear-login-failures`, {
+          method: 'POST',
+          token: authToken
+        });
+        showSuccess(data.message || `Login destrabado para ${username}`);
+      } catch (err) {
+        showError(err.message || 'Error al destrabar login');
+      }
+    });
+  };
+
   const handleForceResync = async (row) => {
     await runAction(`resync-${row.id}`, async () => {
       try {
@@ -529,6 +630,11 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         onClose={() => setOnceModal(null)}
       />
 
+      <PairingCodeModal
+        pairing={pairingModal}
+        onClose={() => setPairingModal(null)}
+      />
+
       <EditLectorModal
         draft={editDraft}
         doors={doors}
@@ -544,7 +650,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
 
       <AdminBlock
         title="Nuevo lector"
-        description="Al crear se genera el usuario kiosk (solo access.kiosk) y un JSON listo para la Raspberry Pi / mini PC."
+        description="Al crear se genera el usuario kiosk. Después usá “Generar código de instalación” en la fila y corré instalar-lector.ps1 en la mini PC."
       >
         <AdminFormCard onSubmit={handleCreateSubmit}>
           <div className="admin-form-grid">
@@ -732,6 +838,22 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                         >
                           <RefreshCw size={16} />
                         </button>
+                        <button
+                          type="button"
+                          className="admin-icon-btn"
+                          title="Generar código de instalación"
+                          onClick={() => handleGeneratePairingCode(row)}
+                        >
+                          <Hash size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="admin-icon-btn"
+                          title="Destrabar intentos de login"
+                          onClick={() => handleClearLoginFailures(row)}
+                        >
+                          <Unlock size={16} />
+                        </button>
                         <button type="button" className="admin-icon-btn" title="Descargar config" onClick={() => handleDownloadConfig(row)}>
                           <Download size={16} />
                         </button>
@@ -768,6 +890,27 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         .lector-status--online { color: #16a34a; }
         .lector-status--stale { color: #ca8a04; }
         .lector-status--offline { color: #dc2626; }
+        .lector-pairing-code {
+          display: flex;
+          justify-content: center;
+          gap: 0.45rem;
+          margin: 0.5rem 0 0;
+          font-variant-numeric: tabular-nums;
+        }
+        .lector-pairing-code__digit {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 2.4rem;
+          height: 3.1rem;
+          padding: 0 0.35rem;
+          border-radius: 0.5rem;
+          border: 1px solid var(--border, #2a2a2a);
+          background: var(--panel-muted, #111);
+          font-size: 1.85rem;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+        }
         .admin-row-actions { display: flex; gap: 0.25rem; flex-wrap: wrap; }
         .admin-modal-backdrop {
           position: fixed; inset: 0; z-index: 80;

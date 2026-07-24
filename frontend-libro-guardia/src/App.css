@@ -5340,6 +5340,38 @@ body {
 .control-doors__error {
   color: var(--danger-text);
 }
+.control-doors__banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.control-doors__banner--local {
+  background: #fff7e6;
+  border: 1px solid #e6c07b;
+  color: #5c4813;
+}
+.control-doors__banner--offline {
+  background: #fdecea;
+  border: 1px solid #e8a0a0;
+  color: #7a1f1f;
+}
+.control-door-card__local {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.control-door-card__local-status {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
 .control-novedad-quick {
   flex-wrap: wrap;
   align-items: center;

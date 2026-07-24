@@ -28,6 +28,7 @@ const {
   requirePermission,
   requireAnyPermission
 } = require('../middleware/auth');
+const { clearLoginFailures } = require('../lib/loginRateLimit');
 
 const router = express.Router();
 
@@ -315,6 +316,43 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
     res.status(500).json({ message: 'Error al actualizar el usuario', error: err.message });
   }
 });
+
+/**
+ * Destraba bloqueo por intentos fallidos de login (clearLoginFailures).
+ * Permiso: users.edit (usuarios generales) o lectores.manage (kiosk).
+ */
+router.post(
+  '/api/admin/users/:id/clear-login-failures',
+  auth,
+  requireAnyPermission(['users.edit', 'lectores.manage']),
+  async (req, res) => {
+    try {
+      const id = String(req.params.id || '').trim().toLowerCase();
+      const userRef = db.collection('users').doc(id);
+      const snap = await userRef.get();
+      if (!snap.exists) {
+        return res.status(404).json({ message: 'Usuario no encontrado' });
+      }
+      const username = String(snap.data()?.username || id).trim().toLowerCase();
+      await clearLoginFailures(db, { username });
+      logAdminAction({
+        req,
+        action: 'user.clear_login_failures',
+        targetType: 'user',
+        targetId: id,
+        after: { username }
+      }).catch(() => {});
+      res.json({
+        message: `Se destrabaron los intentos de login de “${username}”. Ya puede volver a autenticarse.`,
+        username
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al destrabar login'
+      });
+    }
+  }
+);
 
 router.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), async (req, res) => {
   try {

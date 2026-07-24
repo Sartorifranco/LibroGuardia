@@ -203,6 +203,44 @@ const clearLoginFailures = async (db, { username }) => {
   await db.collection(COLLECTION).doc(userDocId(username)).delete().catch(() => {});
 };
 
+/** Rate limit del canje de pairing (por IP): mismo criterio de ventana/bloqueo que login. */
+const pairingIpDocId = (ip) => `pairing_ip_${sanitizeKeyPart(ip)}`;
+
+const checkPairingRateLimit = async (db, { ip }, now = Date.now()) => {
+  const data = await readLimitDoc(db, pairingIpDocId(ip));
+  const state = evaluateRateLimitState(data, now);
+  if (!state.blocked) return { blocked: false };
+  return {
+    blocked: true,
+    message: LOCKOUT_MESSAGE,
+    retryAfterSeconds: Math.max(1, Math.ceil((state.blockedUntil - now) / 1000))
+  };
+};
+
+const recordPairingFailure = async (db, FieldValue, { ip }, now = Date.now()) => {
+  const docId = pairingIpDocId(ip);
+  const data = await readLimitDoc(db, docId);
+  const next = nextFailureState(data, now);
+  await db.collection(COLLECTION).doc(docId).set({
+    kind: 'pairing',
+    failedAttempts: next.failedAttempts,
+    windowStartedAt: next.windowStartedAt,
+    blockedUntil: next.blockedUntil,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  if (next.justBlocked || (next.blockedUntil && next.blockedUntil > now)) {
+    return {
+      blocked: true,
+      message: LOCKOUT_MESSAGE,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((Math.max(next.blockedUntil || 0, now + 1) - now) / 1000)
+      )
+    };
+  }
+  return { blocked: false };
+};
+
 module.exports = {
   COLLECTION,
   MAX_FAILED_ATTEMPTS,
@@ -213,10 +251,13 @@ module.exports = {
   getClientIp,
   userDocId,
   ipDocId,
+  pairingIpDocId,
   evaluateRateLimitState,
   nextFailureState,
   checkLoginRateLimit,
   recordFailedLogin,
   clearLoginFailures,
-  recordIpProbe
+  recordIpProbe,
+  checkPairingRateLimit,
+  recordPairingFailure
 };

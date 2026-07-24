@@ -105,3 +105,44 @@ test('bloqueo es por usuario: checkLoginRateLimit ignora IP bloqueada', async ()
   const otherUser = await checkLoginRateLimit(db, { username: 'supervisor', ip: '10.0.0.1' }, now);
   assert.equal(otherUser.blocked, false, 'otra cuenta en misma IP no debe bloquearse');
 });
+
+test('clearLoginFailures elimina el doc y deja de bloquear', async () => {
+  const {
+    checkLoginRateLimit,
+    clearLoginFailures,
+    userDocId
+  } = require('../lib/loginRateLimit');
+  const now = Date.now();
+  const store = new Map();
+  store.set(userDocId('kiosk.puerta'), {
+    failedAttempts: 5,
+    windowStartedAt: now - 1000,
+    blockedUntil: now + 60_000
+  });
+  const db = {
+    collection() {
+      return {
+        doc(id) {
+          return {
+            async delete() {
+              store.delete(id);
+            },
+            async get() {
+              const data = store.get(id);
+              return { exists: Boolean(data), data: () => (data ? { ...data } : undefined) };
+            }
+          };
+        }
+      };
+    }
+  };
+
+  const before = await checkLoginRateLimit(db, { username: 'kiosk.puerta' }, now);
+  assert.equal(before.blocked, true);
+
+  await clearLoginFailures(db, { username: 'kiosk.puerta' });
+  assert.equal(store.has(userDocId('kiosk.puerta')), false);
+
+  const after = await checkLoginRateLimit(db, { username: 'kiosk.puerta' }, now);
+  assert.equal(after.blocked, false);
+});

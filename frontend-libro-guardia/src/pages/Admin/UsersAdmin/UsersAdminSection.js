@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { UserPlus, KeyRound, Edit, Trash2, PlusCircle, XCircle, ToggleRight, ToggleLeft, Save, Users } from 'lucide-react';
+import { UserPlus, KeyRound, Edit, Trash2, PlusCircle, XCircle, ToggleRight, ToggleLeft, Save, Users, Unlock } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
 import { AdminBlock, AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
 import { hasPermission, canManageTargetUser, PERMISSION_LABELS } from '../../../utils/permissions';
@@ -121,6 +121,28 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
     });
   };
 
+  const handleClearLoginFailures = async (user) => {
+    const username = user.username || user.id;
+    const ok = await confirm({
+      title: 'Destrabar intentos de login',
+      message: `¿Limpiar el bloqueo por intentos fallidos de “${username}”? Podrá volver a autenticarse de inmediato.`,
+      confirmLabel: 'Destrabar',
+      tone: 'default'
+    });
+    if (!ok) return;
+    await runAction(`unlock-user-${user.id}`, async () => {
+      try {
+        const data = await apiFetch(`/admin/users/${user.id}/clear-login-failures`, {
+          method: 'POST',
+          token: authToken
+        });
+        showSuccess(data.message || `Login destrabado para ${username}`);
+      } catch (err) {
+        showError(err.message || 'Error al destrabar login');
+      }
+    });
+  };
+
   const handleDeleteUser = async (userId) => {
     const ok = await confirm({
       title: 'Eliminar usuario',
@@ -213,6 +235,18 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 <div className="flex items-center gap-2 mt-2 sm:mt-0">
                   {hasPermission(currentUser, 'users.edit') && canManageTargetUser(currentUser, user) && (
                     <button type="button" onClick={() => handleEditUser(user)} className="btn btn-secondary-small"><Edit size={16} /> Editar</button>
+                  )}
+                  {(hasPermission(currentUser, 'users.edit') || hasPermission(currentUser, 'lectores.manage')) && (
+                    <button
+                      type="button"
+                      onClick={() => handleClearLoginFailures(user)}
+                      className="btn btn-secondary-small"
+                      title="Destrabar intentos de login"
+                    >
+                      <Unlock size={16} />
+                      {' '}
+                      Destrabar login
+                    </button>
                   )}
                   {hasPermission(currentUser, 'users.delete') && user.id !== currentUser.id && canManageTargetUser(currentUser, user) && (
                     <button type="button" onClick={() => handleDeleteUser(user.id)} className="btn btn-danger-small"><Trash2 size={16} /> Eliminar</button>
