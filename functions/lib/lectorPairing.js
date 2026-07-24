@@ -152,11 +152,19 @@ const exchangePairingCode = async (rawCode, { apiBaseUrl } = {}) => {
   const base = apiBaseUrl || DEFAULT_API_BASE_URL;
   const result = await regenerateCredentials(lectorId, { apiBaseUrl: base });
 
+  // Si el lector está asignado a una estación, el JSON incluye el servidor HTTP
+  // local (puerto/secreto) para apertura manual / status sin internet.
+  const { enrichConfigWithEstacion } = require('./estaciones');
+  const config = await enrichConfigWithEstacion(
+    result.config,
+    result.lector?.estacionId
+  );
+
   return {
     message: 'Emparejamiento OK. Guardá el JSON: la contraseña no se volverá a mostrar.',
     lector: result.lector,
     password: result.password,
-    config: result.config
+    config
   };
 };
 

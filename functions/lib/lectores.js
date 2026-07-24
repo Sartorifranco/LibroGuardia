@@ -338,7 +338,7 @@ const createLector = async (body, { apiBaseUrl } = {}) => {
   await ref.set(doc);
 
   const lector = toLectorJson({ id: ref.id, data: () => doc });
-  const config = buildDoorReaderConfig({
+  let config = buildDoorReaderConfig({
     apiBaseUrl: apiBaseUrl || DEFAULT_API_BASE_URL,
     username,
     password,
@@ -350,6 +350,9 @@ const createLector = async (body, { apiBaseUrl } = {}) => {
     offlineCacheRefreshMs: fields.offlineCacheRefreshMs,
     offlineCacheMaxAgeHours: fields.offlineCacheMaxAgeHours
   });
+  // Lazy require: evita ciclo estaciones ↔ lectores en carga de módulo.
+  const { enrichConfigWithEstacion } = require('./estaciones');
+  config = await enrichConfigWithEstacion(config, fields.estacionId);
 
   return { lector, password, config, username };
 };
@@ -394,7 +397,7 @@ const regenerateCredentials = async (id, { apiBaseUrl } = {}) => {
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
-  const config = buildDoorReaderConfig({
+  let config = buildDoorReaderConfig({
     apiBaseUrl: apiBaseUrl || DEFAULT_API_BASE_URL,
     username: lector.usuarioSistemaId,
     password,
@@ -406,13 +409,15 @@ const regenerateCredentials = async (id, { apiBaseUrl } = {}) => {
     offlineCacheRefreshMs: lector.offlineCacheRefreshMs,
     offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours
   });
+  const { enrichConfigWithEstacion } = require('./estaciones');
+  config = await enrichConfigWithEstacion(config, lector.estacionId);
 
   return { lector, password, config };
 };
 
 const buildConfigForDownload = async (id, { apiBaseUrl, includePassword = false, password = '' } = {}) => {
   const lector = await getLectorById(id);
-  return buildDoorReaderConfig({
+  let config = buildDoorReaderConfig({
     apiBaseUrl: apiBaseUrl || DEFAULT_API_BASE_URL,
     username: lector.usuarioSistemaId,
     password: includePassword ? password : '',
@@ -424,6 +429,9 @@ const buildConfigForDownload = async (id, { apiBaseUrl, includePassword = false,
     offlineCacheRefreshMs: lector.offlineCacheRefreshMs,
     offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours
   });
+  const { enrichConfigWithEstacion } = require('./estaciones');
+  config = await enrichConfigWithEstacion(config, lector.estacionId);
+  return config;
 };
 
 /**

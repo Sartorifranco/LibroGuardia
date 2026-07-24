@@ -8,7 +8,11 @@ const {
   normalizeStationConfig,
   createLocalStationServer,
   buildStationLocalHandlers,
-  extractStationSecret
+  extractStationSecret,
+  isAllowedCorsOrigin,
+  buildCorsHeaders,
+  BRIDGE_VERSION,
+  LOCAL_STATION_API_VERSION
 } = require(bridgePath);
 
 const request = (port, method, urlPath, { headers = {}, body } = {}) =>
@@ -33,7 +37,7 @@ const request = (port, method, urlPath, { headers = {}, body } = {}) =>
       res.on('end', () => {
         let data = {};
         try { data = raw ? JSON.parse(raw) : {}; } catch (_e) { data = { raw }; }
-        resolve({ status: res.statusCode, data });
+        resolve({ status: res.statusCode, headers: res.headers, data });
       });
     });
     req.on('error', reject);
@@ -162,6 +166,8 @@ describe('createLocalStationServer HTTP', () => {
     });
     assert.equal(okStatus.status, 200);
     assert.equal(okStatus.data.ok, true);
+    assert.equal(okStatus.data.bridgeVersion, BRIDGE_VERSION);
+    assert.equal(okStatus.data.localStationApiVersion, LOCAL_STATION_API_VERSION);
     assert.equal(okStatus.data.readers.length, 1);
     assert.equal(okStatus.data.readers[0].doorId, 'puerta-p1');
     assert.equal(okStatus.data.readers[0].connected, true);
@@ -179,5 +185,105 @@ describe('createLocalStationServer HTTP', () => {
     });
     assert.equal(openMissing.status, 404);
     assert.match(openMissing.data.message, /no maneja/i);
+  });
+
+  it('CORS + PNA: OPTIONS preflight y GET/POST con Origin de bacarguard', async () => {
+    openCalls = [];
+    const handlers = buildStationLocalHandlers([
+      {
+        cfg: { doorId: 'puerta-p1', readerId: 'R1' },
+        getStatus: () => ({ doorId: 'puerta-p1', connected: true }),
+        openLocal: async () => {
+          openCalls.push('cors-open');
+          return { via: 'tcp-local' };
+        }
+      }
+    ]);
+    const port = await reservePort();
+    if (live) await live.close();
+    live = await createLocalStationServer({
+      host: '127.0.0.1',
+      port,
+      secret: 'test-secret',
+      getStatus: handlers.getStatus,
+      openDoor: handlers.openDoor
+    });
+
+    const origin = 'https://bacarguard.web.app';
+    const preflight = await request(live.port, 'OPTIONS', '/status', {
+      headers: {
+        Origin: origin,
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization',
+        'Access-Control-Request-Private-Network': 'true'
+      }
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers['access-control-allow-origin'], origin);
+    assert.equal(preflight.headers['access-control-allow-private-network'], 'true');
+    assert.match(
+      String(preflight.headers['access-control-allow-methods'] || ''),
+      /GET/
+    );
+    assert.match(
+      String(preflight.headers['access-control-allow-headers'] || ''),
+      /authorization/i
+    );
+
+    const statusCors = await request(live.port, 'GET', '/status', {
+      headers: {
+        Origin: origin,
+        Authorization: 'Bearer test-secret'
+      }
+    });
+    assert.equal(statusCors.status, 200);
+    assert.equal(statusCors.headers['access-control-allow-origin'], origin);
+    assert.equal(statusCors.headers['access-control-allow-private-network'], 'true');
+
+    const openCors = await request(live.port, 'POST', '/open/puerta-p1', {
+      headers: {
+        Origin: origin,
+        Authorization: 'Bearer test-secret',
+        'Access-Control-Request-Private-Network': 'true'
+      }
+    });
+    assert.equal(openCors.status, 200);
+    assert.equal(openCors.headers['access-control-allow-origin'], origin);
+    assert.deepEqual(openCalls, ['cors-open']);
+
+    // Origen no autorizado: sin Allow-Origin (el browser bloquearía leer la respuesta).
+    const evil = await request(live.port, 'OPTIONS', '/open/puerta-p1', {
+      headers: {
+        Origin: 'https://evil.example',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'authorization'
+      }
+    });
+    assert.equal(evil.status, 204);
+    assert.equal(evil.headers['access-control-allow-origin'], undefined);
+
+    // Sin secreto sigue 401 aunque el Origin sea válido (CORS ≠ auth).
+    const noSecret = await request(live.port, 'POST', '/open/puerta-p1', {
+      headers: { Origin: origin }
+    });
+    assert.equal(noSecret.status, 401);
+    assert.equal(noSecret.headers['access-control-allow-origin'], origin);
+  });
+});
+
+describe('CORS helpers', () => {
+  it('isAllowedCorsOrigin acepta hosting y localhost', () => {
+    assert.equal(isAllowedCorsOrigin('https://bacarguard.web.app'), true);
+    assert.equal(isAllowedCorsOrigin('https://bacarguard.firebaseapp.com'), true);
+    assert.equal(isAllowedCorsOrigin('http://localhost:3000'), true);
+    assert.equal(isAllowedCorsOrigin('https://evil.example'), false);
+  });
+
+  it('buildCorsHeaders no usa wildcard', () => {
+    const headers = buildCorsHeaders({
+      headers: { origin: 'https://bacarguard.web.app' }
+    });
+    assert.equal(headers['Access-Control-Allow-Origin'], 'https://bacarguard.web.app');
+    assert.notEqual(headers['Access-Control-Allow-Origin'], '*');
   });
 });

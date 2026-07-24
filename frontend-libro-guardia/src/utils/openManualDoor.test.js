@@ -74,4 +74,26 @@ describe('openManualDoor — local / cloud', () => {
     expect(openDoorOnStation).not.toHaveBeenCalled();
     expect(result.via).toBe('cloud');
   });
+
+  test('relayMode local SIN localStation → nube (no inventa estación)', async () => {
+    apiFetch.mockResolvedValue({ message: 'ok', relay: { via: 'bridge' } });
+    const result = await openManualDoor({
+      authToken: 'tok',
+      door: { id: 'puerta-p1', relayMode: 'local', localStation: null }
+    });
+    expect(openDoorOnStation).not.toHaveBeenCalled();
+    expect(apiFetch).toHaveBeenCalled();
+    expect(result.via).toBe('cloud');
+    expect(result.auditPath).toBe('cloudOnly_localModeWithoutStation');
+  });
+
+  test('forceLocal sin estación → error (no abre por magia)', async () => {
+    await expect(openManualDoor({
+      authToken: 'tok',
+      door: { id: 'puerta-p1', relayMode: 'local' },
+      forceLocal: true
+    })).rejects.toThrow(/estación local/);
+    expect(openDoorOnStation).not.toHaveBeenCalled();
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
 });

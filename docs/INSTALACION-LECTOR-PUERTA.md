@@ -159,6 +159,8 @@ Campos del JSON:
 | `inputMode` | `serial` | `stdin` solo para pruebas sin hardware |
 | `logFile` | `C:\Logs\door-reader-bridge.log` | Opcional |
 | `reconnectMinMs` / `reconnectMaxMs` | `2000` / `60000` | Backoff serie y red |
+| `localServerPort` / `localServerSecret` | `8787` / (secreto) | Servidor HTTP LAN del bridge. El **pairing** los incluye solo si el lector tiene **estación** asignada en Admin → Estaciones. Sin estación: ausentes (servidor local deshabilitado). |
+| `localServerHost` | `0.0.0.0` | Bind LAN (todas las interfaces) |
 
 Prueba manual:
 
@@ -184,6 +186,56 @@ nssm start LibroGuardiaDoorReader
 **Opción B — Tarea programada** al inicio de sesión / arranque, con el mismo `node …door-reader-bridge.js` y variable `DOOR_READER_CONFIG` (ver `install-sr201-bridge-autostart.ps1` como referencia de patrón).
 
 El proceso reconecta el COM y reintenta la red con backoff; no hace falta reiniciarlo ante un glitch corto.
+
+---
+
+## 4.1 Refrescar config (lector ya instalado + estación nueva)
+
+Caso típico: el lector se instaló con el código de 6 dígitos **antes** de asignarlo a una estación (ej. «PC Franco»). El JSON de la mini PC **no** tiene `localServerPort` / `localServerSecret`, así que el bridge no levanta el HTTP local y el Centro de Control no puede abrir/consultar por LAN sin internet.
+
+**No hace falta reinstalar Node, NSSM ni la carpeta `scripts`.** Se reutiliza el mismo emparejamiento:
+
+1. En Admin → Estaciones: confirmá que la estación tiene **IP de red local**, **puerto** (ej. 8787) y **secreto**, y que el lector está **asignado** a esa estación.
+2. En Admin → Lectores → ese lector → **Generar código de instalación** (`#`, 6 dígitos, 10 min, un solo uso).
+3. En la mini PC, **como Administrador**, en la misma carpeta `scripts` donde ya está el bridge:
+   ```text
+   instalar-lector.cmd
+   ```
+   Pegá el código nuevo.
+4. El instalador:
+   - canjea el código (esto **regenera la password** del usuario kiosk — la anterior deja de servir; es esperado);
+   - reescribe `door-reader.config.json` **incluyendo** `localServerPort` / `localServerSecret` de la estación;
+   - reinicia el servicio NSSM (`LibroGuardiaDoor-<doorId>`).
+5. Verificación rápida:
+   - En la consola del instalador debería verse algo como `localServerPort=8787  estacion=PC Franco`.
+   - En el JSON: `"localServerPort": 8787` y `"localServerSecret": "…"`.
+   - Log del servicio: el bridge arranca y escucha el puerto local.
+   - Si el COM no es COM3, editá `serialPort` en el JSON y `nssm restart LibroGuardiaDoor-<doorId>`.
+
+**Alternativa** (sin regenerar password): Admin → Estaciones → descargar config unificada de la estación, fusionar a mano `localServer*` en el JSON existente, y reiniciar el servicio. El re-emparejamiento es el camino soportado y más simple.
+
+### Versión del bridge para fallback LAN del panel (CORS)
+
+El Centro de Control en `https://bacarguard.web.app` llama al HTTP local de la estación (`http://IP:8787/status` y `/open/...`). Eso exige:
+
+1. Estación configurada + `localServer*` en el JSON (arriba).
+2. **`door-reader-bridge.js` ≥ `1.1.0`** (`localStationApiVersion` ≥ **2**): responde **CORS** + **Private Network Access** (`Access-Control-Allow-Origin` del panel, `OPTIONS` preflight, `Access-Control-Allow-Private-Network: true`). Sin esa versión el navegador bloquea la respuesta aunque el bridge esté vivo.
+
+Cómo ver la versión en la mini PC (con el servicio corriendo y el secreto de la estación):
+
+```powershell
+curl.exe -s -H "Authorization: Bearer TU_SECRETO" http://127.0.0.1:8787/status
+```
+
+Buscá `"bridgeVersion":"1.1.0"` y `"localStationApiVersion":2`.
+
+**Actualizar sin reinstalar de cero:** copiá el `door-reader-bridge.js` nuevo a la carpeta `scripts` de la mini PC y reiniciá el servicio:
+
+```powershell
+nssm restart LibroGuardiaDoor-puerta-p1
+```
+
+(No hace falta re-emparejar solo por este cambio de CORS, si el JSON ya tiene `localServerPort` / `localServerSecret`.)
 
 ---
 

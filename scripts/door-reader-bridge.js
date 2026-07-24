@@ -9,7 +9,10 @@
  * Servidor HTTP local (opcional, solo LAN — sin túnel):
  *   GET  /status          estado de todos los lectores
  *   POST /open/:doorId    dispara relé local si esta estación maneja esa puerta
+ *   OPTIONS /*            preflight CORS + Private Network Access (panel guardia HTTPS)
  *   Auth: Authorization: Bearer <localServerSecret>
+ *
+ * Versión bridge (local station API): ver BRIDGE_VERSION / LOCAL_STATION_API_VERSION.
  *
  * Relé en modo local: TCP directo a la placa SR201 (fireLocalRelay).
  *
@@ -78,6 +81,20 @@ const DEFAULTS = {
   localServerHost: '0.0.0.0',
   localServerSecret: ''
 };
+
+/**
+ * Versión del proceso door-reader-bridge (semver de scripts).
+ * Bump cuando cambie el contrato del servidor local o el framing.
+ */
+const BRIDGE_VERSION = '1.1.0';
+/** API del servidor HTTP local (status/open/CORS). Subir si cambia el contrato. */
+const LOCAL_STATION_API_VERSION = 2;
+
+/** Orígenes del panel (HTTPS público) autorizados a hablar con la estación LAN. */
+const DEFAULT_CORS_ORIGINS = [
+  'https://bacarguard.web.app',
+  'https://bacarguard.firebaseapp.com'
+];
 
 const CONTROL_NAMES = {
   0: 'NUL', 7: 'BEL', 8: 'BS', 9: 'TAB', 10: 'LF', 11: 'VT', 12: 'FF',
@@ -737,11 +754,79 @@ const extractStationSecret = (req) => {
 };
 
 /**
+ * Orígenes CORS permitidos: defaults del hosting + LOCAL_SERVER_CORS_ORIGINS (CSV)
+ * + localhost / 127.0.0.1 (cualquier puerto) para desarrollo del panel.
+ */
+const resolveAllowedCorsOrigins = (env = process.env) => {
+  const extra = String(env.LOCAL_SERVER_CORS_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...DEFAULT_CORS_ORIGINS, ...extra];
+};
+
+const isAllowedCorsOrigin = (origin, env = process.env) => {
+  const o = String(origin || '').trim();
+  if (!o) return false;
+  if (resolveAllowedCorsOrigins(env).includes(o)) return true;
+  // Dev local del SPA (Create React App / Vite).
+  try {
+    const u = new URL(o);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Headers CORS (+ Private Network Access) para respuestas del servidor local.
+ * No usa wildcard: el panel manda Authorization Bearer.
+ * @returns {Record<string, string>}
+ */
+const buildCorsHeaders = (req, env = process.env) => {
+  const origin = String(req.headers.origin || '').trim();
+  const headers = {
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers':
+      'Authorization, Content-Type, Accept, X-Station-Secret, X-Bridge-Secret',
+    'Access-Control-Max-Age': '86400',
+    Vary: 'Origin'
+  };
+
+  if (isAllowedCorsOrigin(origin, env)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+
+  // Chrome Private Network Access: preflight desde origen público → IP privada.
+  // También lo devolvemos en respuestas reales por si el browser lo exige.
+  const wantsPrivateNetwork = String(
+    req.headers['access-control-request-private-network'] || ''
+  ).toLowerCase() === 'true'
+    || Boolean(req.headers.origin);
+  if (wantsPrivateNetwork && headers['Access-Control-Allow-Origin']) {
+    headers['Access-Control-Allow-Private-Network'] = 'true';
+  }
+
+  // Si el preflight pide headers extra, reflejarlos (siempre sobre la allowlist base).
+  const requested = String(req.headers['access-control-request-headers'] || '').trim();
+  if (requested) {
+    headers['Access-Control-Allow-Headers'] = requested;
+  }
+
+  return headers;
+};
+
+/**
  * Servidor HTTP local de la estación (solo LAN). Endpoints:
  *   GET  /status
  *   POST /open/:doorId
+ *   OPTIONS (preflight CORS / PNA) — sin auth
  *
- * @param {{ host: string, port: number, secret: string, getStatus: Function, openDoor: Function, logFn?: Function }} opts
+ * CORS habilita que https://bacarguard.web.app lea la respuesta en el navegador.
+ * La seguridad sigue siendo el secreto Bearer: CORS no abre el endpoint a cualquiera.
+ *
+ * @param {{ host: string, port: number, secret: string, getStatus: Function, openDoor: Function, logFn?: Function, env?: object }} opts
  * @returns {Promise<{ server: import('http').Server, port: number, close: () => Promise<void> }>}
  */
 const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
@@ -751,6 +836,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
   const getStatus = opts.getStatus;
   const openDoor = opts.openDoor;
   const logFn = opts.logFn || (() => {});
+  const env = opts.env || process.env;
 
   if (!Number.isFinite(port) || port <= 0) {
     reject(new Error('createLocalStationServer: puerto inválido'));
@@ -761,19 +847,21 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
     return;
   }
 
-  const sendJson = (res, statusCode, body) => {
+  const sendJson = (res, statusCode, body, req) => {
     const payload = JSON.stringify(body);
+    const cors = req ? buildCorsHeaders(req, env) : {};
     res.writeHead(statusCode, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Length': Buffer.byteLength(payload),
-      'Cache-Control': 'no-store'
+      'Cache-Control': 'no-store',
+      ...cors
     });
     res.end(payload);
   };
 
   const requireAuth = (req, res) => {
     if (extractStationSecret(req) !== secret) {
-      sendJson(res, 401, { ok: false, message: 'Secreto de estación inválido' });
+      sendJson(res, 401, { ok: false, message: 'Secreto de estación inválido' }, req);
       return false;
     }
     return true;
@@ -784,10 +872,27 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const method = (req.method || 'GET').toUpperCase();
 
+      // Preflight: no exige secreto (el browser aún no manda Authorization).
+      if (method === 'OPTIONS') {
+        const cors = buildCorsHeaders(req, env);
+        res.writeHead(204, {
+          ...cors,
+          'Content-Length': 0,
+          'Cache-Control': 'no-store'
+        });
+        res.end();
+        return;
+      }
+
       if (method === 'GET' && url.pathname === '/status') {
         if (!requireAuth(req, res)) return;
         const status = await Promise.resolve(getStatus());
-        sendJson(res, 200, { ok: true, ...status });
+        sendJson(res, 200, {
+          ok: true,
+          bridgeVersion: BRIDGE_VERSION,
+          localStationApiVersion: LOCAL_STATION_API_VERSION,
+          ...status
+        }, req);
         return;
       }
 
@@ -800,7 +905,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
           sendJson(res, 404, {
             ok: false,
             message: `Esta estación no maneja la puerta "${doorId}"`
-          });
+          }, req);
           return;
         }
         sendJson(res, 200, {
@@ -808,14 +913,14 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
           doorId,
           message: 'Relé local disparado',
           ...(result && typeof result === 'object' ? result : {})
-        });
+        }, req);
         return;
       }
 
-      sendJson(res, 404, { ok: false, message: 'No encontrado' });
+      sendJson(res, 404, { ok: false, message: 'No encontrado' }, req);
     } catch (err) {
       logFn('error', 'Error en servidor local de estación', { error: err.message });
-      sendJson(res, 500, { ok: false, message: err.message || 'Error interno' });
+      sendJson(res, 500, { ok: false, message: err.message || 'Error interno' }, req);
     }
   });
 
@@ -823,7 +928,12 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
   server.listen(port, host, () => {
     const addr = server.address();
     const boundPort = typeof addr === 'object' && addr ? addr.port : port;
-    logFn('info', 'Servidor local de estación escuchando', { host, port: boundPort });
+    logFn('info', 'Servidor local de estación escuchando', {
+      host,
+      port: boundPort,
+      bridgeVersion: BRIDGE_VERSION,
+      localStationApiVersion: LOCAL_STATION_API_VERSION
+    });
     resolve({
       server,
       port: boundPort,
@@ -1310,6 +1420,8 @@ const main = async () => {
   let localServer = null;
 
   log({ logFile: station.logFile }, 'info', 'door-reader-bridge estación iniciando', {
+    bridgeVersion: BRIDGE_VERSION,
+    localStationApiVersion: LOCAL_STATION_API_VERSION,
     apiBaseUrl: station.apiBaseUrl,
     readers: station.readers.length,
     configPath: station.configPath,
@@ -1372,9 +1484,14 @@ module.exports = {
   findAllowlistMatch,
   extractScanIdentity,
   extractStationSecret,
+  isAllowedCorsOrigin,
+  buildCorsHeaders,
   createLocalStationServer,
   buildStationLocalHandlers,
   fireLocalRelay,
+  BRIDGE_VERSION,
+  LOCAL_STATION_API_VERSION,
+  DEFAULT_CORS_ORIGINS,
   /**
    * Camino de decisión testable (sin I/O de red real).
    * Si local-first + caché vigente → no invoca kioskScanFn.

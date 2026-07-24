@@ -252,6 +252,13 @@ if ($UseExistingConfig) {
   [System.IO.File]::WriteAllText($ConfigPath, $jsonText, $utf8NoBom)
   Write-Host "Config guardada: $ConfigPath" -ForegroundColor Green
   Write-Host "  doorId=$($response.config.doorId)  readerId=$($response.config.readerId)  user=$($response.config.username)"
+  if ($response.config.localServerPort -and [int]$response.config.localServerPort -gt 0) {
+    $estName = $response.config._meta.estacionNombre
+    if (-not $estName) { $estName = $response.config._meta.estacionId }
+    Write-Host "  localServerPort=$($response.config.localServerPort)  estacion=$estName" -ForegroundColor Green
+  } else {
+    Write-Host "  (sin servidor LAN: el lector no tiene estacion asignada en Admin)" -ForegroundColor DarkYellow
+  }
   $configObj = $response.config
 
   Write-Step "npm install (dependencias del bridge)..."

@@ -136,16 +136,38 @@ function DigitalDoorPanel({
     if (!ok) return;
     setOpeningId(door.id);
     try {
+      const forceLocal = connectivityMode === 'local-fallback' || connectivityMode === 'offline';
+      // TEMP auditoría: camino elegido antes del fetch (quitar tras prueba).
+      // eslint-disable-next-line no-console
+      console.info('[DigitalDoorPanel:audit] open click', {
+        doorId: door.id,
+        connectivityMode,
+        forceLocal,
+        relayMode: door.relayMode || null,
+        hasLocalStation: Boolean(door.localStation),
+        localStation: door.localStation
+          ? {
+            estacionId: door.localStation.estacionId,
+            direccionRedLocal: door.localStation.direccionRedLocal,
+            puertoServidorLocal: door.localStation.puertoServidorLocal
+          }
+          : null
+      });
       const data = await openManualDoor({
         authToken,
         doorId: door.id,
         door,
-        forceLocal: connectivityMode === 'local-fallback' || connectivityMode === 'offline'
+        forceLocal
       });
-      const viaNote = data.via === 'local' ? ' (red local)' : '';
-      showSuccess((data.message || `${label} abierta`) + viaNote);
+      const viaNote = data.via === 'local'
+        ? ' (red local)'
+        : ` (vía nube${data.relay?.via ? `/${data.relay.via}` : ''})`;
+      const pathNote = data.auditPath ? ` [${data.auditPath}]` : '';
+      showSuccess((data.message || `${label} abierta`) + viaNote + pathNote);
       reload();
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[DigitalDoorPanel:audit] open failed', err?.message, err);
       showError(err.message || 'Error al abrir la puerta');
     } finally {
       setOpeningId(null);

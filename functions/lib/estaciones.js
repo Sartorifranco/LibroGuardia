@@ -228,6 +228,46 @@ const buildReaderEntryForStation = (lector, { apiBaseUrl, password = '' } = {}) 
 };
 
 /**
+ * Campos del servidor HTTP local del bridge a partir de una estación.
+ * null si no aplica (inactiva / sin secreto).
+ */
+const localServerFieldsFromEstacion = (estacion) => {
+  if (!estacion) return null;
+  if (estacion.activa === false) return null;
+  const secretoLocal = String(estacion.secretoLocal || '').trim();
+  if (!secretoLocal) return null;
+  const puerto = Number(estacion.puertoServidorLocal);
+  return {
+    localServerPort: Number.isFinite(puerto) && puerto > 0 ? Math.floor(puerto) : 8787,
+    localServerSecret: secretoLocal,
+    localServerHost: '0.0.0.0',
+    _meta: {
+      estacionId: estacion.id,
+      estacionNombre: estacion.nombre || '',
+      direccionRedLocal: estacion.direccionRedLocal || ''
+    }
+  };
+};
+
+/**
+ * Si el lector tiene estacionId, mezcla localServer* en el JSON del bridge.
+ * Estación inexistente / inactiva / sin secreto → deja el config igual (retrocompat).
+ */
+const enrichConfigWithEstacion = async (config = {}, estacionId = '') => {
+  const id = String(estacionId || '').trim();
+  if (!id || !config || typeof config !== 'object') return config;
+  try {
+    const estacion = await getEstacionById(id);
+    const fields = localServerFieldsFromEstacion(estacion);
+    if (!fields) return config;
+    return { ...config, ...fields };
+  } catch (err) {
+    if (err.status === 404) return config;
+    throw err;
+  }
+};
+
+/**
  * JSON unificado para door-reader-bridge (formato estación con readers[]).
  * Sin passwords de kiosk salvo que se pasen en passwordsByLectorId.
  * Incluye localServerPort/Secret de la estación.
@@ -239,12 +279,22 @@ const buildStationConfigForDownload = async (
   const estacion = await getEstacionById(estacionId);
   const lectores = await listLectoresDeEstacion(estacionId);
   const base = String(apiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/$/, '');
-
-  return {
-    apiBaseUrl: base,
+  const localFields = localServerFieldsFromEstacion(estacion) || {
     localServerPort: estacion.puertoServidorLocal,
     localServerSecret: estacion.secretoLocal,
     localServerHost: '0.0.0.0',
+    _meta: {
+      estacionId: estacion.id,
+      estacionNombre: estacion.nombre,
+      direccionRedLocal: estacion.direccionRedLocal
+    }
+  };
+
+  return {
+    apiBaseUrl: base,
+    localServerPort: localFields.localServerPort,
+    localServerSecret: localFields.localServerSecret,
+    localServerHost: localFields.localServerHost,
     readers: lectores.map((l) => buildReaderEntryForStation(l, {
       apiBaseUrl: base,
       password: passwordsByLectorId[l.id] || ''
@@ -252,11 +302,7 @@ const buildStationConfigForDownload = async (
     logFile: '/var/log/door-reader-bridge.log',
     reconnectMinMs: 2000,
     reconnectMaxMs: 60000,
-    _meta: {
-      estacionId: estacion.id,
-      estacionNombre: estacion.nombre,
-      direccionRedLocal: estacion.direccionRedLocal
-    }
+    _meta: localFields._meta
   };
 };
 
@@ -273,5 +319,7 @@ module.exports = {
   listLectoresDeEstacion,
   setLectoresDeEstacion,
   buildReaderEntryForStation,
+  localServerFieldsFromEstacion,
+  enrichConfigWithEstacion,
   buildStationConfigForDownload
 };

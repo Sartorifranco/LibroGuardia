@@ -137,11 +137,12 @@ const installMock = () => {
   delete require.cache[rolesPath];
   delete require.cache[lectoresPath];
   delete require.cache[pairingPath];
+  delete require.cache[require.resolve('../lib/estaciones')];
 
   const lectoresApi = require('../lib/lectores');
   const pairingApi = require('../lib/lectorPairing');
 
-  return { users, lectores, pairingCodes, lectoresApi, pairingApi };
+  return { users, lectores, estaciones, pairingCodes, lectoresApi, pairingApi };
 };
 
 describe('lectorPairing', () => {
@@ -166,6 +167,8 @@ describe('lectorPairing', () => {
     else delete require.cache[rolesPath];
     delete require.cache[lectoresPath];
     delete require.cache[pairingPath];
+    const estacionesPath = require.resolve('../lib/estaciones');
+    delete require.cache[estacionesPath];
   });
 
   it('genera código de 6 dígitos con TTL 10 min', async () => {
@@ -203,8 +206,66 @@ describe('lectorPairing', () => {
     assert.equal(exchanged.config.doorId, 'puerta-p1');
     assert.equal(exchanged.config.readerId, 'INGRESO_P1');
     assert.equal(exchanged.config.apiBaseUrl, 'https://bacarguard.web.app/api');
+    assert.equal(exchanged.config.localServerPort, undefined);
+    assert.equal(exchanged.config.localServerSecret, undefined);
     assert.notEqual(bag.users.get(created.username).password, oldHash);
     assert.ok(await bcrypt.compare(exchanged.password, bag.users.get(created.username).password));
+  });
+
+  it('canje con estacionId incluye localServerPort/Secret del bridge', async () => {
+    bag.estaciones.set('est-franco', {
+      nombre: 'PC Franco',
+      direccionRedLocal: '192.168.1.50',
+      puertoServidorLocal: 8787,
+      secretoLocal: 'sec-estacion-franco',
+      activa: true
+    });
+
+    const created = await bag.lectoresApi.createLector({
+      nombre: 'Ingreso',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso',
+      estacionId: 'est-franco'
+    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+
+    assert.equal(created.config.localServerPort, 8787);
+    assert.equal(created.config.localServerSecret, 'sec-estacion-franco');
+
+    const pair = await bag.pairingApi.createPairingCode(created.lector.id);
+    const exchanged = await bag.pairingApi.exchangePairingCode(pair.code, {
+      apiBaseUrl: 'https://bacarguard.web.app/api'
+    });
+
+    assert.equal(exchanged.config.localServerPort, 8787);
+    assert.equal(exchanged.config.localServerSecret, 'sec-estacion-franco');
+    assert.equal(exchanged.config.localServerHost, '0.0.0.0');
+    assert.equal(exchanged.config._meta.estacionId, 'est-franco');
+    assert.equal(exchanged.config._meta.estacionNombre, 'PC Franco');
+    assert.equal(exchanged.config.doorId, 'puerta-p1');
+    assert.ok(exchanged.password);
+  });
+
+  it('estacionId huérfano no rompe el canje (sin localServer*)', async () => {
+    const created = await bag.lectoresApi.createLector({
+      nombre: 'Ingreso',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso'
+    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+
+    // Simula asignación a estación borrada / inexistente.
+    const prev = bag.lectores.get(created.lector.id);
+    bag.lectores.set(created.lector.id, { ...prev, estacionId: 'est-fantasma' });
+
+    const pair = await bag.pairingApi.createPairingCode(created.lector.id);
+    const exchanged = await bag.pairingApi.exchangePairingCode(pair.code, {
+      apiBaseUrl: 'https://bacarguard.web.app/api'
+    });
+
+    assert.equal(exchanged.config.localServerPort, undefined);
+    assert.equal(exchanged.config.localServerSecret, undefined);
+    assert.equal(exchanged.config.doorId, 'puerta-p1');
   });
 
   it('un solo uso: segundo canje falla con mensaje genérico', async () => {
