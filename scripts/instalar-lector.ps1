@@ -111,9 +111,12 @@ function Invoke-Nssm {
   $output = & $NssmPath @Args 2>&1
   $code = $LASTEXITCODE
   $ErrorActionPreference = $prev
+  # NSSM a veces emite UTF-16; limpiar nulos para que -match funcione.
+  $text = ($output | ForEach-Object { "$_" }) -join "`n"
+  $text = $text -replace "`0", ''
   return [pscustomobject]@{
     ExitCode = $code
-    Output = $output
+    Output = $text
   }
 }
 
@@ -137,22 +140,47 @@ function Install-DoorReaderService {
     [void](Invoke-Nssm -NssmPath $NssmPath -Args @('remove', $ServiceName, 'confirm'))
   }
 
-  $install = Invoke-Nssm -NssmPath $NssmPath -Args @('install', $ServiceName, $NodePath, $BridgePath)
+  $install = Invoke-Nssm -NssmPath $NssmPath -Args @('install', $ServiceName, $NodePath)
   if ($install.ExitCode -ne 0) {
     throw ("nssm install fallo (exit $($install.ExitCode)): $($install.Output)")
   }
 
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppDirectory', $AppDir))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppParameters', $BridgePath))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppEnvironmentExtra', "DOOR_READER_CONFIG=$ConfigFile"))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStdout', (Join-Path $AppDir 'door-reader-bridge.service.log')))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStderr', (Join-Path $AppDir 'door-reader-bridge.service.log')))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppRotateFiles', '1'))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppRestartDelay', '5000'))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppExit', 'Default', 'Restart'))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'Start', 'SERVICE_AUTO_START'))
 
-  $start = Invoke-Nssm -NssmPath $NssmPath -Args @('start', $ServiceName)
-  if ($start.ExitCode -ne 0) {
-    throw ("nssm start fallo (exit $($start.ExitCode)): $($start.Output)")
+  # Limpiar log viejo para no confundir con errores anteriores (ej. BOM).
+  $logPath = Join-Path $AppDir 'door-reader-bridge.service.log'
+  if (Test-Path $logPath) {
+    Remove-Item $logPath -Force -ErrorAction SilentlyContinue
+  }
+
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('start', $ServiceName))
+  Start-Sleep -Seconds 2
+  $status = Invoke-Nssm -NssmPath $NssmPath -Args @('status', $ServiceName)
+  $statusText = [string]$status.Output
+
+  if ($statusText -match 'SERVICE_PAUSED') {
+    Write-Host "Servicio en PAUSED - reintentando restart..." -ForegroundColor Yellow
+    [void](Invoke-Nssm -NssmPath $NssmPath -Args @('restart', $ServiceName))
+    Start-Sleep -Seconds 2
+    $status = Invoke-Nssm -NssmPath $NssmPath -Args @('status', $ServiceName)
+    $statusText = [string]$status.Output
+  }
+
+  if ($statusText -notmatch 'SERVICE_RUNNING') {
+    Write-Host "Estado actual: $statusText" -ForegroundColor Red
+    if (Test-Path $logPath) {
+      Write-Host "Ultimas lineas del log:" -ForegroundColor Yellow
+      Get-Content $logPath -Tail 15 | ForEach-Object { Write-Host "  $_" }
+    }
+    throw ("No se pudo dejar el servicio en RUNNING. Estado: $statusText. Revisar log: $logPath")
   }
 
   Write-Host ""
@@ -218,7 +246,10 @@ if ($UseExistingConfig) {
   }
 
   Write-Step "Guardando door-reader.config.json"
-  ($response.config | ConvertTo-Json -Depth 8) | Set-Content -Path $ConfigPath -Encoding UTF8
+  # PowerShell 5.1 Set-Content -Encoding UTF8 agrega BOM y Node JSON.parse falla.
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  $jsonText = ($response.config | ConvertTo-Json -Depth 8) + "`n"
+  [System.IO.File]::WriteAllText($ConfigPath, $jsonText, $utf8NoBom)
   Write-Host "Config guardada: $ConfigPath" -ForegroundColor Green
   Write-Host "  doorId=$($response.config.doorId)  readerId=$($response.config.readerId)  user=$($response.config.username)"
   $configObj = $response.config
