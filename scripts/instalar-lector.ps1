@@ -22,11 +22,15 @@
 
 .PARAMETER SkipService
   Solo guarda el JSON; no registra el servicio NSSM.
+
+.PARAMETER UseExistingConfig
+  No pide codigo: usa door-reader.config.json ya guardado y solo (re)instala el servicio.
 #>
 param(
   [string]$Code = '',
   [string]$ApiBaseUrl = 'https://bacarguard.web.app/api',
-  [switch]$SkipService
+  [switch]$SkipService,
+  [switch]$UseExistingConfig
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,6 +99,74 @@ function Resolve-Nssm {
   return $exe.FullName
 }
 
+# NSSM escribe errores en stderr aunque el caso sea "servicio inexistente".
+# Con ErrorActionPreference=Stop eso aborta el script: hay que tragar stderr/exit.
+function Invoke-Nssm {
+  param(
+    [Parameter(Mandatory = $true)][string]$NssmPath,
+    [Parameter(Mandatory = $true)][string[]]$Args
+  )
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $output = & $NssmPath @Args 2>&1
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $prev
+  return [pscustomobject]@{
+    ExitCode = $code
+    Output = $output
+  }
+}
+
+function Install-DoorReaderService {
+  param(
+    [string]$NssmPath,
+    [string]$NodePath,
+    [string]$ServiceName,
+    [string]$BridgePath,
+    [string]$AppDir,
+    [string]$ConfigFile
+  )
+
+  Write-Step "Registrando servicio Windows: $ServiceName"
+
+  $status = Invoke-Nssm -NssmPath $NssmPath -Args @('status', $ServiceName)
+  if ($status.ExitCode -eq 0) {
+    Write-Host "Servicio previo encontrado - deteniendolo..." -ForegroundColor Yellow
+    [void](Invoke-Nssm -NssmPath $NssmPath -Args @('stop', $ServiceName, 'confirm'))
+    Start-Sleep -Seconds 1
+    [void](Invoke-Nssm -NssmPath $NssmPath -Args @('remove', $ServiceName, 'confirm'))
+  }
+
+  $install = Invoke-Nssm -NssmPath $NssmPath -Args @('install', $ServiceName, $NodePath, $BridgePath)
+  if ($install.ExitCode -ne 0) {
+    throw ("nssm install fallo (exit $($install.ExitCode)): $($install.Output)")
+  }
+
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppDirectory', $AppDir))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppEnvironmentExtra', "DOOR_READER_CONFIG=$ConfigFile"))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStdout', (Join-Path $AppDir 'door-reader-bridge.service.log')))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStderr', (Join-Path $AppDir 'door-reader-bridge.service.log')))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppRotateFiles', '1'))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppRestartDelay', '5000'))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'Start', 'SERVICE_AUTO_START'))
+
+  $start = Invoke-Nssm -NssmPath $NssmPath -Args @('start', $ServiceName)
+  if ($start.ExitCode -ne 0) {
+    throw ("nssm start fallo (exit $($start.ExitCode)): $($start.Output)")
+  }
+
+  Write-Host ""
+  Write-Host "Listo. El lector queda como servicio permanente." -ForegroundColor Green
+  Write-Host "  Servicio: $ServiceName"
+  Write-Host "  Log:      $(Join-Path $AppDir 'door-reader-bridge.service.log')"
+  Write-Host "  Comandos utiles:"
+  Write-Host "    `"$NssmPath`" status $ServiceName"
+  Write-Host "    `"$NssmPath`" restart $ServiceName"
+  Write-Host "    `"$NssmPath`" stop $ServiceName"
+  Write-Host ""
+  Write-Host "No hace falta volver a abrir PowerShell en esta maquina para el lector." -ForegroundColor Green
+}
+
 Write-Host "=== Instalador lector LibroGuardia ===" -ForegroundColor Cyan
 Write-Host "Carpeta: $ScriptsDir"
 
@@ -105,48 +177,59 @@ if (-not (Test-Path $BridgeJs)) {
 Assert-Admin
 $nodePath = Resolve-Node
 
-if (-not $Code) {
-  $Code = Read-Host "Codigo de instalacion (6 digitos)"
-}
-$Code = ($Code -replace '\s', '').Trim()
-if ($Code -notmatch '^\d{6}$') {
-  throw "El codigo debe ser exactamente 6 digitos numericos."
-}
+$configObj = $null
 
-$ApiBaseUrl = ($ApiBaseUrl -replace '/$', '').Trim()
-if (-not $ApiBaseUrl) { $ApiBaseUrl = 'https://bacarguard.web.app/api' }
+if ($UseExistingConfig) {
+  if (-not (Test-Path $ConfigPath)) {
+    throw "No existe $ConfigPath. Corre el instalador con codigo primero (sin -UseExistingConfig)."
+  }
+  Write-Step "Usando config existente: $ConfigPath"
+  $configObj = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
+} else {
+  if (-not $Code) {
+    $Code = Read-Host "Codigo de instalacion (6 digitos)"
+  }
+  $Code = ($Code -replace '\s', '').Trim()
+  if ($Code -notmatch '^\d{6}$') {
+    throw "El codigo debe ser exactamente 6 digitos numericos."
+  }
 
-$customUrl = Read-Host "URL de la API [$ApiBaseUrl] (Enter = default)"
-if ($customUrl.Trim()) {
-  $ApiBaseUrl = ($customUrl.Trim() -replace '/$', '')
-}
+  $ApiBaseUrl = ($ApiBaseUrl -replace '/$', '').Trim()
+  if (-not $ApiBaseUrl) { $ApiBaseUrl = 'https://bacarguard.web.app/api' }
 
-Write-Step "Canjeando codigo con $ApiBaseUrl/auth/pairing-exchange ..."
-$exchangeUrl = "$ApiBaseUrl/auth/pairing-exchange"
-try {
-  $body = @{ code = $Code } | ConvertTo-Json
-  $response = Invoke-RestMethod -Method Post -Uri $exchangeUrl -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30
-} catch {
-  $msg = $_.ErrorDetails.Message
-  if (-not $msg) { $msg = $_.Exception.Message }
-  throw "Emparejamiento fallo: $msg"
-}
+  $customUrl = Read-Host "URL de la API [$ApiBaseUrl] (Enter = default)"
+  if ($customUrl.Trim()) {
+    $ApiBaseUrl = ($customUrl.Trim() -replace '/$', '')
+  }
 
-if (-not $response.config) {
-  throw "La API no devolvio config. Respuesta inesperada."
-}
+  Write-Step "Canjeando codigo con $ApiBaseUrl/auth/pairing-exchange ..."
+  $exchangeUrl = "$ApiBaseUrl/auth/pairing-exchange"
+  try {
+    $body = @{ code = $Code } | ConvertTo-Json
+    $response = Invoke-RestMethod -Method Post -Uri $exchangeUrl -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30
+  } catch {
+    $msg = $_.ErrorDetails.Message
+    if (-not $msg) { $msg = $_.Exception.Message }
+    throw "Emparejamiento fallo: $msg"
+  }
 
-Write-Step "Guardando door-reader.config.json"
-($response.config | ConvertTo-Json -Depth 8) | Set-Content -Path $ConfigPath -Encoding UTF8
-Write-Host "Config guardada: $ConfigPath" -ForegroundColor Green
-Write-Host "  doorId=$($response.config.doorId)  readerId=$($response.config.readerId)  user=$($response.config.username)"
+  if (-not $response.config) {
+    throw "La API no devolvio config. Respuesta inesperada."
+  }
 
-Write-Step "npm install (dependencias del bridge)..."
-Push-Location $ScriptsDir
-try {
-  npm install --omit=dev
-} finally {
-  Pop-Location
+  Write-Step "Guardando door-reader.config.json"
+  ($response.config | ConvertTo-Json -Depth 8) | Set-Content -Path $ConfigPath -Encoding UTF8
+  Write-Host "Config guardada: $ConfigPath" -ForegroundColor Green
+  Write-Host "  doorId=$($response.config.doorId)  readerId=$($response.config.readerId)  user=$($response.config.username)"
+  $configObj = $response.config
+
+  Write-Step "npm install (dependencias del bridge)..."
+  Push-Location $ScriptsDir
+  try {
+    npm install --omit=dev
+  } finally {
+    Pop-Location
+  }
 }
 
 if ($SkipService) {
@@ -158,35 +241,13 @@ if ($SkipService) {
 }
 
 $nssm = Resolve-Nssm
-$doorId = [string]$response.config.doorId
+$doorId = [string]$configObj.doorId
 $serviceName = if ($doorId) { "LibroGuardiaDoor-$($doorId -replace '[^A-Za-z0-9_-]', '_')" } else { $ServiceNameDefault }
 
-Write-Step "Registrando servicio Windows: $serviceName"
-$existing = & $nssm status $serviceName 2>$null
-if ($LASTEXITCODE -eq 0 -or $existing) {
-  Write-Host "Servicio previo encontrado - deteniendolo..." -ForegroundColor Yellow
-  & $nssm stop $serviceName confirm 2>$null | Out-Null
-  Start-Sleep -Seconds 1
-  & $nssm remove $serviceName confirm 2>$null | Out-Null
-}
-
-& $nssm install $serviceName $nodePath $BridgeJs | Out-Null
-& $nssm set $serviceName AppDirectory $ScriptsDir | Out-Null
-& $nssm set $serviceName AppEnvironmentExtra "DOOR_READER_CONFIG=$ConfigPath" | Out-Null
-& $nssm set $serviceName AppStdout (Join-Path $ScriptsDir 'door-reader-bridge.service.log') | Out-Null
-& $nssm set $serviceName AppStderr (Join-Path $ScriptsDir 'door-reader-bridge.service.log') | Out-Null
-& $nssm set $serviceName AppRotateFiles 1 | Out-Null
-& $nssm set $serviceName AppRestartDelay 5000 | Out-Null
-& $nssm set $serviceName Start SERVICE_AUTO_START | Out-Null
-& $nssm start $serviceName | Out-Null
-
-Write-Host ""
-Write-Host "Listo. El lector queda como servicio permanente." -ForegroundColor Green
-Write-Host "  Servicio: $serviceName"
-Write-Host "  Log:      $(Join-Path $ScriptsDir 'door-reader-bridge.service.log')"
-Write-Host "  Comandos utiles:"
-Write-Host "    nssm status $serviceName"
-Write-Host "    nssm restart $serviceName"
-Write-Host "    nssm stop $serviceName"
-Write-Host ""
-Write-Host "No hace falta volver a abrir PowerShell en esta maquina para el lector." -ForegroundColor Green
+Install-DoorReaderService `
+  -NssmPath $nssm `
+  -NodePath $nodePath `
+  -ServiceName $serviceName `
+  -BridgePath $BridgeJs `
+  -AppDir $ScriptsDir `
+  -ConfigFile $ConfigPath
