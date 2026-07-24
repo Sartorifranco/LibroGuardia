@@ -1,21 +1,21 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-  Empareja un lector LibroGuardia con un código de 6 dígitos e instala
+  Empareja un lector LibroGuardia con un codigo de 6 digitos e instala
   door-reader-bridge.js como servicio Windows (NSSM).
 
 .DESCRIPTION
   Flujo recomendado:
-    1. Admin → Lectores → "Generar código de instalación"
+    1. Admin > Lectores > "Generar codigo de instalacion"
     2. En la mini PC (como Administrador): doble clic en instalar-lector.cmd
        o:  powershell -ExecutionPolicy Bypass -File .\instalar-lector.ps1
-    3. Pegá el código. Listo: arranca solo con Windows.
+    3. Pega el codigo. Listo: arranca solo con Windows.
 
-  NSSM: si no está en el PATH, el script descarga la build portable 2.24
-  en scripts\tools\nssm\ (una sola vez por máquina).
+  NSSM: si no esta en el PATH, el script descarga la build portable 2.24
+  en scripts\tools\nssm\ (una sola vez por maquina).
 
 .PARAMETER Code
-  Código de 6 dígitos (si se omite, se pide interactivamente).
+  Codigo de 6 digitos (si se omite, se pide interactivamente).
 
 .PARAMETER ApiBaseUrl
   URL base de la API (default: https://bacarguard.web.app/api).
@@ -48,7 +48,7 @@ function Assert-Admin {
   )
   if (-not $isAdmin -and -not $SkipService) {
     Write-Host "Este instalador necesita PowerShell como Administrador para registrar el servicio." -ForegroundColor Red
-    Write-Host "Clic derecho → Ejecutar como administrador, o usá instalar-lector.cmd" -ForegroundColor Yellow
+    Write-Host "Clic derecho > Ejecutar como administrador, o usa instalar-lector.cmd" -ForegroundColor Yellow
     exit 1
   }
 }
@@ -56,7 +56,7 @@ function Assert-Admin {
 function Resolve-Node {
   $node = Get-Command node -ErrorAction SilentlyContinue
   if (-not $node) {
-    throw "No se encontró Node.js en el PATH. Instalá LTS desde https://nodejs.org/ y reabrí la consola."
+    throw "No se encontro Node.js en el PATH. Instala LTS desde https://nodejs.org/ y reabri la consola."
   }
   return $node.Source
 }
@@ -70,23 +70,18 @@ function Resolve-Nssm {
     Select-Object -First 1
   if ($local) { return $local.FullName }
 
-  Write-Step "NSSM no está instalado — descargando portable a tools\nssm…"
+  Write-Step "NSSM no esta instalado - descargando portable a tools\nssm..."
   New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null
   $zipPath = Join-Path $ToolsDir 'nssm-2.24.zip'
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Invoke-WebRequest -Uri $NssmZipUrl -OutFile $zipPath -UseBasicParsing
   } catch {
-    throw @"
-No se pudo descargar NSSM automáticamente ($($_.Exception.Message)).
-
-Instalalo una vez a mano:
-  1. Descargá https://nssm.cc/download
-  2. Copiá nssm.exe (win64) a $ToolsDir
-  3. Volvé a correr este script.
-
-O instalá NSSM en el PATH del sistema.
-"@
+    $errMsg = $_.Exception.Message
+    throw ("No se pudo descargar NSSM automaticamente ($errMsg). " +
+      "Instalalo una vez a mano: 1) Descarga https://nssm.cc/download  " +
+      "2) Copia nssm.exe (win64) a $ToolsDir  3) Volve a correr este script. " +
+      "O instala NSSM en el PATH del sistema.")
   }
   Expand-Archive -Path $zipPath -DestinationPath $ToolsDir -Force
   $exe = Get-ChildItem -Path $ToolsDir -Filter 'nssm.exe' -Recurse |
@@ -95,7 +90,7 @@ O instalá NSSM en el PATH del sistema.
   if (-not $exe) {
     $exe = Get-ChildItem -Path $ToolsDir -Filter 'nssm.exe' -Recurse | Select-Object -First 1
   }
-  if (-not $exe) { throw "NSSM descargado pero no se encontró nssm.exe en $ToolsDir" }
+  if (-not $exe) { throw "NSSM descargado pero no se encontro nssm.exe en $ToolsDir" }
   Write-Host "NSSM listo: $($exe.FullName)" -ForegroundColor Green
   return $exe.FullName
 }
@@ -104,18 +99,18 @@ Write-Host "=== Instalador lector LibroGuardia ===" -ForegroundColor Cyan
 Write-Host "Carpeta: $ScriptsDir"
 
 if (-not (Test-Path $BridgeJs)) {
-  throw "No está door-reader-bridge.js en $ScriptsDir. Copiá la carpeta scripts completa."
+  throw "No esta door-reader-bridge.js en $ScriptsDir. Copia la carpeta scripts completa."
 }
 
 Assert-Admin
 $nodePath = Resolve-Node
 
 if (-not $Code) {
-  $Code = Read-Host "Código de instalación (6 dígitos)"
+  $Code = Read-Host "Codigo de instalacion (6 digitos)"
 }
 $Code = ($Code -replace '\s', '').Trim()
 if ($Code -notmatch '^\d{6}$') {
-  throw "El código debe ser exactamente 6 dígitos numéricos."
+  throw "El codigo debe ser exactamente 6 digitos numericos."
 }
 
 $ApiBaseUrl = ($ApiBaseUrl -replace '/$', '').Trim()
@@ -126,19 +121,19 @@ if ($customUrl.Trim()) {
   $ApiBaseUrl = ($customUrl.Trim() -replace '/$', '')
 }
 
-Write-Step "Canjeando código con $ApiBaseUrl/auth/pairing-exchange …"
+Write-Step "Canjeando codigo con $ApiBaseUrl/auth/pairing-exchange ..."
 $exchangeUrl = "$ApiBaseUrl/auth/pairing-exchange"
 try {
   $body = @{ code = $Code } | ConvertTo-Json
-  $response = Invoke-RestMethod -Method Post -Uri $exchangeUrl -ContentType 'application/json' -Body $body -TimeoutSec 30
+  $response = Invoke-RestMethod -Method Post -Uri $exchangeUrl -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 30
 } catch {
   $msg = $_.ErrorDetails.Message
   if (-not $msg) { $msg = $_.Exception.Message }
-  throw "Emparejamiento falló: $msg"
+  throw "Emparejamiento fallo: $msg"
 }
 
 if (-not $response.config) {
-  throw "La API no devolvió config. Respuesta inesperada."
+  throw "La API no devolvio config. Respuesta inesperada."
 }
 
 Write-Step "Guardando door-reader.config.json"
@@ -146,7 +141,7 @@ Write-Step "Guardando door-reader.config.json"
 Write-Host "Config guardada: $ConfigPath" -ForegroundColor Green
 Write-Host "  doorId=$($response.config.doorId)  readerId=$($response.config.readerId)  user=$($response.config.username)"
 
-Write-Step "npm install (dependencias del bridge)…"
+Write-Step "npm install (dependencias del bridge)..."
 Push-Location $ScriptsDir
 try {
   npm install --omit=dev
@@ -169,7 +164,7 @@ $serviceName = if ($doorId) { "LibroGuardiaDoor-$($doorId -replace '[^A-Za-z0-9_
 Write-Step "Registrando servicio Windows: $serviceName"
 $existing = & $nssm status $serviceName 2>$null
 if ($LASTEXITCODE -eq 0 -or $existing) {
-  Write-Host "Servicio previo encontrado — deteniéndolo…" -ForegroundColor Yellow
+  Write-Host "Servicio previo encontrado - deteniendolo..." -ForegroundColor Yellow
   & $nssm stop $serviceName confirm 2>$null | Out-Null
   Start-Sleep -Seconds 1
   & $nssm remove $serviceName confirm 2>$null | Out-Null
@@ -189,9 +184,9 @@ Write-Host ""
 Write-Host "Listo. El lector queda como servicio permanente." -ForegroundColor Green
 Write-Host "  Servicio: $serviceName"
 Write-Host "  Log:      $(Join-Path $ScriptsDir 'door-reader-bridge.service.log')"
-Write-Host "  Comandos útiles:"
+Write-Host "  Comandos utiles:"
 Write-Host "    nssm status $serviceName"
 Write-Host "    nssm restart $serviceName"
 Write-Host "    nssm stop $serviceName"
 Write-Host ""
-Write-Host "No hace falta volver a abrir PowerShell en esta máquina para el lector." -ForegroundColor Green
+Write-Host "No hace falta volver a abrir PowerShell en esta maquina para el lector." -ForegroundColor Green
