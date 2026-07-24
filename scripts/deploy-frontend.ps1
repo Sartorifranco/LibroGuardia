@@ -1,4 +1,4 @@
-# Despliega el frontend a Firebase Hosting (bacarguard.web.app)
+﻿# Despliega el frontend a Firebase Hosting (bacarguard.web.app)
 # Uso: .\scripts\deploy-frontend.ps1
 
 $ErrorActionPreference = "Stop"
@@ -11,4 +11,4 @@ npm run build
 Write-Host ">> Deploy a Firebase (bacarguard)..." -ForegroundColor Cyan
 firebase deploy --only hosting:bacarguard
 
-Write-Host ">> Listo: https://bacarguard.web.app" -ForegroundColor Green
+Write-Host ">> Listo: https://mss-guard.web.app" -ForegroundColor Green

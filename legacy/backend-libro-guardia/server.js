@@ -1,4 +1,4 @@
-// backend-libro-guardia/server.js
+﻿// backend-libro-guardia/server.js
 
 require('dotenv').config();
 const express = require('express');
@@ -18,7 +18,7 @@ if (!JWT_SECRET || !MONGODB_URI) {
 }
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
-  'http://localhost:3000,https://bacarguard.web.app,https://bacarguard.firebaseapp.com'
+  'http://localhost:3000,https://mss-guard.web.app,https://bacarguard.firebaseapp.com'
 ).split(',').map((origin) => origin.trim());
 
 app.use(cors({
@@ -99,14 +99,14 @@ const Entry = mongoose.model('Entry', EntrySchema);
 const auth = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
   if (!token) {
-    return res.status(401).json({ message: 'No token, autorización denegada' });
+    return res.status(401).json({ message: 'No token, autorizaciÃ³n denegada' });
   }
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {
-    res.status(401).json({ message: 'Token no válido' });
+    res.status(401).json({ message: 'Token no vÃ¡lido' });
   }
 };
 
@@ -129,20 +129,20 @@ const validateEntryPayload = (type, body) => {
       if (!body.movementType) return 'El tipo de movimiento es obligatorio';
       break;
     case 'vehiculo':
-      if (!body.plate?.trim()) return 'La patente es obligatoria para vehículos';
+      if (!body.plate?.trim()) return 'La patente es obligatoria para vehÃ­culos';
       if (!body.movementType) return 'El tipo de movimiento es obligatorio';
       break;
     case 'flota':
       if (!body.mobile?.trim() || !body.flotaDriver?.trim()) {
-        return 'El móvil y el chofer son obligatorios para flota';
+        return 'El mÃ³vil y el chofer son obligatorios para flota';
       }
       if (!body.movementType) return 'El tipo de movimiento es obligatorio';
       break;
     case 'novedad':
-      if (!body.description?.trim()) return 'La descripción es obligatoria para novedades';
+      if (!body.description?.trim()) return 'La descripciÃ³n es obligatoria para novedades';
       break;
     default:
-      return 'Tipo de entrada inválido';
+      return 'Tipo de entrada invÃ¡lido';
   }
   return null;
 };
@@ -156,12 +156,12 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// Registro público: siempre crea usuarios con rol guardia
+// Registro pÃºblico: siempre crea usuarios con rol guardia
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username?.trim() || !password) {
-      return res.status(400).json({ message: 'Usuario y contraseña son obligatorios' });
+      return res.status(400).json({ message: 'Usuario y contraseÃ±a son obligatorios' });
     }
     const user = new User({ username: username.trim(), password, role: 'guardia' });
     await user.save();
@@ -182,14 +182,14 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     const user = await User.findOne({ username });
     if (!user) {
-      return res.status(400).json({ message: 'Credenciales inválidas' });
+      return res.status(400).json({ message: 'Credenciales invÃ¡lidas' });
     }
     if (!user.active) {
       return res.status(403).json({ message: 'Su cuenta ha sido deshabilitada. Contacte a un administrador.' });
     }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ message: 'Credenciales inválidas' });
+      return res.status(400).json({ message: 'Credenciales invÃ¡lidas' });
     }
     const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
     res.json({
@@ -197,7 +197,7 @@ app.post('/api/auth/login', async (req, res) => {
       user: { id: user._id, username: user.username, role: user.role, active: user.active }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al iniciar sesión', error: err.message });
+    res.status(500).json({ message: 'Error al iniciar sesiÃ³n', error: err.message });
   }
 });
 
@@ -217,7 +217,7 @@ app.post('/api/admin/users', auth, authorize('admin'), async (req, res) => {
   try {
     const { username, password, role } = req.body;
     if (!['guardia', 'admin', 'supervisor'].includes(role)) {
-      return res.status(400).json({ message: 'Rol inválido especificado.' });
+      return res.status(400).json({ message: 'Rol invÃ¡lido especificado.' });
     }
     const user = new User({ username, password, role });
     await user.save();
@@ -255,7 +255,7 @@ app.put('/api/admin/users/:id', auth, authorize(['admin', 'supervisor']), async 
     if (req.user.role === 'admin') {
       if (role) {
         if (!['guardia', 'admin', 'supervisor'].includes(role)) {
-          return res.status(400).json({ message: 'Rol inválido' });
+          return res.status(400).json({ message: 'Rol invÃ¡lido' });
         }
         userToUpdate.role = role;
       }
@@ -319,16 +319,16 @@ app.post('/api/admin/fleet/mobiles/upload', auth, authorize(['admin', 'superviso
     const { data } = req.body;
 
     if (!Array.isArray(data) || data.length === 0 || data.some((item) => typeof item.name !== 'string' || !item.name.trim())) {
-      return res.status(400).json({ message: 'Formato de datos inválido. Se espera un array no vacío con objetos { name }.' });
+      return res.status(400).json({ message: 'Formato de datos invÃ¡lido. Se espera un array no vacÃ­o con objetos { name }.' });
     }
 
     const normalized = data.map((item) => ({ name: item.name.trim() }));
     await Mobile.deleteMany({});
     await Mobile.insertMany(normalized);
 
-    res.status(200).json({ message: 'Lista de móviles actualizada exitosamente.' });
+    res.status(200).json({ message: 'Lista de mÃ³viles actualizada exitosamente.' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al subir la lista de móviles', error: err.message });
+    res.status(500).json({ message: 'Error al subir la lista de mÃ³viles', error: err.message });
   }
 });
 
@@ -337,7 +337,7 @@ app.post('/api/admin/fleet/drivers/upload', auth, authorize(['admin', 'superviso
     const { data } = req.body;
 
     if (!Array.isArray(data) || data.length === 0 || data.some((item) => typeof item.name !== 'string' || !item.name.trim())) {
-      return res.status(400).json({ message: 'Formato de datos inválido. Se espera un array no vacío con objetos { name }.' });
+      return res.status(400).json({ message: 'Formato de datos invÃ¡lido. Se espera un array no vacÃ­o con objetos { name }.' });
     }
 
     const normalized = data.map((item) => ({ name: item.name.trim() }));
@@ -355,7 +355,7 @@ app.get('/api/fleet/mobiles', auth, async (req, res) => {
     const mobiles = await Mobile.find({}).sort({ name: 1 });
     res.json({ mobiles });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener móviles', error: err.message });
+    res.status(500).json({ message: 'Error al obtener mÃ³viles', error: err.message });
   }
 });
 

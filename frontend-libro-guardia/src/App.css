@@ -1,4 +1,4 @@
-/* Libro de Guardia ‚Äî temas (dark / light).
+/* Libro de Guardia ? temas (dark / light).
    Colores de marca: --brand-* los inyecta applyBrandTheme desde src/config/brand.js */
 
 :root {
@@ -115,12 +115,13 @@
 .main-card,
 .app-main-card {
   width: 100%;
-  max-width: 1600px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   background: transparent;
   border: none;
   box-shadow: none;
   border-radius: 0;
+  box-sizing: border-box;
 }
 
 .loading-screen {
@@ -180,9 +181,28 @@
 }
 
 .auth-logo {
-  width: 2.75rem;
+  width: auto;
   height: 2.75rem;
+  max-width: min(12rem, 42vw);
+  object-fit: contain;
   flex-shrink: 0;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.auth-brand .auth-logo {
+  height: clamp(3.5rem, 12vw, 5.5rem);
+  max-width: min(18rem, 70vw);
+}
+
+.app-header-brand .auth-logo {
+  height: clamp(2.25rem, 5vw, 3rem);
+  max-width: min(10rem, 40vw);
 }
 
 .user-info-tag {
@@ -269,13 +289,6 @@
   border-radius: var(--radius);
   box-shadow: var(--shadow-card);
   padding: 2rem;
-}
-
-.auth-brand {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
 }
 
 .auth-title {
@@ -1890,7 +1903,7 @@ input[type="datetime-local"].input-field {
 }
 
 .kiosk-screen-connection_error {
-  /* √Åmbar/gris: no es rechazo ni autorizaci√≥n */
+  /* ?mbar/gris: no es rechazo ni autorizaci?n */
   background: linear-gradient(180deg, #422006 0%, #78350f 50%, #92400e 100%);
   color: #ffffff;
 }
@@ -2952,7 +2965,7 @@ input[type="datetime-local"].input-field {
   z-index: 2;
 }
 
-/* Doors admin v2 ‚Äî listado + ficha */
+/* Doors admin v2 ? listado + ficha */
 .doors-admin-v2 .theme-section-title {
   margin-bottom: 0.25rem;
 }
@@ -3199,7 +3212,7 @@ input[type="datetime-local"].input-field {
   color: var(--text, #111);
 }
 
-/* Acceso a puertas por persona (Admin ‚Üí Acceso personal) */
+/* Acceso a puertas por persona (Admin ? Acceso personal) */
 .people-access-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
@@ -3762,10 +3775,11 @@ body {
 
 .app-main-inner {
   flex: 1;
-  padding: 1.5rem 2rem 2.5rem;
-  max-width: 1440px;
+  padding: 1.25rem clamp(0.75rem, 2vw, 2rem) 2rem;
+  max-width: none;
   width: 100%;
-  margin: 0 auto;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 .app-sidebar {
@@ -4164,8 +4178,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2rem;
-  padding: 0.25rem 0.5rem 0.25rem 0;
-  max-width: 1480px;
+  padding: 0.25rem 0;
+  max-width: none;
+  width: 100%;
 }
 
 .auth-help-text {
@@ -5245,7 +5260,7 @@ body {
   color: var(--text-muted, #737373);
 }
 
-/* óó Centro de control guardia óó */
+/* ?? Centro de control guardia ?? */
 .guardia-control-center {
   display: grid;
   gap: 1.25rem;

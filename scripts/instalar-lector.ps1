@@ -18,7 +18,7 @@
   Codigo de 6 digitos (si se omite, se pide interactivamente).
 
 .PARAMETER ApiBaseUrl
-  URL base de la API (default: https://bacarguard.web.app/api).
+  URL base de la API (default: https://mss-guard.web.app/api).
 
 .PARAMETER SkipService
   Solo guarda el JSON; no registra el servicio NSSM.
@@ -28,7 +28,7 @@
 #>
 param(
   [string]$Code = '',
-  [string]$ApiBaseUrl = 'https://bacarguard.web.app/api',
+  [string]$ApiBaseUrl = 'https://mss-guard.web.app/api',
   [switch]$SkipService,
   [switch]$UseExistingConfig
 )
@@ -223,7 +223,7 @@ if ($UseExistingConfig) {
   }
 
   $ApiBaseUrl = ($ApiBaseUrl -replace '/$', '').Trim()
-  if (-not $ApiBaseUrl) { $ApiBaseUrl = 'https://bacarguard.web.app/api' }
+  if (-not $ApiBaseUrl) { $ApiBaseUrl = 'https://mss-guard.web.app/api' }
 
   $customUrl = Read-Host "URL de la API [$ApiBaseUrl] (Enter = default)"
   if ($customUrl.Trim()) {

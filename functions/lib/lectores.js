@@ -18,7 +18,7 @@ const DIRECTIONS = ['ingreso', 'egreso', 'ambos'];
 const STATUS_GREEN_MS = 10 * 60 * 1000; // ≤10 min: vivo (2 heartbeats de margen)
 const STATUS_YELLOW_MS = 30 * 60 * 1000; // ≤30 min: stale; >30 o nunca → offline
 
-const DEFAULT_API_BASE_URL = 'https://bacarguard.web.app/api';
+const DEFAULT_API_BASE_URL = 'https://mss-guard.web.app/api';
 
 const slugify = (value = '') => String(value)
   .trim()
@@ -299,7 +299,7 @@ const resolveApiBaseUrl = (req) => {
   if (fromEnv) return fromEnv.replace(/\/$/, '');
   const proto = req?.headers?.['x-forwarded-proto'] || 'https';
   const host = req?.headers?.['x-forwarded-host'] || req?.headers?.host;
-  if (host && /bacarguard|web\.app|localhost/i.test(String(host))) {
+  if (host && /mss-guard|bacarguard|web\.app|localhost/i.test(String(host))) {
     return `${proto}://${host}/api`.replace(/([^:]\/)\/+/g, '$1');
   }
   return DEFAULT_API_BASE_URL;

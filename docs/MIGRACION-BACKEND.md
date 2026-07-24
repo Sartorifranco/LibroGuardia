@@ -1,29 +1,29 @@
-# Fase 0 — Migración backend: Node+Mongo → Firebase Functions + Firestore
+﻿# Fase 0 â€” MigraciÃ³n backend: Node+Mongo â†’ Firebase Functions + Firestore
 
 **Fecha:** 2026-07-14  
-**Alcance:** investigación no destructiva (sin borrar ni desactivar nada).  
-**Conclusión corta:** el hardware (molinete/SR201) **ya no depende** del API Node+Mongo. Depende de **Cloud Functions + un puente local TCP**. El backend `backend-libro-guardia` es legado CRUD y ya está cubierto (y superado) por `functions/`.
+**Alcance:** investigaciÃ³n no destructiva (sin borrar ni desactivar nada).  
+**ConclusiÃ³n corta:** el hardware (molinete/SR201) **ya no depende** del API Node+Mongo. Depende de **Cloud Functions + un puente local TCP**. El backend `backend-libro-guardia` es legado CRUD y ya estÃ¡ cubierto (y superado) por `functions/`.
 
 ---
 
-## 1. Qué hace hoy el backend Node (`backend-libro-guardia`)
+## 1. QuÃ© hace hoy el backend Node (`backend-libro-guardia`)
 
 Archivo principal: `backend-libro-guardia/server.js` (Express + MongoDB, puerto 5020).
 
 ### Rutas (todas son API CRUD / auth)
 
-| Área | Rutas |
+| Ãrea | Rutas |
 |------|--------|
 | Health | `GET /api/health` |
 | Auth | `POST /api/auth/register`, `login`, `GET /api/auth/me` |
 | Users | CRUD `/api/admin/users` |
-| Flota listas | upload/GET móviles y choferes |
+| Flota listas | upload/GET mÃ³viles y choferes |
 | Personal | GET/POST `/api/master-data/personal` |
 | Libro | GET/POST `/api/entries` |
 
 ### Hardware
 
-**Ninguna ruta habla con SR201, relés, puertas ni IPs de placa.**  
+**Ninguna ruta habla con SR201, relÃ©s, puertas ni IPs de placa.**  
 Dependencias: solo `express`, `mongoose`, `bcryptjs`, `jsonwebtoken`, `cors`, `dotenv`.
 
 ### Modelos Mongo
@@ -32,20 +32,20 @@ Dependencias: solo `express`, `mongoose`, `bcryptjs`, `jsonwebtoken`, `cors`, `d
 
 ---
 
-## 2. Qué hace Firebase Functions respecto al control físico
+## 2. QuÃ© hace Firebase Functions respecto al control fÃ­sico
 
-Implementación **completa** de negocio + apertura en la nube:
+ImplementaciÃ³n **completa** de negocio + apertura en la nube:
 
-| Capacidad | Dónde |
+| Capacidad | DÃ³nde |
 |-----------|--------|
-| Validar acceso (DNI / autorizaciones / nómina) | `functions/accessControl.js` |
-| Abrir puerta/molinete (auto + manual) | `functions/doorController.js` → `functions/sr201.js` |
+| Validar acceso (DNI / autorizaciones / nÃ³mina) | `functions/accessControl.js` |
+| Abrir puerta/molinete (auto + manual) | `functions/doorController.js` â†’ `functions/sr201.js` |
 | Multi-puerta + estancos | `functions/lib/doorsConfig.js`, `docs/MULTI-PUERTAS.md` |
 | Config admin + test relay | `GET/PUT /api/admin/access-control`, `doors-config`, `POST /api/access/test-relay` |
 | Kiosk / molinete | `POST /api/access/kiosk-scan`, `POST /api/access/validar` |
-| Botón “Abrir puerta” guardia | `POST /api/guard/open-door` |
+| BotÃ³n â€œAbrir puertaâ€ guardia | `POST /api/guard/open-door` |
 
-Endpoints relevantes (ya en prod vía Hosting → Function `api`):
+Endpoints relevantes (ya en prod vÃ­a Hosting â†’ Function `api`):
 
 - `GET/PUT /api/admin/access-control`
 - `GET/PUT /api/admin/doors-config`
@@ -55,11 +55,11 @@ Endpoints relevantes (ya en prod vía Hosting → Function `api`):
 - `POST /api/access/validar`, `/kiosk-scan`, `/evaluate`
 - `POST /api/guard/exceptional-entry`
 
-Además, Functions cubre **todo** lo del Node legacy (auth, users, entries, flota) **y** mucho más: citaciones, nómina, GPS UBIKA, roles/permisos, vehículos, asistencia, etc.
+AdemÃ¡s, Functions cubre **todo** lo del Node legacy (auth, users, entries, flota) **y** mucho mÃ¡s: citaciones, nÃ³mina, GPS UBIKA, roles/permisos, vehÃ­culos, asistencia, etc.
 
 ---
 
-## 3. Puentes locales: qué debe quedar en planta (≠ backend Mongo)
+## 3. Puentes locales: quÃ© debe quedar en planta (â‰  backend Mongo)
 
 La app en Firebase **no puede** abrir un socket TCP al SR201 en la LAN del cliente. Eso es normal y esperado.
 
@@ -67,18 +67,18 @@ La app en Firebase **no puede** abrir un socket TCP al SR201 en la LAN del clien
 
 | Proceso | Archivo | Rol |
 |---------|---------|-----|
-| **Puente SR201** | `scripts/sr201-bridge.js` | HTTP (`/pulse`) → TCP `6722` al SR201. Obligatorio para molinete/puertas en producción. |
-| **Puente citaciones** | `scripts/citaciones-folder-bridge.js` | Vigila carpeta Excel/CSV y llama a `/api/bridge/citaciones/sync`. Opcional según operación de transporte. |
+| **Puente SR201** | `scripts/sr201-bridge.js` | HTTP (`/pulse`) â†’ TCP `6722` al SR201. Obligatorio para molinete/puertas en producciÃ³n. |
+| **Puente citaciones** | `scripts/citaciones-folder-bridge.js` | Vigila carpeta Excel/CSV y llama a `/api/bridge/citaciones/sync`. Opcional segÃºn operaciÃ³n de transporte. |
 
 Flujo real:
 
 ```
 Guardia / kiosk (web.app)
-  → Cloud Function (accessControl / doorController / sr201)
-    → si bridgeUrl: POST {bridgeUrl}/pulse
-      → sr201-bridge.js (PC planta, p.ej. 192.168.0.9:5022)
-        → TCP SR201 (ej. 192.168.0.50:6722)
-          → relé → molinete / puerta
+  â†’ Cloud Function (accessControl / doorController / sr201)
+    â†’ si bridgeUrl: POST {bridgeUrl}/pulse
+      â†’ sr201-bridge.js (PC planta, p.ej. 192.168.0.9:5022)
+        â†’ TCP SR201 (ej. 192.168.0.50:6722)
+          â†’ relÃ© â†’ molinete / puerta
 ```
 
 Documentado en `docs/INSTALACION-SR201.md` y `FIREBASE-SETUP.md`.
@@ -86,58 +86,58 @@ Documentado en `docs/INSTALACION-SR201.md` y `FIREBASE-SETUP.md`.
 ### No confundir
 
 - **Puente local SR201/citaciones** = proceso chico en la red del cliente. **Se mantiene.**
-- **API Node+Mongo (`bacarguard-api` / `backend-libro-guardia`)** = backend de datos. **Ya no es necesario** para Libro de Guardia ni para el molinete (confirmado también por `FIREBASE-SETUP.md`: “Apagar el servidor viejo”).
+- **API Node+Mongo (`bacarguard-api` / `backend-libro-guardia`)** = backend de datos. **Ya no es necesario** para Libro de Guardia ni para el molinete (confirmado tambiÃ©n por `FIREBASE-SETUP.md`: â€œApagar el servidor viejoâ€).
 
-### Nota operativa importante (alcance nube → puente)
+### Nota operativa importante (alcance nube â†’ puente)
 
 En la doc de ejemplo aparece `URL puente = http://192.168.0.9:5022`.  
 Una IP **privada** **no es alcanzable** desde Cloud Functions salvo que exista:
 
-- túnel (Cloudflare Tunnel / ngrok / similar), o
-- IP/DNS público que apunte al bridge, o
+- tÃºnel (Cloudflare Tunnel / ngrok / similar), o
+- IP/DNS pÃºblico que apunte al bridge, o
 - VPN hacia la planta.
 
-Antes de dar de baja definitivamente el API viejo en planta, verificar en Admin → Control SR201 que `bridgeUrl` sea **reachable desde internet** (o túnel) y que “Probar relevador” funcione desde producción.
+Antes de dar de baja definitivamente el API viejo en planta, verificar en Admin â†’ Control SR201 que `bridgeUrl` sea **reachable desde internet** (o tÃºnel) y que â€œProbar relevadorâ€ funcione desde producciÃ³n.
 
 ---
 
-## 4. Cómo elige el frontend qué backend usar
+## 4. CÃ³mo elige el frontend quÃ© backend usar
 
 No hay feature flag: solo `REACT_APP_API_BASE_URL`.
 
 | Entorno | Archivo | Valor | Destino |
 |---------|---------|-------|---------|
-| Dev | `.env.development` | `https://bacarguard.web.app/api` (o emulador) | **Firebase Functions** |
-| Prod | `.env.production` | `/api` | Firebase Hosting rewrite → Function `api` |
+| Dev | `.env.development` | `https://mss-guard.web.app/api` (o emulador) | **Firebase Functions** |
+| Prod | `.env.production` | `/api` | Firebase Hosting rewrite â†’ Function `api` |
 
 El frontend **ya no apunta** a `localhost:5020` ni al API Node.
 
 ---
 
-## 5. Qué hace Node+Mongo que Functions todavía no cubre
+## 5. QuÃ© hace Node+Mongo que Functions todavÃ­a no cubre
 
-**Para datos y acceso: nada crítico.**  
+**Para datos y acceso: nada crÃ­tico.**  
 Todo lo del `server.js` legacy tiene equivalente (mejorado) en `functions/app.js`.
 
-**Lo “único” local que Functions no reemplaza** no es Mongo, sino:
+**Lo â€œÃºnicoâ€ local que Functions no reemplaza** no es Mongo, sino:
 
-1. Hablar TCP al SR201 en LAN → `scripts/sr201-bridge.js`
-2. Watch de carpeta de planillas en una PC de transporte → `scripts/citaciones-folder-bridge.js`
+1. Hablar TCP al SR201 en LAN â†’ `scripts/sr201-bridge.js`
+2. Watch de carpeta de planillas en una PC de transporte â†’ `scripts/citaciones-folder-bridge.js`
 
 Pendientes de producto (no bloquean migrar Mongo):
 
-- Método de auth `face` (pendiente según `docs/MULTI-PUERTAS.md`)
-- Timers de estanco en memoria de la Function (frágiles si la instancia se enfría; mejorar después)
+- MÃ©todo de auth `face` (pendiente segÃºn `docs/MULTI-PUERTAS.md`)
+- Timers de estanco en memoria de la Function (frÃ¡giles si la instancia se enfrÃ­a; mejorar despuÃ©s)
 
 ---
 
-## 6. Plan concreto: qué mover / qué eliminar
+## 6. Plan concreto: quÃ© mover / quÃ© eliminar
 
-### Ya está en `functions/` (no hace falta “mover” lógica)
+### Ya estÃ¡ en `functions/` (no hace falta â€œmoverâ€ lÃ³gica)
 
 - Auth, users, roles, permissions  
 - Entries / libro  
-- Personal, vehículos, flota, citaciones, nómina  
+- Personal, vehÃ­culos, flota, citaciones, nÃ³mina  
 - Access control, multi-puertas, SR201 client  
 - GPS flota, asistencia, kiosk  
 
@@ -145,32 +145,32 @@ Pendientes de producto (no bloquean migrar Mongo):
 
 - `scripts/sr201-bridge.js` (+ PM2/servicio Windows)  
 - `scripts/citaciones-folder-bridge.js` (si usan sync de carpeta)  
-- Documentación de instalación de ambos  
+- DocumentaciÃ³n de instalaciÃ³n de ambos  
 
-### Eliminar / retirar (después de checklist verde)
+### Eliminar / retirar (despuÃ©s de checklist verde)
 
-| Ítem | Acción |
+| Ãtem | AcciÃ³n |
 |------|--------|
-| Proceso PM2 `bacarguard-api` en `192.168.0.9` | **Descartado** — apagar en planta (§13); datos Mongo sin migración |
+| Proceso PM2 `bacarguard-api` en `192.168.0.9` | **Descartado** â€” apagar en planta (Â§13); datos Mongo sin migraciÃ³n |
 | `backend-libro-guardia/` como dependencia de runtime | Dejar de usarlo; archivar o marcar `LEGACY` en README |
-| `.env.development` → `localhost:5020` | Cambiar a Functions/emulador |
+| `.env.development` â†’ `localhost:5020` | Cambiar a Functions/emulador |
 | Referencias a Mongo en docs/scripts viejas | Actualizar |
 
 ### Checklist antes de apagar Node+Mongo en planta
 
-1. Login y libro diario en https://bacarguard.web.app  
-2. Admin → Probar relevador → click físico en molinete/puerta  
+1. Login y libro diario en https://mss-guard.web.app  
+2. Admin â†’ Probar relevador â†’ click fÃ­sico en molinete/puerta  
 3. Kiosk: DNI autorizado abre; denegado no abre  
-4. Botón “Abrir puerta” registra evento  
-5. `bridgeUrl` alcanzable desde la nube (no solo IP LAN sin túnel)  
-6. Citaciones: sync por upload o por folder-bridge → Firestore  
+4. BotÃ³n â€œAbrir puertaâ€ registra evento  
+5. `bridgeUrl` alcanzable desde la nube (no solo IP LAN sin tÃºnel)  
+6. Citaciones: sync por upload o por folder-bridge â†’ Firestore  
 7. GPS / roles / dashboards OK (ya solo viven en Functions)
 
 ### Orden sugerido (fases siguientes, sin romper)
 
-1. ~~**Fase 1 — Frontend apunta solo a Functions**~~ → hecha (sección 8).  
-2. **Fase 2 — Modularizar `App.js` por dominio** (sin cambiar contratos API).  
-3. **Fase 3 — UX/intuitividad / a prueba de errores** (hallazgos acordados).  
+1. ~~**Fase 1 â€” Frontend apunta solo a Functions**~~ â†’ hecha (secciÃ³n 8).  
+2. **Fase 2 â€” Modularizar `App.js` por dominio** (sin cambiar contratos API).  
+3. **Fase 3 â€” UX/intuitividad / a prueba de errores** (hallazgos acordados).  
 4. Commits **separados por tema**, nunca un commit gigante.
 
 ---
@@ -180,12 +180,12 @@ Pendientes de producto (no bloquean migrar Mongo):
 Completado:
 
 - [x] Confirmado: ninguna ruta de `server.js` Node faltaba en `functions/app.js` (Functions es un superconjunto).
-- [x] Frontend apunta solo a Firebase (`.env.development` → `https://bacarguard.web.app/api`, prod → `/api`).
+- [x] Frontend apunta solo a Firebase (`.env.development` â†’ `https://mss-guard.web.app/api`, prod â†’ `/api`).
 - [x] `backend-libro-guardia/` movido a `legacy/backend-libro-guardia/` (marcado LEGACY, no desplegar).
-- [x] Puente SR201 documentado como servicio mínimo (`scripts/sr201-bridge.js` + `deploy-sr201-bridge.ps1`).
+- [x] Puente SR201 documentado como servicio mÃ­nimo (`scripts/sr201-bridge.js` + `deploy-sr201-bridge.ps1`).
 - [x] README y scripts de deploy actualizados (Firebase = app; bridge = hardware).
 
-Siguiente: **Fase 2 — modularizar `App.js` por dominio**.
+Siguiente: **Fase 2 â€” modularizar `App.js` por dominio**.
 
 ---
 
@@ -193,12 +193,12 @@ Siguiente: **Fase 2 — modularizar `App.js` por dominio**.
 
 Completado (refactor puro, sin cambio de UX intencional):
 
-- [x] `services/api.js` — cliente HTTP centralizado (`apiFetch`)
+- [x] `services/api.js` â€” cliente HTTP centralizado (`apiFetch`)
 - [x] Contextos: Auth, Toast, Entries, ClockPrefill
 - [x] Pages: Login, Home, Personal, VehiculosExternos, FlotaInterna, Novedad, Historial, Admin
-- [x] `App.js` como shell (~360 líneas): layout, routing por `activeTab`, providers
+- [x] `App.js` como shell (~360 lÃ­neas): layout, routing por `activeTab`, providers
 
-Siguiente: **Fase 3 — UX / sesión / manejo de errores** (conectar `api.js` con sesión expirada).
+Siguiente: **Fase 3 â€” UX / sesiÃ³n / manejo de errores** (conectar `api.js` con sesiÃ³n expirada).
 
 ---
 
@@ -206,9 +206,9 @@ Siguiente: **Fase 3 — UX / sesión / manejo de errores** (conectar `api.js` co
 
 Completado:
 
-- [x] `apiFetch` centralizado: Bearer automático, 401/403 → logout + "Tu sesión expiró…", red tipada, message del backend, genérico honesto
+- [x] `apiFetch` centralizado: Bearer automÃ¡tico, 401/403 â†’ logout + "Tu sesiÃ³n expirÃ³â€¦", red tipada, message del backend, genÃ©rico honesto
 - [x] Cero `fetch` sueltos en frontend (salvo el interior de `services/api.js`)
-- [x] Toasts: error manual / éxito 5s (sin cambio de política)
+- [x] Toasts: error manual / Ã©xito 5s (sin cambio de polÃ­tica)
 - [x] `allowForbidden` donde 403 es "sin permiso" esperado (roles, access-control kiosk)
 
 ---
@@ -217,11 +217,11 @@ Completado:
 
 Completado:
 
-- [x] Pantalla única **Historial** (reemplaza Reportes + Todos los registros)
-- [x] Presets de fecha: Hoy (default) / 7 días / Último mes / Personalizado
-- [x] Filtro por tipo + búsqueda; export CSV/PDF/Excel con mismos filtros
-- [x] `filterHistorialEntries` único en `utils/historialFilters.js`
-- [x] Sidebar: un ítem Historial si `entries.view` **o** `reports.export` (export visible solo con `reports.export`)
+- [x] Pantalla Ãºnica **Historial** (reemplaza Reportes + Todos los registros)
+- [x] Presets de fecha: Hoy (default) / 7 dÃ­as / Ãšltimo mes / Personalizado
+- [x] Filtro por tipo + bÃºsqueda; export CSV/PDF/Excel con mismos filtros
+- [x] `filterHistorialEntries` Ãºnico en `utils/historialFilters.js`
+- [x] Sidebar: un Ã­tem Historial si `entries.view` **o** `reports.export` (export visible solo con `reports.export`)
 - [x] Formulario **Cargar novedad** se mantiene (alta operativa, no era pantalla de consulta)
 
 ---
@@ -230,25 +230,25 @@ Completado:
 
 Completado:
 
-- [x] `GET /api/entries?startDate&endDate&limit&cursor&type&q` con paginación
-- [x] Home poll solo del día actual (no histórico completo)
-- [x] Historial consulta el rango elegido + botón **Cargar más**
-- [x] Export carga páginas del rango (tope 1000)
-- [x] Índice Firestore `entries`: type + timestamp
+- [x] `GET /api/entries?startDate&endDate&limit&cursor&type&q` con paginaciÃ³n
+- [x] Home poll solo del dÃ­a actual (no histÃ³rico completo)
+- [x] Historial consulta el rango elegido + botÃ³n **Cargar mÃ¡s**
+- [x] Export carga pÃ¡ginas del rango (tope 1000)
+- [x] Ãndice Firestore `entries`: type + timestamp
 
 ---
 
-## 13. Auditoría Mongo vs Firestore — **cerrada (Fase 15)**
+## 13. AuditorÃ­a Mongo vs Firestore â€” **cerrada (Fase 15)**
 
-### Decisión (2026-07-14, confirmado en planta)
+### DecisiÃ³n (2026-07-14, confirmado en planta)
 
-> **Confirmado en planta — sin datos relevantes en MongoDB. No se migra nada. Colección descartada.**
+> **Confirmado en planta â€” sin datos relevantes en MongoDB. No se migra nada. ColecciÃ³n descartada.**
 
-No hay datos reales/importantes que preservar. Firestore es la única fuente de verdad operativa.
+No hay datos reales/importantes que preservar. Firestore es la Ãºnica fuente de verdad operativa.
 
 ### Firestore (referencia, conteo 2026-07-14)
 
-| Colección Firestore | Cantidad (aprox.) |
+| ColecciÃ³n Firestore | Cantidad (aprox.) |
 |---------------------|-------------------|
 | users | 8 |
 | entries | 276 |
@@ -256,42 +256,42 @@ No hay datos reales/importantes que preservar. Firestore es la única fuente de 
 | authorizations | 1994 |
 | roles | 4 |
 
-Detalle histórico del conteo: ver commit de auditoría / `scripts/audit-firestore-counts.js`.
+Detalle histÃ³rico del conteo: ver commit de auditorÃ­a / `scripts/audit-firestore-counts.js`.
 
-### Tabla de decisión Mongo (cerrada)
+### Tabla de decisiÃ³n Mongo (cerrada)
 
-| Colección Mongo (legacy) | Equivalente Firestore | Cant. Mongo | ¿Ya está en Firestore? | Recomendación |
+| ColecciÃ³n Mongo (legacy) | Equivalente Firestore | Cant. Mongo | Â¿Ya estÃ¡ en Firestore? | RecomendaciÃ³n |
 |--------------------------|----------------------|-------------|------------------------|---------------|
-| users | users | N/D (sin datos relevantes) | Operativo en FS | **Descartar** — no migrar |
-| entries | entries | N/D (sin datos relevantes) | Operativo en FS | **Descartar** — no migrar |
-| personalmasters | personalMaster / people | N/D (sin datos relevantes) | Operativo en FS | **Descartar** — no migrar |
-| mobiles | mobiles / vehiclesMaster | N/D (sin datos relevantes) | N/A | **Descartar** — no migrar |
-| drivers | drivers | N/D (sin datos relevantes) | N/A | **Descartar** — no migrar |
-| *(cualquier otra)* | — | — | — | **Confirmado en planta — sin datos relevantes en MongoDB. No se migra nada. Colección descartada.** |
+| users | users | N/D (sin datos relevantes) | Operativo en FS | **Descartar** â€” no migrar |
+| entries | entries | N/D (sin datos relevantes) | Operativo en FS | **Descartar** â€” no migrar |
+| personalmasters | personalMaster / people | N/D (sin datos relevantes) | Operativo en FS | **Descartar** â€” no migrar |
+| mobiles | mobiles / vehiclesMaster | N/D (sin datos relevantes) | N/A | **Descartar** â€” no migrar |
+| drivers | drivers | N/D (sin datos relevantes) | N/A | **Descartar** â€” no migrar |
+| *(cualquier otra)* | â€” | â€” | â€” | **Confirmado en planta â€” sin datos relevantes en MongoDB. No se migra nada. ColecciÃ³n descartada.** |
 
 ### Scripts de arranque del repo
 
-Ningún script activo de producción inicia `legacy/backend-libro-guardia`:
+NingÃºn script activo de producciÃ³n inicia `legacy/backend-libro-guardia`:
 
-| Script | ¿Levanta Node+Mongo? |
+| Script | Â¿Levanta Node+Mongo? |
 |--------|----------------------|
-| `scripts/setup-servidor.ps1` | **No** — solo bridges; incluye sección para apagar `bacarguard-api` |
+| `scripts/setup-servidor.ps1` | **No** â€” solo bridges; incluye secciÃ³n para apagar `bacarguard-api` |
 | `scripts/deploy-sr201-bridge.ps1` | **No** |
 | `scripts/deploy-firebase.ps1` | **No** (Firebase) |
-| `scripts/deploy-backend.ps1` | **Obsoleto** — sale con error y mensaje de no usar |
-| `scripts/citaciones-folder-bridge.js` / install | **No** — solo citaciones |
+| `scripts/deploy-backend.ps1` | **Obsoleto** â€” sale con error y mensaje de no usar |
+| `scripts/citaciones-folder-bridge.js` / install | **No** â€” solo citaciones |
 
-El código queda en `legacy/backend-libro-guardia/` solo como archivo histórico.
+El cÃ³digo queda en `legacy/backend-libro-guardia/` solo como archivo histÃ³rico.
 
 ### Apagado en planta (ejecutar en el servidor cuando el operador lo decida)
 
 No requiere acceso remoto desde desarrollo: correr **en la PC de planta** (ej. `192.168.0.9`):
 
 ```powershell
-# 1) Ver qué está corriendo
+# 1) Ver quÃ© estÃ¡ corriendo
 pm2 status
 
-# 2) Detener y sacar del arranque automático el API Node+Mongo
+# 2) Detener y sacar del arranque automÃ¡tico el API Node+Mongo
 pm2 stop bacarguard-api
 pm2 delete bacarguard-api
 pm2 save
@@ -299,7 +299,7 @@ pm2 save
 # 3) Verificar que NO quede el proceso
 pm2 status
 # Esperado: no aparece bacarguard-api
-# Sí pueden seguir: bacarguard-sr201-bridge y bacarguard-citaciones-bridge (o bacarguard-citaciones)
+# SÃ­ pueden seguir: bacarguard-sr201-bridge y bacarguard-citaciones-bridge (o bacarguard-citaciones)
 ```
 
 Si el nombre del proceso fuera distinto:
@@ -320,7 +320,7 @@ netstat -ano | findstr ":5020"
 # No matar los bridges (:5022 SR201, :5023 status citaciones)
 ```
 
-**MongoDB del servidor:** no es obligatorio desinstalarlo si otras apps lo usan. Alcanza con que `bacarguard-api` no arranque ni reciba tráfico de Libro de Guardia.
+**MongoDB del servidor:** no es obligatorio desinstalarlo si otras apps lo usan. Alcanza con que `bacarguard-api` no arranque ni reciba trÃ¡fico de Libro de Guardia.
 
 Tarea programada / servicio Windows (si existiera algo aparte de PM2):
 
@@ -330,9 +330,9 @@ Get-Service | Where-Object { $_.Name -match 'bacar|mongo' }
 # Deshabilitar solo lo que corresponda al API viejo, no al bridge SR201/citaciones
 ```
 
-### Citaciones folder bridge — en uso, mantener
+### Citaciones folder bridge â€” en uso, mantener
 
-Confirmado en operación: **sí se usa** en planta.  
+Confirmado en operaciÃ³n: **sÃ­ se usa** en planta.  
 Docs: [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md).
 
 No se retira con Node+Mongo. Debe seguir en PM2 junto al bridge SR201.
@@ -343,23 +343,23 @@ No se retira con Node+Mongo. Debe seguir en PM2 junto al bridge SR201.
 
 | Servicio | Script | Estado |
 |----------|--------|--------|
-| Puente SR201 | `scripts/sr201-bridge.js` | **Mantener** — [INSTALACION-SR201.md](./INSTALACION-SR201.md) |
-| Puente citaciones Excel | `scripts/citaciones-folder-bridge.js` | **Mantener (en uso)** — [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md) |
-| API Node+Mongo `bacarguard-api` | `legacy/backend-libro-guardia` | **Descartado** — apagar con comandos de §13 (pendiente ejecución física en planta) |
+| Puente SR201 | `scripts/sr201-bridge.js` | **Mantener** â€” [INSTALACION-SR201.md](./INSTALACION-SR201.md) |
+| Puente citaciones Excel | `scripts/citaciones-folder-bridge.js` | **Mantener (en uso)** â€” [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md) |
+| API Node+Mongo `bacarguard-api` | `legacy/backend-libro-guardia` | **Descartado** â€” apagar con comandos de Â§13 (pendiente ejecuciÃ³n fÃ­sica en planta) |
 
 ---
 
-## 15. Checklist general de aceptación (cierre migración)
+## 15. Checklist general de aceptaciÃ³n (cierre migraciÃ³n)
 
 | Criterio | Estado |
 |----------|--------|
 | Sin `window.confirm` / `window.alert` | Resuelto |
 | Historial unificado + paginado | Resuelto |
-| Roles por categorías + plantillas | Resuelto |
+| Roles por categorÃ­as + plantillas | Resuelto |
 | Rate limit login por usuario (no por IP compartida) | Resuelto |
-| App.js shell sin lógica de dominio | Resuelto |
+| App.js shell sin lÃ³gica de dominio | Resuelto |
 | Citaciones-folder-bridge documentado y en uso | Resuelto |
 | Vencimientos ART/seguro/licencia/VTV + filtro por permiso en API | Resuelto |
-| **Sin Node+Mongo en prod (código/flujo)** | **Resuelto** — datos Mongo descartados; API no forma parte del runtime Firebase |
-| Apagar proceso `bacarguard-api` en el servidor físico | **Pendiente en planta** — comandos listos en §13 (el usuario lo ejecuta cuando confirme) |
-| Probar pulso SR201 / túnel en sitio | Pendiente hardware — [INSTALACION-SR201.md](./INSTALACION-SR201.md) |
+| **Sin Node+Mongo en prod (cÃ³digo/flujo)** | **Resuelto** â€” datos Mongo descartados; API no forma parte del runtime Firebase |
+| Apagar proceso `bacarguard-api` en el servidor fÃ­sico | **Pendiente en planta** â€” comandos listos en Â§13 (el usuario lo ejecuta cuando confirme) |
+| Probar pulso SR201 / tÃºnel en sitio | Pendiente hardware â€” [INSTALACION-SR201.md](./INSTALACION-SR201.md) |

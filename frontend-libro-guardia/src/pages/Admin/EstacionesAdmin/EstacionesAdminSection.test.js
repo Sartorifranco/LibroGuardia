@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import EstacionesAdminSection from './EstacionesAdminSection';
 
@@ -60,7 +60,7 @@ describe('EstacionesAdminSection', () => {
       if (path === '/admin/estaciones/est-1/config') {
         return {
           config: {
-            apiBaseUrl: 'https://bacarguard.web.app/api',
+            apiBaseUrl: 'https://mss-guard.web.app/api',
             localServerPort: 8787,
             localServerSecret: 'sec',
             readers: []
@@ -96,7 +96,7 @@ describe('EstacionesAdminSection', () => {
     });
   });
 
-  it('abre modal de asignación de lectores', async () => {
+  it('abre modal de asignaciÃ³n de lectores', async () => {
     render(
       <EstacionesAdminSection
         pendingAction={null}
@@ -111,7 +111,7 @@ describe('EstacionesAdminSection', () => {
     fireEvent.click(screen.getByRole('button', { name: /Asignar lectores/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Asignar lectores a la estación/i)).toBeInTheDocument();
+      expect(screen.getByText(/Asignar lectores a la estaciÃ³n/i)).toBeInTheDocument();
       expect(screen.getByText(/Ingreso P1/)).toBeInTheDocument();
     });
   });

@@ -1,4 +1,4 @@
-const { describe, it, beforeEach, afterEach } = require('node:test');
+﻿const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 const firestorePath = require.resolve('../firestore');
@@ -159,7 +159,7 @@ const installMock = () => {
   };
 };
 
-describe('estaciones — modelo y config unificada', () => {
+describe('estaciones â€” modelo y config unificada', () => {
   let originalFirestore;
   let originalDoors;
   let originalRoles;
@@ -183,7 +183,7 @@ describe('estaciones — modelo y config unificada', () => {
     delete require.cache[estacionesPath];
   });
 
-  it('crea estación con secreto auto-generado y defaults', async () => {
+  it('crea estaciÃ³n con secreto auto-generado y defaults', async () => {
     const estacion = await bag.estacionesApi.createEstacion({
       nombre: 'Mini PC entrada',
       direccionRedLocal: '192.168.1.50'
@@ -197,7 +197,7 @@ describe('estaciones — modelo y config unificada', () => {
 
   it('asocia lectores y arma config readers[] + localServer', async () => {
     const estacion = await bag.estacionesApi.createEstacion({
-      nombre: 'Estación A',
+      nombre: 'EstaciÃ³n A',
       direccionRedLocal: '192.168.1.50',
       puertoServidorLocal: 9000,
       secretoLocal: 'sec-estacion-a'
@@ -210,14 +210,14 @@ describe('estaciones — modelo y config unificada', () => {
       direction: 'ingreso',
       offlineCache: true,
       localFirstMode: true
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
     const b = await bag.lectoresApi.createLector({
       nombre: 'Lector B',
       doorId: 'puerta-p2',
       readerId: 'INGRESO_P2',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
     await bag.estacionesApi.setLectoresDeEstacion(estacion.id, [a.lector.id, b.lector.id]);
 
@@ -225,10 +225,10 @@ describe('estaciones — modelo y config unificada', () => {
     assert.equal(linked.estacionId, estacion.id);
 
     const config = await bag.estacionesApi.buildStationConfigForDownload(estacion.id, {
-      apiBaseUrl: 'https://bacarguard.web.app/api'
+      apiBaseUrl: 'https://mss-guard.web.app/api'
     });
 
-    assert.equal(config.apiBaseUrl, 'https://bacarguard.web.app/api');
+    assert.equal(config.apiBaseUrl, 'https://mss-guard.web.app/api');
     assert.equal(config.localServerPort, 9000);
     assert.equal(config.localServerSecret, 'sec-estacion-a');
     assert.equal(config.readers.length, 2);
@@ -238,13 +238,13 @@ describe('estaciones — modelo y config unificada', () => {
     assert.equal(config._meta.direccionRedLocal, '192.168.1.50');
   });
 
-  it('lector sin estacionId sigue siendo válido (retrocompat)', async () => {
+  it('lector sin estacionId sigue siendo vÃ¡lido (retrocompat)', async () => {
     const created = await bag.lectoresApi.createLector({
       nombre: 'Solo',
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
     assert.equal(created.lector.estacionId, '');
     assert.equal(created.config.doorId, 'puerta-p1');
     assert.ok(!created.config.readers);
@@ -256,7 +256,7 @@ describe('estaciones — modelo y config unificada', () => {
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
     await assert.rejects(
       () => bag.lectoresApi.updateLector(created.lector.id, { estacionId: 'no-existe' }),
@@ -264,7 +264,7 @@ describe('estaciones — modelo y config unificada', () => {
     );
   });
 
-  it('al borrar estación desasocia lectores', async () => {
+  it('al borrar estaciÃ³n desasocia lectores', async () => {
     const estacion = await bag.estacionesApi.createEstacion({
       nombre: 'Temp',
       secretoLocal: 'x'
@@ -275,7 +275,7 @@ describe('estaciones — modelo y config unificada', () => {
       readerId: 'INGRESO_P1',
       direction: 'ingreso',
       estacionId: estacion.id
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
     assert.equal(created.lector.estacionId, estacion.id);
     await bag.estacionesApi.deleteEstacion(estacion.id);

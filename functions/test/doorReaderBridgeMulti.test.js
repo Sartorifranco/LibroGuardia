@@ -1,4 +1,4 @@
-const { describe, it } = require('node:test');
+﻿const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
@@ -11,9 +11,9 @@ describe('door-reader-bridge multi-lector config', () => {
     DOOR_READER_CONFIG: ''
   };
 
-  it('formato legacy (plano) → un solo lector en readers[]', () => {
+  it('formato legacy (plano) â†’ un solo lector en readers[]', () => {
     const station = normalizeStationConfig({
-      apiBaseUrl: 'https://bacarguard.web.app/api',
+      apiBaseUrl: 'https://mss-guard.web.app/api',
       username: 'kiosk.p1',
       password: 'secret',
       doorId: 'puerta-p1',
@@ -35,7 +35,7 @@ describe('door-reader-bridge multi-lector config', () => {
 
   it('formato nuevo con readers[] mantiene cada lector independiente', () => {
     const station = normalizeStationConfig({
-      apiBaseUrl: 'https://bacarguard.web.app/api',
+      apiBaseUrl: 'https://mss-guard.web.app/api',
       readers: [
         {
           doorId: 'puerta-p1',
@@ -75,7 +75,7 @@ describe('door-reader-bridge multi-lector config', () => {
   it('rechaza readers sin credenciales o doorId', () => {
     assert.throws(
       () => normalizeStationConfig({
-        apiBaseUrl: 'https://bacarguard.web.app/api',
+        apiBaseUrl: 'https://mss-guard.web.app/api',
         readers: [{ doorId: 'p1', readerId: 'r1', username: '', password: '' }]
       }, baseEnv, 'x.json'),
       /username\/password/

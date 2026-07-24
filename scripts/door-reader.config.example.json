@@ -1,13 +1,13 @@
-{
+﻿{
   "_comentarios": {
-    "formato": "NUEVO: apiBaseUrl + readers[]. VIEJO (sigue válido): doorId/username/password/serialPort en la raíz = un solo lector.",
-    "apiBaseUrl": "URL base de la API Firebase, compartida por todos los lectores de la estación",
+    "formato": "NUEVO: apiBaseUrl + readers[]. VIEJO (sigue vÃ¡lido): doorId/username/password/serialPort en la raÃ­z = un solo lector.",
+    "apiBaseUrl": "URL base de la API Firebase, compartida por todos los lectores de la estaciÃ³n",
     "readers": "Lista de lectores USB/serie manejados por ESTE proceso Node",
     "localServerPort": "Puerto HTTP local (solo LAN). 0 o ausente = deshabilitado. Requiere localServerSecret.",
     "localServerSecret": "Secreto compartido (Bearer / X-Station-Secret) para GET /status y POST /open/:doorId",
     "localServerHost": "Bind del servidor local (default 0.0.0.0 = todas las interfaces LAN)"
   },
-  "apiBaseUrl": "https://bacarguard.web.app/api",
+  "apiBaseUrl": "https://mss-guard.web.app/api",
   "localServerPort": 8787,
   "localServerSecret": "CAMBIAR-SECRETO-ESTACION",
   "localServerHost": "0.0.0.0",

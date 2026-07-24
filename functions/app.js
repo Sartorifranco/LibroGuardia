@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Express app — setup global + montaje de routers por dominio.
  * La lógica de cada endpoint vive en functions/routes/*.js
  */
@@ -9,7 +9,7 @@ const cors = require('cors');
 const app = express();
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
-  'http://localhost:3000,https://bacarguard.web.app,https://bacarguard.firebaseapp.com'
+  'http://localhost:3000,https://mss-guard.web.app,https://mss-guard.firebaseapp.com,https://bacarguard.web.app,https://bacarguard.firebaseapp.com'
 ).split(',').map((origin) => origin.trim());
 
 app.use(cors({

@@ -1,6 +1,6 @@
 {
-  "short_name": "Libro Guardia",
-  "name": "Libro de Guardia Bacar S.A.",
+  "short_name": "MSS Guard",
+  "name": "MSS Guard Manager Sistem Security",
   "icons": [
     {
       "src": "favicon-512.png",
@@ -15,6 +15,6 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#dc2626",
+  "theme_color": "#e11d2e",
   "background_color": "#0a0a0a"
 }

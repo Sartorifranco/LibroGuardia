@@ -1,4 +1,4 @@
-const { describe, it, beforeEach, afterEach } = require('node:test');
+﻿const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
 
@@ -157,7 +157,7 @@ const installLectoresMock = () => {
   };
 };
 
-describe('lectores — helpers', () => {
+describe('lectores â€” helpers', () => {
   let originalFirestore;
   let originalDoors;
   let originalRoles;
@@ -192,14 +192,14 @@ describe('lectores — helpers', () => {
 
   it('buildDoorReaderConfig arma el JSON del bridge', () => {
     const cfg = bag.api.buildDoorReaderConfig({
-      apiBaseUrl: 'https://bacarguard.web.app/api/',
+      apiBaseUrl: 'https://mss-guard.web.app/api/',
       username: 'kiosk.p1',
       password: 'secret',
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       lectorId: 'abc'
     });
-    assert.equal(cfg.apiBaseUrl, 'https://bacarguard.web.app/api');
+    assert.equal(cfg.apiBaseUrl, 'https://mss-guard.web.app/api');
     assert.equal(cfg.username, 'kiosk.p1');
     assert.equal(cfg.password, 'secret');
     assert.equal(cfg.doorId, 'puerta-p1');
@@ -214,7 +214,7 @@ describe('lectores — helpers', () => {
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
     assert.ok(result.lector.id);
     assert.ok(result.password.length >= 16);
@@ -243,7 +243,7 @@ describe('lectores — helpers', () => {
     const username = created.username;
 
     const regen = await bag.api.regenerateCredentials(created.lector.id, {
-      apiBaseUrl: 'https://bacarguard.web.app/api'
+      apiBaseUrl: 'https://mss-guard.web.app/api'
     });
     assert.notEqual(regen.password, oldPassword);
     assert.equal(regen.config.password, regen.password);
@@ -347,7 +347,7 @@ describe('lectores — helpers', () => {
     assert.equal(lector.offlineCacheMaxAgeHours, 12);
 
     const cfg = await bag.api.buildConfigForDownload(created.lector.id, {
-      apiBaseUrl: 'https://bacarguard.web.app/api'
+      apiBaseUrl: 'https://mss-guard.web.app/api'
     });
     assert.equal(cfg.offlineCache, true);
     assert.equal(cfg.localFirstMode, true);
@@ -355,7 +355,7 @@ describe('lectores — helpers', () => {
     assert.equal(cfg.offlineCacheMaxAgeHours, 12);
   });
 
-  it('localFirstMode se fuerza a false si offlineCache está apagado', async () => {
+  it('localFirstMode se fuerza a false si offlineCache estÃ¡ apagado', async () => {
     const created = await bag.api.createLector({
       nombre: 'Lector Guard',
       doorId: 'puerta-p1',
@@ -376,7 +376,7 @@ describe('lectores — helpers', () => {
       resolveAuthUsername({ id: 'uuid-interno-abc', username: 'kiosk.puerta-p1' }),
       'kiosk.puerta-p1'
     );
-    // Fallback cuando el JWT aún no trae username (tokens viejos).
+    // Fallback cuando el JWT aÃºn no trae username (tokens viejos).
     assert.equal(
       resolveAuthUsername({ id: 'kiosk.puerta-p1' }),
       'kiosk.puerta-p1'
@@ -397,7 +397,7 @@ describe('lectores — helpers', () => {
       username: created.username
     };
 
-    // Orden viejo (bug): id || username → usa el id interno → no matchea usuarioSistemaId
+    // Orden viejo (bug): id || username â†’ usa el id interno â†’ no matchea usuarioSistemaId
     const buggyUsername = jwtPayload.id || jwtPayload.username;
     await assert.rejects(
       () => bag.api.touchHeartbeat({
@@ -407,7 +407,7 @@ describe('lectores — helpers', () => {
       (err) => err.status === 403
     );
 
-    // Fix: username || id vía resolveAuthUsername
+    // Fix: username || id vÃ­a resolveAuthUsername
     const fixedUsername = bag.api.resolveAuthUsername(jwtPayload);
     assert.equal(fixedUsername, created.username);
     const touched = await bag.api.touchHeartbeat({
@@ -417,7 +417,7 @@ describe('lectores — helpers', () => {
     assert.equal(touched.ultimaConexion, 'SERVER_TIMESTAMP');
   });
 
-  it('deleteLector borra también el usuario de sistema', async () => {
+  it('deleteLector borra tambiÃ©n el usuario de sistema', async () => {
     const created = await bag.api.createLector({
       nombre: 'Lector Del',
       doorId: 'puerta-p1',

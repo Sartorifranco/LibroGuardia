@@ -1,25 +1,25 @@
-/**
- * Puente de producción (estación = uno o varios lectores en el mismo proceso):
- *   lector(es) GADNIC CODBAR14 (RS-232) → POST /api/access/kiosk-scan
+﻿/**
+ * Puente de producciÃ³n (estaciÃ³n = uno o varios lectores en el mismo proceso):
+ *   lector(es) GADNIC CODBAR14 (RS-232) â†’ POST /api/access/kiosk-scan
  *
  * Formato config:
  *   - Nuevo: { apiBaseUrl, readers: [...], localServerPort?, localServerSecret? }
- *   - Legacy (retrocompat): un solo lector plano en la raíz (doorId/username/…).
+ *   - Legacy (retrocompat): un solo lector plano en la raÃ­z (doorId/username/â€¦).
  *
- * Servidor HTTP local (opcional, solo LAN — sin túnel):
+ * Servidor HTTP local (opcional, solo LAN â€” sin tÃºnel):
  *   GET  /status          estado de todos los lectores
- *   POST /open/:doorId    dispara relé local si esta estación maneja esa puerta
+ *   POST /open/:doorId    dispara relÃ© local si esta estaciÃ³n maneja esa puerta
  *   OPTIONS /*            preflight CORS + Private Network Access (panel guardia HTTPS)
  *   Auth: Authorization: Bearer <localServerSecret>
  *
- * Versión bridge (local station API): ver BRIDGE_VERSION / LOCAL_STATION_API_VERSION.
+ * VersiÃ³n bridge (local station API): ver BRIDGE_VERSION / LOCAL_STATION_API_VERSION.
  *
- * Relé en modo local: TCP directo a la placa SR201 (fireLocalRelay).
+ * RelÃ© en modo local: TCP directo a la placa SR201 (fireLocalRelay).
  *
  * Framing serie: mismo criterio validado en scripts/test-lector-rele.js
  * (buffer hasta CR / CRLF / LF, o silencio idleMs).
  *
- * Instalación (una vez):
+ * InstalaciÃ³n (una vez):
  *   cd scripts && npm install
  *
  * Config:
@@ -39,8 +39,8 @@ const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 
-// Driver SR201 (sólo usa 'net', sin Firebase) — reusado del mismo módulo que
-// producción y que scripts/test-lector-rele.js (framing/TCP ya validado).
+// Driver SR201 (sÃ³lo usa 'net', sin Firebase) â€” reusado del mismo mÃ³dulo que
+// producciÃ³n y que scripts/test-lector-rele.js (framing/TCP ya validado).
 const {
   sendTcpCommand,
   sendTimedPulseTcp,
@@ -65,33 +65,35 @@ const DEFAULTS = {
   /** Modo offline opcional: cachea allowlist y decide local si cae la red. */
   offlineCache: false,
   offlineCacheRefreshMs: 15 * 60 * 1000,
-  /** Si la lista tiene más de N horas, no confiar y denegar offline. */
+  /** Si la lista tiene mÃ¡s de N horas, no confiar y denegar offline. */
   offlineCacheMaxAgeHours: 24,
   /**
-   * Con offlineCache + caché vigente: decide YA con la lista (sin kiosk-scan),
-   * abre relé al instante y reporta el evento en background vía cola offline.
+   * Con offlineCache + cachÃ© vigente: decide YA con la lista (sin kiosk-scan),
+   * abre relÃ© al instante y reporta el evento en background vÃ­a cola offline.
    */
   localFirstMode: false,
   offlineAllowlistFile: '',
   offlineQueueFile: '',
   onlineScanTimeoutMs: 12000,
   allowlistTimeoutMs: 120000,
-  /** Puerto HTTP local (0 = deshabilitado). Solo LAN; sin túnel. */
+  /** Puerto HTTP local (0 = deshabilitado). Solo LAN; sin tÃºnel. */
   localServerPort: 0,
   localServerHost: '0.0.0.0',
   localServerSecret: ''
 };
 
 /**
- * Versión del proceso door-reader-bridge (semver de scripts).
+ * VersiÃ³n del proceso door-reader-bridge (semver de scripts).
  * Bump cuando cambie el contrato del servidor local o el framing.
  */
 const BRIDGE_VERSION = '1.1.0';
 /** API del servidor HTTP local (status/open/CORS). Subir si cambia el contrato. */
 const LOCAL_STATION_API_VERSION = 2;
 
-/** Orígenes del panel (HTTPS público) autorizados a hablar con la estación LAN. */
+/** OrÃ­genes del panel (HTTPS pÃºblico) autorizados a hablar con la estaciÃ³n LAN. */
 const DEFAULT_CORS_ORIGINS = [
+  'https://mss-guard.web.app',
+  'https://mss-guard.firebaseapp.com',
   'https://bacarguard.web.app',
   'https://bacarguard.firebaseapp.com'
 ];
@@ -108,9 +110,9 @@ const parseBool = (raw, fallback = false) => {
 };
 
 /**
- * Normaliza un lector individual (campos por puerta) + defaults de estación.
- * @param {object} raw — entrada del array readers o del JSON legacy plano
- * @param {object} shared — apiBaseUrl, reconnect, logFile, configPath, idleMs
+ * Normaliza un lector individual (campos por puerta) + defaults de estaciÃ³n.
+ * @param {object} raw â€” entrada del array readers o del JSON legacy plano
+ * @param {object} shared â€” apiBaseUrl, reconnect, logFile, configPath, idleMs
  */
 const normalizeReaderConfig = (raw = {}, shared = {}) => {
   const configPath = shared.configPath || path.join(__dirname, 'door-reader.config.json');
@@ -156,7 +158,7 @@ const normalizeReaderConfig = (raw = {}, shared = {}) => {
 
 /**
  * Formato nuevo: { apiBaseUrl, readers: [...] }
- * Formato viejo (retrocompat): un solo lector en la raíz (doorId/username/…).
+ * Formato viejo (retrocompat): un solo lector en la raÃ­z (doorId/username/â€¦).
  * Env vars solo aplican al formato viejo / al primer lector (estaciones ya instaladas).
  */
 const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = '') => {
@@ -181,7 +183,7 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
     rawReaders = fileCfg.readers;
   } else {
     // Legacy: un lector plano (+ overrides por env, como hasta ahora).
-    // Archivos de caché conservan el nombre histórico (sin readerId) para no
+    // Archivos de cachÃ© conservan el nombre histÃ³rico (sin readerId) para no
     // invalidar allowlists ya generadas en estaciones instaladas.
     const legacyDoorId = String(env.DOOR_ID || fileCfg.doorId || 'door').trim();
     const legacyDir = path.dirname(resolvedPath);
@@ -214,7 +216,7 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
   const readers = rawReaders.map((r) => normalizeReaderConfig(r, shared));
 
   if (!apiBaseUrl) {
-    throw new Error('Falta apiBaseUrl (ej. https://bacarguard.web.app/api)');
+    throw new Error('Falta apiBaseUrl (ej. https://mss-guard.web.app/api)');
   }
   readers.forEach((r, idx) => {
     if (!r.username || !r.password) {
@@ -227,7 +229,7 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
 
   const stdinCount = readers.filter((r) => r.inputMode === 'stdin').length;
   if (stdinCount > 1) {
-    throw new Error('Solo un lector puede usar inputMode "stdin" por estación');
+    throw new Error('Solo un lector puede usar inputMode "stdin" por estaciÃ³n');
   }
 
   const localServerPort = Number(
@@ -307,12 +309,12 @@ const formatChunk = (buf) => {
 };
 
 /**
- * MODO LOCAL: dispara el relé SR201 directo por la LAN, con los datos de
- * conexión (host/puerto/canal/pulseSeconds) que devuelve /api/access/kiosk-scan
- * cuando la puerta está en relayMode 'local'. Reusa el driver ya validado.
+ * MODO LOCAL: dispara el relÃ© SR201 directo por la LAN, con los datos de
+ * conexiÃ³n (host/puerto/canal/pulseSeconds) que devuelve /api/access/kiosk-scan
+ * cuando la puerta estÃ¡ en relayMode 'local'. Reusa el driver ya validado.
  *
  * No bloquea: en 'timed' el ON confirma y el OFF sigue async (mismo criterio
- * que producción), así el escaneo queda libre para la próxima lectura.
+ * que producciÃ³n), asÃ­ el escaneo queda libre para la prÃ³xima lectura.
  */
 const fireLocalRelay = async (cfg, localRelay = {}) => {
   const host = String(localRelay.host || '').trim();
@@ -432,7 +434,7 @@ const isAllowlistFresh = (allowlist, maxAgeHours, nowMs = Date.now()) => {
   return (nowMs - at) <= maxMs;
 };
 
-/** true si debe decidir con caché sin llamar a kiosk-scan (modo instantáneo). */
+/** true si debe decidir con cachÃ© sin llamar a kiosk-scan (modo instantÃ¡neo). */
 const canDecideLocalFirst = (cfg = {}, allowlist = null, nowMs = Date.now()) =>
   Boolean(cfg.offlineCache)
   && Boolean(cfg.localFirstMode)
@@ -451,11 +453,11 @@ const createApiClient = (cfg) => {
       throw Object.assign(new Error(res.data.message || 'Rate limit login'), { retryAfterMs: wait });
     }
     if (res.status < 200 || res.status >= 300 || !res.data.token) {
-      throw new Error(res.data.message || `Login falló (${res.status})`);
+      throw new Error(res.data.message || `Login fallÃ³ (${res.status})`);
     }
     token = res.data.token;
     networkBackoffMs = cfg.reconnectMinMs;
-    log(cfg, 'info', 'Sesión kiosk OK', {
+    log(cfg, 'info', 'SesiÃ³n kiosk OK', {
       username: cfg.username,
       expiresIn: '8h'
     });
@@ -478,7 +480,7 @@ const createApiClient = (cfg) => {
     };
     let res = await doCall();
     if (res.status === 401) {
-      log(cfg, 'warn', 'Token expirado o inválido (401) — re-login');
+      log(cfg, 'warn', 'Token expirado o invÃ¡lido (401) â€” re-login');
       token = null;
       await login();
       res = await doCall();
@@ -527,7 +529,7 @@ const createApiClient = (cfg) => {
         return result;
       } catch (err) {
         const wait = err.retryAfterMs || networkBackoffMs;
-        log(cfg, 'warn', `${label} falló, reintento`, {
+        log(cfg, 'warn', `${label} fallÃ³, reintento`, {
           error: err.message,
           waitMs: wait
         });
@@ -558,7 +560,7 @@ const loadSerialPort = () => {
       return require(path.join(__dirname, 'node_modules', 'serialport'));
     } catch (err) {
       throw new Error(
-        'No se encontró el paquete "serialport". Ejecutá:\n'
+        'No se encontrÃ³ el paquete "serialport". EjecutÃ¡:\n'
         + '  cd scripts\n'
         + '  npm install\n'
         + `Detalle: ${err.message}`
@@ -664,7 +666,7 @@ const openSerialOnce = (cfg) => new Promise((resolve, reject) => {
         hint = ' El puerto suele estar en uso por otro programa.';
       }
       if (/cannot find|ENOENT|file not found|unknown/i.test(msg)) {
-        hint = ' Revisá el nombre del puerto (Administrador de dispositivos → Puertos COM).';
+        hint = ' RevisÃ¡ el nombre del puerto (Administrador de dispositivos â†’ Puertos COM).';
       }
       reject(new Error(`No se pudo abrir ${cfg.serialPort}: ${msg}.${hint}`));
       return;
@@ -674,7 +676,7 @@ const openSerialOnce = (cfg) => new Promise((resolve, reject) => {
 });
 
 /**
- * Mantiene el puerto serie abierto con reconexión y backoff.
+ * Mantiene el puerto serie abierto con reconexiÃ³n y backoff.
  * Nunca termina el loop salvo shutdown.
  * @param {{ onConnected?: () => void, onDisconnected?: () => void }} [hooks]
  */
@@ -754,7 +756,7 @@ const extractStationSecret = (req) => {
 };
 
 /**
- * Orígenes CORS permitidos: defaults del hosting + LOCAL_SERVER_CORS_ORIGINS (CSV)
+ * OrÃ­genes CORS permitidos: defaults del hosting + LOCAL_SERVER_CORS_ORIGINS (CSV)
  * + localhost / 127.0.0.1 (cualquier puerto) para desarrollo del panel.
  */
 const resolveAllowedCorsOrigins = (env = process.env) => {
@@ -798,8 +800,8 @@ const buildCorsHeaders = (req, env = process.env) => {
     headers['Access-Control-Allow-Origin'] = origin;
   }
 
-  // Chrome Private Network Access: preflight desde origen público → IP privada.
-  // También lo devolvemos en respuestas reales por si el browser lo exige.
+  // Chrome Private Network Access: preflight desde origen pÃºblico â†’ IP privada.
+  // TambiÃ©n lo devolvemos en respuestas reales por si el browser lo exige.
   const wantsPrivateNetwork = String(
     req.headers['access-control-request-private-network'] || ''
   ).toLowerCase() === 'true'
@@ -818,12 +820,12 @@ const buildCorsHeaders = (req, env = process.env) => {
 };
 
 /**
- * Servidor HTTP local de la estación (solo LAN). Endpoints:
+ * Servidor HTTP local de la estaciÃ³n (solo LAN). Endpoints:
  *   GET  /status
  *   POST /open/:doorId
- *   OPTIONS (preflight CORS / PNA) — sin auth
+ *   OPTIONS (preflight CORS / PNA) â€” sin auth
  *
- * CORS habilita que https://bacarguard.web.app lea la respuesta en el navegador.
+ * CORS habilita que https://mss-guard.web.app lea la respuesta en el navegador.
  * La seguridad sigue siendo el secreto Bearer: CORS no abre el endpoint a cualquiera.
  *
  * @param {{ host: string, port: number, secret: string, getStatus: Function, openDoor: Function, logFn?: Function, env?: object }} opts
@@ -839,7 +841,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
   const env = opts.env || process.env;
 
   if (!Number.isFinite(port) || port <= 0) {
-    reject(new Error('createLocalStationServer: puerto inválido'));
+    reject(new Error('createLocalStationServer: puerto invÃ¡lido'));
     return;
   }
   if (!secret) {
@@ -861,7 +863,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
 
   const requireAuth = (req, res) => {
     if (extractStationSecret(req) !== secret) {
-      sendJson(res, 401, { ok: false, message: 'Secreto de estación inválido' }, req);
+      sendJson(res, 401, { ok: false, message: 'Secreto de estaciÃ³n invÃ¡lido' }, req);
       return false;
     }
     return true;
@@ -872,7 +874,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const method = (req.method || 'GET').toUpperCase();
 
-      // Preflight: no exige secreto (el browser aún no manda Authorization).
+      // Preflight: no exige secreto (el browser aÃºn no manda Authorization).
       if (method === 'OPTIONS') {
         const cors = buildCorsHeaders(req, env);
         res.writeHead(204, {
@@ -904,14 +906,14 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
         if (result && result.notFound) {
           sendJson(res, 404, {
             ok: false,
-            message: `Esta estación no maneja la puerta "${doorId}"`
+            message: `Esta estaciÃ³n no maneja la puerta "${doorId}"`
           }, req);
           return;
         }
         sendJson(res, 200, {
           ok: true,
           doorId,
-          message: 'Relé local disparado',
+          message: 'RelÃ© local disparado',
           ...(result && typeof result === 'object' ? result : {})
         }, req);
         return;
@@ -919,7 +921,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
 
       sendJson(res, 404, { ok: false, message: 'No encontrado' }, req);
     } catch (err) {
-      logFn('error', 'Error en servidor local de estación', { error: err.message });
+      logFn('error', 'Error en servidor local de estaciÃ³n', { error: err.message });
       sendJson(res, 500, { ok: false, message: err.message || 'Error interno' }, req);
     }
   });
@@ -928,7 +930,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
   server.listen(port, host, () => {
     const addr = server.address();
     const boundPort = typeof addr === 'object' && addr ? addr.port : port;
-    logFn('info', 'Servidor local de estación escuchando', {
+    logFn('info', 'Servidor local de estaciÃ³n escuchando', {
       host,
       port: boundPort,
       bridgeVersion: BRIDGE_VERSION,
@@ -969,8 +971,8 @@ const buildStationLocalHandlers = (runtimes = []) => {
       const key = String(doorId || '').trim();
       const list = byDoorId.get(key);
       if (!list || list.length === 0) return { notFound: true };
-      // Una puerta puede tener varios lectores en la misma estación; basta
-      // disparar el relé una vez (mismo localRelay en allowlist de esa puerta).
+      // Una puerta puede tener varios lectores en la misma estaciÃ³n; basta
+      // disparar el relÃ© una vez (mismo localRelay en allowlist de esa puerta).
       const rt = list[0];
       if (typeof rt.openLocal !== 'function') {
         throw new Error('Runtime sin openLocal');
@@ -987,12 +989,12 @@ const startStdinReader = (cfg, onFrame) => {
   process.stdin.on('data', (chunk) => {
     framer.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8'));
   });
-  log(cfg, 'info', 'Modo stdin (prueba). Pegá rawData + Enter/CR.');
+  log(cfg, 'info', 'Modo stdin (prueba). PegÃ¡ rawData + Enter/CR.');
   return () => framer.destroy();
 };
 
 /**
- * Runtime independiente por lector (serie, login, caché, cola, heartbeat).
+ * Runtime independiente por lector (serie, login, cachÃ©, cola, heartbeat).
  * @returns {Promise<{ stop: () => void, cfg: object, getStatus: () => object, openLocal: () => Promise<object> }>}
  */
 const startReaderRuntime = async (cfg, { shouldStop }) => {
@@ -1083,7 +1085,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
       if (!denyIfStale) {
         return null;
       }
-      log(cfg, 'warn', `${label}: allowlist ausente o vencida — denegado`, {
+      log(cfg, 'warn', `${label}: allowlist ausente o vencida â€” denegado`, {
         hasCache: Boolean(cachedAllowlist),
         generatedAt: cachedAllowlist?.generatedAt || null,
         maxAgeHours: cfg.offlineCacheMaxAgeHours
@@ -1103,7 +1105,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
       });
       return {
         authorized: false,
-        message: 'Sin conexión y lista local vencida o ausente. Acceso denegado.',
+        message: 'Sin conexiÃ³n y lista local vencida o ausente. Acceso denegado.',
         offline: true,
         localFirst: label === 'local-first'
       };
@@ -1130,7 +1132,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
         await fireLocalRelay(cfg, cachedAllowlist.localRelay);
         relayTriggered = true;
       } catch (relayErr) {
-        log(cfg, 'error', `Fallo relé local (${label})`, { error: relayErr.message });
+        log(cfg, 'error', `Fallo relÃ© local (${label})`, { error: relayErr.message });
       }
     }
 
@@ -1150,7 +1152,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     });
 
     flushOfflineQueue().catch((err) => {
-      log(cfg, 'warn', `Cola ${label}: sync diferido falló (reintento en heartbeat)`, {
+      log(cfg, 'warn', `Cola ${label}: sync diferido fallÃ³ (reintento en heartbeat)`, {
         error: err.message
       });
     });
@@ -1158,8 +1160,8 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     return {
       authorized,
       message: authorized
-        ? `${label === 'local-first' ? 'Instantáneo' : 'Offline'} OK: ${match.nombre || identity.dniNormalized}`
-        : `${label === 'local-first' ? 'Instantáneo' : 'Offline'}: no autorizado en lista local`,
+        ? `${label === 'local-first' ? 'InstantÃ¡neo' : 'Offline'} OK: ${match.nombre || identity.dniNormalized}`
+        : `${label === 'local-first' ? 'InstantÃ¡neo' : 'Offline'}: no autorizado en lista local`,
       offline: true,
       localFirst: label === 'local-first',
       localRelay: cachedAllowlist.localRelay || null,
@@ -1190,7 +1192,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     try {
       await refreshAllowlist('startup');
     } catch (err) {
-      log(cfg, 'warn', 'No se pudo cargar allowlist al iniciar (se usará caché en disco si hay)', {
+      log(cfg, 'warn', 'No se pudo cargar allowlist al iniciar (se usarÃ¡ cachÃ© en disco si hay)', {
         error: err.message
       });
     }
@@ -1217,7 +1219,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
             try {
               await refreshAllowlist('forceResync');
             } catch (syncErr) {
-              log(cfg, 'warn', 'forceResync falló', { error: syncErr.message });
+              log(cfg, 'warn', 'forceResync fallÃ³', { error: syncErr.message });
             }
           }
         }
@@ -1228,7 +1230,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
         });
       }
     } catch (err) {
-      log(cfg, 'warn', 'Heartbeat falló', { error: err.message });
+      log(cfg, 'warn', 'Heartbeat fallÃ³', { error: err.message });
     }
   };
   sendHeartbeat();
@@ -1239,7 +1241,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
   if (cfg.offlineCache) {
     allowlistTimer = setInterval(() => {
       refreshAllowlist('interval').catch((err) => {
-        log(cfg, 'warn', 'Refresh periódico de allowlist falló', { error: err.message });
+        log(cfg, 'warn', 'Refresh periÃ³dico de allowlist fallÃ³', { error: err.message });
       });
     }, cfg.offlineCacheRefreshMs);
     cleanups.push(() => clearInterval(allowlistTimer));
@@ -1248,11 +1250,11 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
   let busy = false;
   const handleFrame = async ({ text, pretty, hex, reason }) => {
     if (!text) {
-      log(cfg, 'warn', 'Frame vacío tras limpiar CR/LF', { reason, pretty });
+      log(cfg, 'warn', 'Frame vacÃ­o tras limpiar CR/LF', { reason, pretty });
       return;
     }
     if (busy) {
-      log(cfg, 'warn', 'Lectura ignorada (aún procesando la anterior)', {
+      log(cfg, 'warn', 'Lectura ignorada (aÃºn procesando la anterior)', {
         preview: text.slice(0, 80)
       });
       return;
@@ -1293,7 +1295,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
             res = await api.kioskScan(text);
           } catch (err) {
             if (isNetworkError(err)) {
-              log(cfg, 'warn', 'kiosk-scan sin red — modo offline', { error: err.message });
+              log(cfg, 'warn', 'kiosk-scan sin red â€” modo offline', { error: err.message });
               const offlineResult = await decideOffline(text);
               usedOffline = true;
               res = { status: 200, data: offlineResult };
@@ -1338,12 +1340,12 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
         const tRelay = Date.now();
         try {
           const relayResult = await fireLocalRelay(cfg, data.localRelay);
-          log(cfg, 'info', 'Relé local disparado (sin túnel)', {
+          log(cfg, 'info', 'RelÃ© local disparado (sin tÃºnel)', {
             ...relayResult,
             relayMs: Date.now() - tRelay
           });
         } catch (relayErr) {
-          log(cfg, 'error', 'Fallo al disparar relé local', {
+          log(cfg, 'error', 'Fallo al disparar relÃ© local', {
             error: relayErr.message,
             localRelay: data.localRelay
           });
@@ -1377,11 +1379,11 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     const relay = lastLocalRelay || cachedAllowlist?.localRelay || null;
     if (!relay?.host) {
       throw new Error(
-        `Sin datos de relé local para ${cfg.doorId} (falta allowlist/caché con localRelay)`
+        `Sin datos de relÃ© local para ${cfg.doorId} (falta allowlist/cachÃ© con localRelay)`
       );
     }
     const result = await fireLocalRelay(cfg, relay);
-    log(cfg, 'info', 'Relé local disparado vía servidor de estación', {
+    log(cfg, 'info', 'RelÃ© local disparado vÃ­a servidor de estaciÃ³n', {
       doorId: cfg.doorId,
       host: relay.host,
       channel: relay.channel
@@ -1401,12 +1403,12 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     return { stop, cfg, getStatus, openLocal };
   }
 
-  // Serie: loop en background (no bloquea otros lectores de la estación).
+  // Serie: loop en background (no bloquea otros lectores de la estaciÃ³n).
   runSerialLoop(cfg, handleFrame, shouldStop, {
     onConnected: () => { serialConnected = true; },
     onDisconnected: () => { serialConnected = false; }
   }).catch((err) => {
-    log(cfg, 'error', 'Loop serie terminó con error', { error: err.message });
+    log(cfg, 'error', 'Loop serie terminÃ³ con error', { error: err.message });
   });
 
   return { stop, cfg, getStatus, openLocal };
@@ -1419,7 +1421,7 @@ const main = async () => {
   const runtimes = [];
   let localServer = null;
 
-  log({ logFile: station.logFile }, 'info', 'door-reader-bridge estación iniciando', {
+  log({ logFile: station.logFile }, 'info', 'door-reader-bridge estaciÃ³n iniciando', {
     bridgeVersion: BRIDGE_VERSION,
     localStationApiVersion: LOCAL_STATION_API_VERSION,
     apiBaseUrl: station.apiBaseUrl,
@@ -1455,7 +1457,7 @@ const main = async () => {
     if (localServer) {
       localServer.close().catch(() => {});
     }
-    log({ logFile: station.logFile }, 'info', 'Cerrando door-reader-bridge…');
+    log({ logFile: station.logFile }, 'info', 'Cerrando door-reader-bridgeâ€¦');
     setTimeout(() => process.exit(0), 500);
   };
   process.on('SIGINT', shutdown);
@@ -1493,8 +1495,8 @@ module.exports = {
   LOCAL_STATION_API_VERSION,
   DEFAULT_CORS_ORIGINS,
   /**
-   * Camino de decisión testable (sin I/O de red real).
-   * Si local-first + caché vigente → no invoca kioskScanFn.
+   * Camino de decisiÃ³n testable (sin I/O de red real).
+   * Si local-first + cachÃ© vigente â†’ no invoca kioskScanFn.
    */
   resolveScanPath: ({ cfg, allowlist, nowMs = Date.now() }) => {
     if (canDecideLocalFirst(cfg, allowlist, nowMs)) return 'local-first';

@@ -1,4 +1,4 @@
-const { describe, it, after } = require('node:test');
+﻿const { describe, it, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
 const path = require('path');
@@ -58,7 +58,7 @@ describe('door-reader-bridge localServer config', () => {
 
   it('sin puerto local: localServerPort=0 (retrocompat)', () => {
     const station = normalizeStationConfig({
-      apiBaseUrl: 'https://bacarguard.web.app/api',
+      apiBaseUrl: 'https://mss-guard.web.app/api',
       username: 'k',
       password: 'p',
       doorId: 'puerta-p1'
@@ -67,10 +67,10 @@ describe('door-reader-bridge localServer config', () => {
     assert.equal(station.localServerSecret, '');
   });
 
-  it('puerto sin secreto → error', () => {
+  it('puerto sin secreto â†’ error', () => {
     assert.throws(
       () => normalizeStationConfig({
-        apiBaseUrl: 'https://bacarguard.web.app/api',
+        apiBaseUrl: 'https://mss-guard.web.app/api',
         username: 'k',
         password: 'p',
         doorId: 'p1',
@@ -82,7 +82,7 @@ describe('door-reader-bridge localServer config', () => {
 
   it('puerto + secreto se normalizan', () => {
     const station = normalizeStationConfig({
-      apiBaseUrl: 'https://bacarguard.web.app/api',
+      apiBaseUrl: 'https://mss-guard.web.app/api',
       username: 'k',
       password: 'p',
       doorId: 'p1',
@@ -187,7 +187,7 @@ describe('createLocalStationServer HTTP', () => {
     assert.match(openMissing.data.message, /no maneja/i);
   });
 
-  it('CORS + PNA: OPTIONS preflight y GET/POST con Origin de bacarguard', async () => {
+  it('CORS + PNA: OPTIONS preflight y GET/POST con Origin de mss-guard', async () => {
     openCalls = [];
     const handlers = buildStationLocalHandlers([
       {
@@ -209,7 +209,7 @@ describe('createLocalStationServer HTTP', () => {
       openDoor: handlers.openDoor
     });
 
-    const origin = 'https://bacarguard.web.app';
+    const origin = 'https://mss-guard.web.app';
     const preflight = await request(live.port, 'OPTIONS', '/status', {
       headers: {
         Origin: origin,
@@ -251,7 +251,7 @@ describe('createLocalStationServer HTTP', () => {
     assert.equal(openCors.headers['access-control-allow-origin'], origin);
     assert.deepEqual(openCalls, ['cors-open']);
 
-    // Origen no autorizado: sin Allow-Origin (el browser bloquearía leer la respuesta).
+    // Origen no autorizado: sin Allow-Origin (el browser bloquearÃ­a leer la respuesta).
     const evil = await request(live.port, 'OPTIONS', '/open/puerta-p1', {
       headers: {
         Origin: 'https://evil.example',
@@ -262,7 +262,7 @@ describe('createLocalStationServer HTTP', () => {
     assert.equal(evil.status, 204);
     assert.equal(evil.headers['access-control-allow-origin'], undefined);
 
-    // Sin secreto sigue 401 aunque el Origin sea válido (CORS ≠ auth).
+    // Sin secreto sigue 401 aunque el Origin sea vÃ¡lido (CORS â‰  auth).
     const noSecret = await request(live.port, 'POST', '/open/puerta-p1', {
       headers: { Origin: origin }
     });
@@ -273,6 +273,7 @@ describe('createLocalStationServer HTTP', () => {
 
 describe('CORS helpers', () => {
   it('isAllowedCorsOrigin acepta hosting y localhost', () => {
+    assert.equal(isAllowedCorsOrigin('https://mss-guard.web.app'), true);
     assert.equal(isAllowedCorsOrigin('https://bacarguard.web.app'), true);
     assert.equal(isAllowedCorsOrigin('https://bacarguard.firebaseapp.com'), true);
     assert.equal(isAllowedCorsOrigin('http://localhost:3000'), true);
@@ -281,9 +282,9 @@ describe('CORS helpers', () => {
 
   it('buildCorsHeaders no usa wildcard', () => {
     const headers = buildCorsHeaders({
-      headers: { origin: 'https://bacarguard.web.app' }
+      headers: { origin: 'https://mss-guard.web.app' }
     });
-    assert.equal(headers['Access-Control-Allow-Origin'], 'https://bacarguard.web.app');
+    assert.equal(headers['Access-Control-Allow-Origin'], 'https://mss-guard.web.app');
     assert.notEqual(headers['Access-Control-Allow-Origin'], '*');
   });
 });

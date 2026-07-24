@@ -1,4 +1,4 @@
-const { describe, it, beforeEach, afterEach } = require('node:test');
+﻿const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
 
@@ -171,13 +171,13 @@ describe('lectorPairing', () => {
     delete require.cache[estacionesPath];
   });
 
-  it('genera código de 6 dígitos con TTL 10 min', async () => {
+  it('genera cÃ³digo de 6 dÃ­gitos con TTL 10 min', async () => {
     const created = await bag.lectoresApi.createLector({
       nombre: 'Ingreso',
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
     const pair = await bag.pairingApi.createPairingCode(created.lector.id);
     assert.match(pair.code, /^\d{6}$/);
@@ -186,18 +186,18 @@ describe('lectorPairing', () => {
     assert.ok(bag.pairingCodes.has(pair.code));
   });
 
-  it('canje válido regenera password y devuelve config completa', async () => {
+  it('canje vÃ¡lido regenera password y devuelve config completa', async () => {
     const created = await bag.lectoresApi.createLector({
       nombre: 'Ingreso',
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
     const oldHash = bag.users.get(created.username).password;
 
     const pair = await bag.pairingApi.createPairingCode(created.lector.id);
     const exchanged = await bag.pairingApi.exchangePairingCode(pair.code, {
-      apiBaseUrl: 'https://bacarguard.web.app/api'
+      apiBaseUrl: 'https://mss-guard.web.app/api'
     });
 
     assert.ok(exchanged.password);
@@ -205,7 +205,7 @@ describe('lectorPairing', () => {
     assert.equal(exchanged.config.password, exchanged.password);
     assert.equal(exchanged.config.doorId, 'puerta-p1');
     assert.equal(exchanged.config.readerId, 'INGRESO_P1');
-    assert.equal(exchanged.config.apiBaseUrl, 'https://bacarguard.web.app/api');
+    assert.equal(exchanged.config.apiBaseUrl, 'https://mss-guard.web.app/api');
     assert.equal(exchanged.config.localServerPort, undefined);
     assert.equal(exchanged.config.localServerSecret, undefined);
     assert.notEqual(bag.users.get(created.username).password, oldHash);
@@ -227,14 +227,14 @@ describe('lectorPairing', () => {
       readerId: 'INGRESO_P1',
       direction: 'ingreso',
       estacionId: 'est-franco'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
     assert.equal(created.config.localServerPort, 8787);
     assert.equal(created.config.localServerSecret, 'sec-estacion-franco');
 
     const pair = await bag.pairingApi.createPairingCode(created.lector.id);
     const exchanged = await bag.pairingApi.exchangePairingCode(pair.code, {
-      apiBaseUrl: 'https://bacarguard.web.app/api'
+      apiBaseUrl: 'https://mss-guard.web.app/api'
     });
 
     assert.equal(exchanged.config.localServerPort, 8787);
@@ -246,21 +246,21 @@ describe('lectorPairing', () => {
     assert.ok(exchanged.password);
   });
 
-  it('estacionId huérfano no rompe el canje (sin localServer*)', async () => {
+  it('estacionId huÃ©rfano no rompe el canje (sin localServer*)', async () => {
     const created = await bag.lectoresApi.createLector({
       nombre: 'Ingreso',
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
 
-    // Simula asignación a estación borrada / inexistente.
+    // Simula asignaciÃ³n a estaciÃ³n borrada / inexistente.
     const prev = bag.lectores.get(created.lector.id);
     bag.lectores.set(created.lector.id, { ...prev, estacionId: 'est-fantasma' });
 
     const pair = await bag.pairingApi.createPairingCode(created.lector.id);
     const exchanged = await bag.pairingApi.exchangePairingCode(pair.code, {
-      apiBaseUrl: 'https://bacarguard.web.app/api'
+      apiBaseUrl: 'https://mss-guard.web.app/api'
     });
 
     assert.equal(exchanged.config.localServerPort, undefined);
@@ -268,34 +268,34 @@ describe('lectorPairing', () => {
     assert.equal(exchanged.config.doorId, 'puerta-p1');
   });
 
-  it('un solo uso: segundo canje falla con mensaje genérico', async () => {
+  it('un solo uso: segundo canje falla con mensaje genÃ©rico', async () => {
     const created = await bag.lectoresApi.createLector({
       nombre: 'Ingreso',
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
     const pair = await bag.pairingApi.createPairingCode(created.lector.id);
     await bag.pairingApi.exchangePairingCode(pair.code, {
-      apiBaseUrl: 'https://bacarguard.web.app/api'
+      apiBaseUrl: 'https://mss-guard.web.app/api'
     });
 
     await assert.rejects(
       () => bag.pairingApi.exchangePairingCode(pair.code, {
-        apiBaseUrl: 'https://bacarguard.web.app/api'
+        apiBaseUrl: 'https://mss-guard.web.app/api'
       }),
       (err) => err.code === 'invalid_pairing_code'
         && err.message === bag.pairingApi.INVALID_CODE_MESSAGE
     );
   });
 
-  it('código expirado → mismo error genérico', async () => {
+  it('cÃ³digo expirado â†’ mismo error genÃ©rico', async () => {
     const created = await bag.lectoresApi.createLector({
       nombre: 'Ingreso',
       doorId: 'puerta-p1',
       readerId: 'INGRESO_P1',
       direction: 'ingreso'
-    }, { apiBaseUrl: 'https://bacarguard.web.app/api' });
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
     const pair = await bag.pairingApi.createPairingCode(created.lector.id);
     const stored = bag.pairingCodes.get(pair.code);
     stored.expiresAt = Date.now() - 1000;
@@ -303,22 +303,22 @@ describe('lectorPairing', () => {
 
     await assert.rejects(
       () => bag.pairingApi.exchangePairingCode(pair.code, {
-        apiBaseUrl: 'https://bacarguard.web.app/api'
+        apiBaseUrl: 'https://mss-guard.web.app/api'
       }),
       (err) => err.code === 'invalid_pairing_code'
     );
   });
 
-  it('código inexistente / formato inválido → genérico', async () => {
+  it('cÃ³digo inexistente / formato invÃ¡lido â†’ genÃ©rico', async () => {
     await assert.rejects(
       () => bag.pairingApi.exchangePairingCode('000000', {
-        apiBaseUrl: 'https://bacarguard.web.app/api'
+        apiBaseUrl: 'https://mss-guard.web.app/api'
       }),
       (err) => err.code === 'invalid_pairing_code'
     );
     await assert.rejects(
       () => bag.pairingApi.exchangePairingCode('abc', {
-        apiBaseUrl: 'https://bacarguard.web.app/api'
+        apiBaseUrl: 'https://mss-guard.web.app/api'
       }),
       (err) => err.code === 'invalid_pairing_code'
     );

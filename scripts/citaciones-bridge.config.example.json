@@ -1,6 +1,6 @@
-{
+﻿{
   "watchFolder": "C:\\usr",
-  "apiBaseUrl": "https://bacarguard.web.app/api",
+  "apiBaseUrl": "https://mss-guard.web.app/api",
   "bridgeSecret": "CAMBIAR-POR-SECRETO-DEL-ADMIN",
   "fileNamePrefix": "Citaciones_",
   "fileExtensions": [".xlsx", ".xls", ".csv"],
