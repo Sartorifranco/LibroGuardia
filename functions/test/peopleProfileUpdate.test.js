@@ -66,4 +66,16 @@ describe('peopleProfileUpdate', () => {
     assert.equal(json.active, true);
     assert.deepEqual(json.allowedDoorIds, ['puerta-p1']);
   });
+
+  it('acepta accessCard y biometricExternalId', () => {
+    const result = buildPersonProfilePatch({}, {
+      accessCard: 'aa-11',
+      biometricExternalId: ' ZK-9 ',
+      biometricBrand: 'ZKTeco'
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.patch.accessCard, 'AA-11');
+    assert.equal(result.patch.biometricExternalId, 'ZK-9');
+    assert.equal(result.patch.biometricBrand, 'zkteco');
+  });
 });

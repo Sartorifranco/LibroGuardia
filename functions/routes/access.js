@@ -26,6 +26,12 @@ const {
   processKioskScan,
   validarAcceso
 } = require('../accessControl');
+const { normalizeAccessIngestRequest } = require('../lib/accessIngest');
+const {
+  ACCESS_HARDWARE_BRANDS,
+  ACCESS_COMMERCIAL_PROFILES
+} = require('../lib/accessHardwareBrands');
+const { ACTUATOR_TEMPLATES } = require('../lib/actuatorTemplates');
 const { buildDoorAllowlist } = require('../lib/doorAllowlist');
 const { ingestOfflineEntries } = require('../lib/offlineEntries');
 const {
@@ -176,13 +182,15 @@ router.get('/api/guard/fleet-presence', auth, requireAnyPermission(['entries.vie
 
 router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.manage', 'access.control']), async (_req, res) => {
   try {
+    const { enrichDoorsWithLocalStations } = require('../lib/guardLocalStations');
     const [config, globalAccess, meta] = await Promise.all([
       getDoorsConfig(),
       getAccessControlConfig(),
       getDoorsConfigMeta()
     ]);
+    const doors = await enrichDoorsWithLocalStations(config.doors || []);
     res.json({
-      config,
+      config: { ...config, doors },
       globalAccess,
       authMethods: AUTH_METHODS,
       meta: {
@@ -330,17 +338,17 @@ router.post('/api/guard/exceptional-entry', auth, requirePermission('access.exce
 router.post('/api/access/kiosk-scan', auth, async (req, res) => {
   const t0 = Date.now();
   try {
-    const { rawData } = req.body;
-    if (!rawData?.trim()) {
-      return res.status(400).json({ message: 'Datos de escaneo vacíos' });
-    }
-
-    const result = await processKioskScan({
-      rawData,
-      username: req.user.id,
+    const normalized = normalizeAccessIngestRequest({
+      rawData: req.body?.rawData,
       doorId: req.body?.doorId || null,
       readerId: req.body?.readerId || 'default'
-    });
+    }, req.user.id);
+
+    if (!normalized.ok) {
+      return res.status(normalized.status).json({ message: normalized.message });
+    }
+
+    const result = await processKioskScan(normalized.args);
 
     console.log('[kiosk-scan-http]', JSON.stringify({
       wallMs: Date.now() - t0,
@@ -358,6 +366,56 @@ router.post('/api/access/kiosk-scan', auth, async (req, res) => {
     res.status(500).json({ message: 'Error en control de acceso', error: err.message });
   }
 });
+
+/**
+ * Ingest unificado (Fase A): DNI, tarjeta, biométrico u otros hardwares.
+ * Misma autorización/apertura que kiosk-scan; contrato estable para marcas.
+ */
+router.post('/api/access/ingest', auth, async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const normalized = normalizeAccessIngestRequest(req.body || {}, req.user.id);
+    if (!normalized.ok) {
+      return res.status(normalized.status).json({ message: normalized.message });
+    }
+
+    const result = await processKioskScan(normalized.args);
+    console.log('[access-ingest-http]', JSON.stringify({
+      wallMs: Date.now() - t0,
+      authorized: result?.authorized,
+      authMethod: result?.authMethod || normalized.args.ingestMeta?.authMethod || null,
+      vendor: normalized.args.ingestMeta?.vendor || null,
+      doorId: result?.door?.id || null
+    }));
+    res.json({
+      ...result,
+      ingest: {
+        ok: true,
+        vendor: normalized.args.ingestMeta?.vendor || null,
+        deviceId: normalized.args.ingestMeta?.deviceId || null
+      }
+    });
+  } catch (err) {
+    console.log('[access-ingest-http]', JSON.stringify({
+      wallMs: Date.now() - t0,
+      error: err.message
+    }));
+    res.status(500).json({ message: 'Error en ingest de acceso', error: err.message });
+  }
+});
+
+router.get(
+  '/api/admin/access-hardware-brands',
+  auth,
+  requireAnyPermission(['access.doors.manage', 'access.control', 'lectores.manage']),
+  async (_req, res) => {
+    res.json({
+      brands: ACCESS_HARDWARE_BRANDS,
+      profiles: ACCESS_COMMERCIAL_PROFILES,
+      actuators: ACTUATOR_TEMPLATES
+    });
+  }
+);
 
 router.post('/api/access/evaluate', auth, requirePermission('master.personal.read'), async (req, res) => {
   try {

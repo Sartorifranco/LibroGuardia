@@ -2,11 +2,12 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css'; // Estilos globales de Tailwind
 import App from './App';
-import reportWebVitals from './reportWebVitals'; // Archivo generado por create-react-app para métricas
+import reportWebVitals from './reportWebVitals'; // Archivo generado por create-react-app para mï¿½tricas
 import brand from './config/brand';
-import { applyBrandTheme } from './config/applyBrandTheme';
+import { applyAppearanceTheme } from './config/applyBrandTheme';
+import { fetchAndApplyAppearance } from './utils/appearance';
 
-applyBrandTheme(brand);
+fetchAndApplyAppearance(applyAppearanceTheme, brand);
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
@@ -15,7 +16,7 @@ root.render(
   </React.StrictMode>
 );
 
-// Si quieres empezar a medir el rendimiento en tu aplicación, pasa una función
+// Si quieres empezar a medir el rendimiento en tu aplicaciï¿½n, pasa una funciï¿½n
 // para registrar resultados (por ejemplo: reportWebVitals(console.log))
-// o envíalos a un punto final de análisis. Aprende más: https://bit.ly/CRA-vitals
+// o envï¿½alos a un punto final de anï¿½lisis. Aprende mï¿½s: https://bit.ly/CRA-vitals
 reportWebVitals();

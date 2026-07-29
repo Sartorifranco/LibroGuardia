@@ -59,7 +59,10 @@ describe('relayDispatch — decisión de disparo', () => {
       port: 6722,
       channel: 2,
       pulseMode: 'timed',
-      pulseSeconds: 7
+      pulseSeconds: 7,
+      httpUrl: '',
+      httpMethod: 'POST',
+      httpAuthToken: ''
     });
   });
 
@@ -70,6 +73,22 @@ describe('relayDispatch — decisión de disparo', () => {
     assert.equal(payload.channel, 1);
     assert.equal(payload.pulseMode, 'timed');
     assert.equal(payload.pulseSeconds, 3);
+  });
+
+  it('buildLocalRelayPayload arma payload HTTP genérico', () => {
+    const payload = buildLocalRelayPayload({
+      driver: 'generic_http',
+      httpUrl: 'https://relay.local/open',
+      httpMethod: 'PUT',
+      httpAuthToken: 'tok',
+      pulseSeconds: 4
+    });
+    assert.equal(payload.driver, 'generic_http');
+    assert.equal(payload.httpUrl, 'https://relay.local/open');
+    assert.equal(payload.httpMethod, 'PUT');
+    assert.equal(payload.httpAuthToken, 'tok');
+    assert.equal(payload.pulseSeconds, 4);
+    assert.equal(payload.host, '');
   });
 });
 
@@ -350,7 +369,10 @@ describe('processKioskScan — cloud vs local', () => {
       port: 6722,
       channel: 1,
       pulseMode: 'timed',
-      pulseSeconds: 5
+      pulseSeconds: 5,
+      httpUrl: '',
+      httpMethod: 'POST',
+      httpAuthToken: ''
     });
   });
 });

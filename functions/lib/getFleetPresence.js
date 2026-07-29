@@ -1,6 +1,6 @@
 const { db } = require('../firestore');
-const { computeFleetPresence } = require('./lib/fleetPresence');
-const { getEffectiveEntryType } = require('./lib/entriesQuery');
+const { computeFleetPresence } = require('./fleetPresence');
+const { getEffectiveEntryType } = require('./entriesQuery');
 
 /**
  * Carga móviles + entradas recientes de flota y calcula adentro/afuera.

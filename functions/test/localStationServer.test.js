@@ -136,8 +136,8 @@ describe('createLocalStationServer HTTP', () => {
           lastScanAt: '2026-07-23T12:00:00.000Z',
           allowlistFresh: true
         }),
-        openLocal: async () => {
-          openCalls.push('puerta-p1');
+        openLocal: async (relayOverride = null) => {
+          openCalls.push({ doorId: 'puerta-p1', relay: relayOverride });
           return { via: 'tcp-local', host: '192.168.0.38', channel: 1 };
         }
       }
@@ -178,7 +178,30 @@ describe('createLocalStationServer HTTP', () => {
     });
     assert.equal(openOk.status, 200);
     assert.equal(openOk.data.ok, true);
-    assert.deepEqual(openCalls, ['puerta-p1']);
+    assert.equal(openCalls.length, 1);
+    assert.equal(openCalls[0].doorId, 'puerta-p1');
+    assert.equal(openCalls[0].relay, null);
+
+    const openWithRelay = await request(live.port, 'POST', '/open/puerta-p1', {
+      headers: { Authorization: 'Bearer test-secret' },
+      body: {
+        localRelay: {
+          host: '192.168.0.38',
+          port: 6722,
+          channel: 2,
+          pulseSeconds: 5
+        }
+      }
+    });
+    assert.equal(openWithRelay.status, 200);
+    assert.equal(openCalls.length, 2);
+    assert.equal(openCalls[1].relay.host, '192.168.0.38');
+    assert.equal(openCalls[1].relay.channel, 2);
+    assert.equal(openCalls[1].relay.pulseSeconds, 5);
+
+    const panel = await request(live.port, 'GET', '/');
+    assert.equal(panel.status, 200);
+    assert.match(String(panel.data.raw || ''), /Prueba de apertura local/);
 
     const openMissing = await request(live.port, 'POST', '/open/puerta-inexistente', {
       headers: { 'X-Station-Secret': 'test-secret' }
@@ -274,8 +297,7 @@ describe('createLocalStationServer HTTP', () => {
 describe('CORS helpers', () => {
   it('isAllowedCorsOrigin acepta hosting y localhost', () => {
     assert.equal(isAllowedCorsOrigin('https://mss-guard.web.app'), true);
-    assert.equal(isAllowedCorsOrigin('https://bacarguard.web.app'), true);
-    assert.equal(isAllowedCorsOrigin('https://bacarguard.firebaseapp.com'), true);
+    assert.equal(isAllowedCorsOrigin('https://mss-guard.firebaseapp.com'), true);
     assert.equal(isAllowedCorsOrigin('http://localhost:3000'), true);
     assert.equal(isAllowedCorsOrigin('https://evil.example'), false);
   });

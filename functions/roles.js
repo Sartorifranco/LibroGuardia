@@ -30,9 +30,15 @@ const SYSTEM_ROLE_META = {
   },
   'empleado-visitas': {
     label: 'Empleado — visitas',
-    description: 'Autoregistro: solo carga y ve sus propias visitas de invitados.',
+    description: 'Puede cargar visitas ya autorizadas y ver las propias.',
     dashboardProfile: 'operational',
     sortOrder: 20
+  },
+  'empleado-solicitar-visitas': {
+    label: 'Empleado — solicitar visitas',
+    description: 'Solo solicita visitas; un admin/supervisor debe aprobarlas.',
+    dashboardProfile: 'operational',
+    sortOrder: 21
   }
 };
 

@@ -86,7 +86,7 @@ describe('EstacionesAdminSection', () => {
       expect(screen.getByText('Mini PC ingreso')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /Config/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Descargar config de Mini PC ingreso/i }));
 
     await waitFor(() => {
       expect(apiFetch).toHaveBeenCalledWith(
@@ -96,7 +96,7 @@ describe('EstacionesAdminSection', () => {
     });
   });
 
-  it('abre modal de asignaciÃ³n de lectores', async () => {
+  it('abre modal de asignación de lectores', async () => {
     render(
       <EstacionesAdminSection
         pendingAction={null}
@@ -108,11 +108,49 @@ describe('EstacionesAdminSection', () => {
       expect(screen.getByText('Mini PC ingreso')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /Asignar lectores/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Asignar lectores a Mini PC ingreso/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Asignar lectores a la estaciÃ³n/i)).toBeInTheDocument();
+      expect(screen.getByText(/Asignar lectores/i)).toBeInTheDocument();
       expect(screen.getByText(/Ingreso P1/)).toBeInTheDocument();
     });
+  });
+
+  it('abre popup de nueva estación bajo demanda', async () => {
+    render(
+      <EstacionesAdminSection
+        pendingAction={null}
+        runAction={async (_id, fn) => fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Mini PC ingreso')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole('dialog', { name: /Nueva estación/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Nueva estación/i }));
+    expect(screen.getByRole('dialog', { name: /Nueva estación/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Crear estación/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancelar/i })).toBeInTheDocument();
+  });
+
+  it('abre popup de editar estación', async () => {
+    render(
+      <EstacionesAdminSection
+        pendingAction={null}
+        runAction={async (_id, fn) => fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Mini PC ingreso')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Editar Mini PC ingreso/i }));
+    expect(screen.getByRole('dialog', { name: /Editar estación/i })).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Mini PC ingreso')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Guardar cambios/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Cancelar/i })).toBeInTheDocument();
   });
 });

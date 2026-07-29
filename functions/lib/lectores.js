@@ -7,11 +7,15 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { db, FieldValue } = require('../firestore');
 const { getDoorsConfig, findDoorById } = require('./doorsConfig');
-const { getRoleById, createRole } = require('../roles');
+const { getRoleById, createRole, updateRole } = require('../roles');
 const { PERMISSION_KEYS } = require('../permissions');
 
 const LECTORES = 'lectores';
+/** ID legado en Firestore; el label visible es “Estación de acceso”. */
 const KIOSK_ROLE_ID = 'kiosk_puerta';
+const ACCESS_STATION_ROLE_LABEL = 'Estación de acceso';
+const ACCESS_STATION_ROLE_DESCRIPTION =
+  'Cuenta técnica del lector físico / bridge de puerta. Se gestiona en Admin → Lectores.';
 const DIRECTIONS = ['ingreso', 'egreso', 'ambos'];
 
 /** Heartbeat del bridge ~5 min → umbrales de estado en UI. */
@@ -233,11 +237,21 @@ const buildDoorReaderConfig = ({
 
 const ensureKioskRole = async () => {
   const existing = await getRoleById(KIOSK_ROLE_ID);
-  if (existing) return existing;
+  if (existing) {
+    const needsRelabel = existing.label !== ACCESS_STATION_ROLE_LABEL
+      || existing.description !== ACCESS_STATION_ROLE_DESCRIPTION;
+    if (needsRelabel) {
+      return updateRole(KIOSK_ROLE_ID, {
+        label: ACCESS_STATION_ROLE_LABEL,
+        description: ACCESS_STATION_ROLE_DESCRIPTION
+      });
+    }
+    return existing;
+  }
   return createRole({
     id: KIOSK_ROLE_ID,
-    label: 'Kiosk puerta',
-    description: 'Solo escaneo headless por lector físico (door-reader-bridge).',
+    label: ACCESS_STATION_ROLE_LABEL,
+    description: ACCESS_STATION_ROLE_DESCRIPTION,
     permissions: ['access.kiosk'].filter((p) => PERMISSION_KEYS.includes(p)),
     dashboardProfile: 'operational'
   });
@@ -306,6 +320,7 @@ const resolveApiBaseUrl = (req) => {
 };
 
 const listLectores = async () => {
+  await ensureKioskRole().catch(() => {});
   const snap = await db.collection(LECTORES).orderBy('nombre').get();
   return snap.docs.map(toLectorJson);
 };
@@ -539,6 +554,8 @@ const requestForceResync = async (id) => {
 module.exports = {
   LECTORES,
   KIOSK_ROLE_ID,
+  ACCESS_STATION_ROLE_LABEL,
+  ACCESS_STATION_ROLE_DESCRIPTION,
   DIRECTIONS,
   STATUS_GREEN_MS,
   STATUS_YELLOW_MS,

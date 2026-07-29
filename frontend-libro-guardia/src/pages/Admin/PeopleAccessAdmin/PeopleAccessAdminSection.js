@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { DoorOpen, Search, Save } from 'lucide-react';
 import DoorAccessEditor from '../../../components/DoorAccessEditor';
+import PersonPhotoField from '../../../components/PersonPhotoField';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
@@ -23,6 +24,10 @@ const emptyDraft = () => ({
   idNumber: '',
   active: true,
   notas: '',
+  photoDataUrl: '',
+  accessCard: '',
+  biometricExternalId: '',
+  biometricBrand: '',
   allowedDoorIds: []
 });
 
@@ -85,6 +90,10 @@ function PeopleAccessAdminSection() {
       idNumber: person.idNumber || '',
       active: person.active !== false,
       notas: person.notas || '',
+      photoDataUrl: person.photoDataUrl || '',
+      accessCard: person.accessCard || '',
+      biometricExternalId: person.biometricExternalId || '',
+      biometricBrand: person.biometricBrand || '',
       allowedDoorIds: Array.isArray(person.allowedDoorIds) ? person.allowedDoorIds : []
     });
   }, []);
@@ -120,6 +129,10 @@ function PeopleAccessAdminSection() {
           idNumber: String(draft.idNumber || '').trim(),
           active: draft.active !== false,
           notas: String(draft.notas || '').trim(),
+          photoDataUrl: draft.photoDataUrl || null,
+          accessCard: String(draft.accessCard || '').trim(),
+          biometricExternalId: String(draft.biometricExternalId || '').trim(),
+          biometricBrand: String(draft.biometricBrand || '').trim(),
           allowedDoorIds: Array.isArray(draft.allowedDoorIds) ? draft.allowedDoorIds : []
         }
       });
@@ -291,6 +304,54 @@ function PeopleAccessAdminSection() {
                       placeholder="Observaciones internas (opcional)"
                     />
                   </label>
+                  <PersonPhotoField
+                    value={draft.photoDataUrl || ''}
+                    onChange={(next) => updateDraftField('photoDataUrl', next || '')}
+                    disabled={saving}
+                  />
+
+                  <div className="people-access-credentials">
+                    <h5>Identificación en lectores</h5>
+                    <p className="historial-meta">
+                      Opcional. Sirve cuando la persona entra con tarjeta o biométrico (ZKTeco, Hikvision, Suprema, HID, etc.).
+                    </p>
+                    <label className="people-access-field">
+                      <span>Número de tarjeta</span>
+                      <input
+                        className="input-field"
+                        value={draft.accessCard}
+                        onChange={(e) => updateDraftField('accessCard', e.target.value)}
+                        disabled={saving}
+                        placeholder="Ej. código de tarjeta HID / RFID"
+                      />
+                    </label>
+                    <label className="people-access-field">
+                      <span>ID en el lector biométrico</span>
+                      <input
+                        className="input-field"
+                        value={draft.biometricExternalId}
+                        onChange={(e) => updateDraftField('biometricExternalId', e.target.value)}
+                        disabled={saving}
+                        placeholder="El mismo ID que muestra el equipo"
+                      />
+                    </label>
+                    <label className="people-access-field">
+                      <span>Marca del biométrico (opcional)</span>
+                      <select
+                        className="input-field"
+                        value={draft.biometricBrand}
+                        onChange={(e) => updateDraftField('biometricBrand', e.target.value)}
+                        disabled={saving}
+                      >
+                        <option value="">Sin especificar</option>
+                        <option value="zkteco">ZKTeco</option>
+                        <option value="hikvision">Hikvision</option>
+                        <option value="suprema">Suprema</option>
+                        <option value="hid">HID</option>
+                        <option value="other">Otra</option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
 
                 <h4 className="people-access-doors-title">Acceso a puertas</h4>

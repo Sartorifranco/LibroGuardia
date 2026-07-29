@@ -2,6 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { computeFleetPresence, normalizeMobileKey } = require('../lib/fleetPresence');
 
+test('getFleetPresence módulo carga (require paths)', () => {
+  assert.doesNotThrow(() => require('../lib/getFleetPresence'));
+});
+
 test('normalizeMobileKey unifica mayúsculas y acentos', () => {
   assert.equal(normalizeMobileKey('  Móvil 12 '), 'movil 12');
 });

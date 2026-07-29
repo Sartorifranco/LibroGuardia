@@ -4,18 +4,16 @@ import { AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
 import { apiFetch } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { hasPermission } from '../../../utils/permissions';
+import {
+  ACTION_LABELS,
+  buildReadableChanges,
+  formatActionLabel,
+  formatTargetLabel
+} from '../../../utils/auditLabels';
 
 const ACTION_OPTIONS = [
   { value: '', label: 'Todas las acciones' },
-  { value: 'user.create', label: 'Usuario creado' },
-  { value: 'user.update', label: 'Usuario editado' },
-  { value: 'user.delete', label: 'Usuario eliminado' },
-  { value: 'user.permissions.update', label: 'Permisos de usuario' },
-  { value: 'role.create', label: 'Rol creado' },
-  { value: 'role.update', label: 'Rol editado' },
-  { value: 'role.delete', label: 'Rol eliminado' },
-  { value: 'permissions.change', label: 'Permisos por rol' },
-  { value: 'door.config.update', label: 'Config. puertas' }
+  ...Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }))
 ];
 
 function formatWhen(value) {
@@ -28,17 +26,11 @@ function formatWhen(value) {
       month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
+      minute: '2-digit'
     });
   } catch {
     return '—';
   }
-}
-
-function entityLabel(item) {
-  if (!item.targetType && !item.targetId) return '—';
-  return [item.targetType, item.targetId].filter(Boolean).join(' · ');
 }
 
 function AuditAdminSection() {
@@ -85,11 +77,12 @@ function AuditAdminSection() {
     <div className="admin-sub-section audit-admin-section">
       <div className="activity-panel__toolbar" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
         <p className="theme-section-desc" style={{ margin: 0, flex: '1 1 220px' }}>
-          Registro de cambios administrativos (usuarios, roles, permisos y puertas).
+          Historial detallado de cambios: quién hizo qué, sobre qué registro, y qué campos se modificaron.
+          Los detalles se muestran en lenguaje claro (sin código técnico).
         </p>
         <div className="flex flex-wrap gap-2 items-end">
           <label className="field-label" style={{ margin: 0 }}>
-            Acción
+            Tipo de acción
             <select className="input-field" value={action} onChange={(e) => setAction(e.target.value)}>
               {ACTION_OPTIONS.map((opt) => (
                 <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
@@ -123,7 +116,7 @@ function AuditAdminSection() {
         <AdminEmpty
           icon={ClipboardList}
           title="Todavía no hay eventos de auditoría"
-          description="Los cambios administrativos (usuarios, roles, permisos, puertas) van a aparecer acá."
+          description="Cuando se creen o modifiquen usuarios, roles, empresas, puertas u otros datos admin, van a aparecer acá."
         />
       ) : (
         <div className="theme-panel-nested" style={{ overflowX: 'auto' }}>
@@ -131,15 +124,16 @@ function AuditAdminSection() {
             <thead>
               <tr>
                 <th />
-                <th>Fecha</th>
-                <th>Usuario</th>
-                <th>Acción</th>
-                <th>Entidad</th>
+                <th>Cuándo</th>
+                <th>Quién</th>
+                <th>Qué hizo</th>
+                <th>Sobre qué</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => {
                 const open = expandedId === item.id;
+                const changes = buildReadableChanges(item.before, item.after, item.changedKeys);
                 return (
                   <React.Fragment key={item.id}>
                     <tr>
@@ -149,39 +143,46 @@ function AuditAdminSection() {
                           className="btn btn-secondary-small"
                           aria-expanded={open}
                           onClick={() => setExpandedId(open ? null : item.id)}
+                          title="Ver detalle"
                         >
                           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         </button>
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>{formatWhen(item.createdAt)}</td>
                       <td>{item.actorUsername || item.actorId || '—'}</td>
-                      <td><code>{item.action}</code></td>
-                      <td>{entityLabel(item)}</td>
+                      <td>{formatActionLabel(item.action)}</td>
+                      <td>{formatTargetLabel(item)}</td>
                     </tr>
                     {open && (
                       <tr>
                         <td colSpan={5} style={{ padding: '0.75rem 1rem', background: 'var(--panel-muted)' }}>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div>
-                              <p className="field-label">Antes</p>
-                              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '0.75rem' }}>
-                                {JSON.stringify(item.before ?? null, null, 2)}
-                              </pre>
+                          {changes.length ? (
+                            <div className="audit-changes">
+                              <p className="field-label" style={{ marginBottom: '0.5rem' }}>Cambios</p>
+                              <ul className="audit-changes__list">
+                                {changes.map((c) => (
+                                  <li key={`${item.id}-${c.field}`}>
+                                    <strong>{c.label}</strong>
+                                    {': '}
+                                    <span className="audit-changes__from">{c.from}</span>
+                                    {' → '}
+                                    <span className="audit-changes__to">{c.to}</span>
+                                  </li>
+                                ))}
+                              </ul>
                             </div>
-                            <div>
-                              <p className="field-label">Después</p>
-                              <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '0.75rem' }}>
-                                {JSON.stringify(item.after ?? null, null, 2)}
-                              </pre>
-                            </div>
-                          </div>
-                          {(item.ip || item.userAgent) && (
-                            <p className="theme-section-desc" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
-                              {item.ip ? `IP: ${item.ip}` : ''}
-                              {item.ip && item.userAgent ? ' · ' : ''}
-                              {item.userAgent ? `UA: ${item.userAgent}` : ''}
+                          ) : (
+                            <p className="theme-section-desc" style={{ margin: 0 }}>
+                              Sin detalle de campos (acción registrada sin diferencias).
                             </p>
                           )}
+                          {item.ip ? (
+                            <p className="theme-section-desc" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+                              Origen de la sesión:
+                              {' '}
+                              {item.ip}
+                            </p>
+                          ) : null}
                         </td>
                       </tr>
                     )}

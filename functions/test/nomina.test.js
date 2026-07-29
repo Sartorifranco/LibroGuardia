@@ -45,6 +45,24 @@ test('parseAuthPolicy rescata PERMANENTE con basura de exportacion Excel', () =>
   assert.equal(parsed.createPermanent, true);
 });
 
+test('buildNominaRowFromFields arma fila parseable desde el form admin', () => {
+  const { buildNominaRowFromFields } = require('../lib/nominaParser');
+  const row = buildNominaRowFromFields({
+    name: 'PEREZ Juan',
+    idNumber: '30111222',
+    legajo: '1001',
+    role: 'Colaborador',
+    centroCosto: 'BACAR SA - Sistemas',
+    turnoRaw: 'Lu,Ma,Mi,Ju,Vi 08:00 a 17:00',
+    requiresCitacion: false,
+    authorizationPolicy: 'permanent_shift'
+  });
+  const parsed = parseNominaRow(row);
+  assert.equal(parsed.valid, true);
+  assert.equal(parsed.authorizationPolicy, 'permanent_shift');
+  assert.equal(parsed.idNumberNormalized, '30111222');
+});
+
 test('evaluateExpectedToday incluye citados de transporte aunque la poliza diga permanente', () => {
   const employee = {
     active: true,

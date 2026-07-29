@@ -179,7 +179,9 @@ const writeAccessEntry = async ({
   denialReason,
   guardId,
   authorizationType = null,
-  registeredBy = null
+  registeredBy = null,
+  doorId = null,
+  doorName = null
 }) => {
   const payload = {
     personId: personId || null,
@@ -204,6 +206,10 @@ const writeAccessEntry = async ({
     registeredBy: registeredBy || guardId || null,
     eventTime: getArgentinaDateParts().timeString
   };
+  if (doorId) {
+    payload.doorId = doorId;
+    payload.doorName = doorName || null;
+  }
 
   const entryRef = await db.collection('entries').add(payload);
   profileMark('validarAcceso.writeAccessEntry');
@@ -241,7 +247,8 @@ const decidirAcceso = async ({
         authorizationType: 'visita_empleado',
         dniNormalized: dniNormalized || resolved.dniNormalized,
         allowedDoorIds: visitaMatch.allowedDoorIds,
-        visitaId: visitaMatch.visita.id
+        visitaId: visitaMatch.visita.id,
+        photoDataUrl: visitaMatch.visita.photoDataUrl || null
       };
     }
     if (visitaMatch.reason === 'puerta_no_autorizada') {
@@ -373,7 +380,8 @@ const decidirAcceso = async ({
         authorizationType: 'visita_empleado',
         dniNormalized: dniNormalized || resolved.dniNormalized,
         allowedDoorIds,
-        visitaId
+        visitaId,
+        photoDataUrl: visitaMatch.visita.photoDataUrl || null
       };
     }
     if (visitaMatch.reason === 'puerta_no_autorizada') {
@@ -468,7 +476,8 @@ const validarAcceso = async ({
     denialReason: decision.denialReason,
     guardId,
     authorizationType: decision.authorizationType,
-    registeredBy: guardId
+    registeredBy: guardId,
+    doorId
   });
 
   if (decision.authorized && decision.visitaId) {
@@ -704,7 +713,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
   let parsed = scan.parsed || {};
   let scanFormat = parsed.format || scan.authMethod || 'unknown';
 
-  if (scan.authMethod === 'credential' && scan.person) {
+  if ((scan.authMethod === 'credential' || scan.authMethod === 'biometric') && scan.person) {
     idNumber = scan.person.dniNormalized || scan.person.idNumberNormalized || '';
     const fullName = scan.displayName || scan.person.name || scan.person.nombre || '';
     const parts = fullName.split(/\s+/).filter(Boolean);
@@ -713,6 +722,9 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
   } else if (scan.authMethod === 'credential') {
     parsed = { format: 'credential' };
     scanFormat = 'credential';
+  } else if (scan.authMethod === 'biometric') {
+    parsed = { format: 'biometric' };
+    scanFormat = 'biometric';
   } else {
     parsed = scan.parsed || parseScanData(effectiveRawData);
     idNumber = normalizeIdNumber(parsed.idNumber || idNumber);
@@ -725,7 +737,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     || parsed.name
     || [lastName, firstName].filter(Boolean).join(' ').trim();
 
-  if (!idNumber && !fallbackName && scan.authMethod !== 'credential') {
+  if (!idNumber && !fallbackName && scan.authMethod !== 'credential' && scan.authMethod !== 'biometric') {
     profileFinish({ ok: false, reason: 'unreadable_document' });
     return {
       ok: false,
@@ -736,11 +748,19 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     };
   }
 
-  const resolvedPerson = await resolvePersonForValidarAcceso({
-    dni: idNumber,
-    nombre: firstName,
-    apellido: lastName
-  });
+  const resolvedPerson = scan.person && (scan.authMethod === 'credential' || scan.authMethod === 'biometric')
+    ? {
+      person: scan.person,
+      personId: scan.person.id || null,
+      resolutionPath: scan.authMethod,
+      nameSnapshot: scan.displayName || scan.person.name || scan.person.nombre || '',
+      dniNormalized: idNumber || scan.person.dniNormalized || null
+    }
+    : await resolvePersonForValidarAcceso({
+      dni: idNumber,
+      nombre: firstName,
+      apellido: lastName
+    });
   profileMark('kiosk.resolvePerson_preValidar');
 
   const fixedMovement = prefixed?.direction
@@ -962,6 +982,44 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       authMethod: scan.authMethod
     }).catch(() => {});
     profileMark('kiosk.denied.fireAndForgetLog');
+  }
+
+  // Verificación visual opcional en ingreso principal (feature por cliente).
+  if (
+    authorized
+    && movementType === 'ingreso'
+    && config.identityVerificationAtMainEntry === true
+    && door.isMainEntryDoor === true
+  ) {
+    const personDoc = resolvedPerson.person || scan.person || null;
+    const photoDataUrl = personDoc?.photoDataUrl
+      || result.photoDataUrl
+      || scan.authorization?.photoDataUrl
+      || null;
+    logAccessEvent({
+      type: 'identity_verification',
+      movementType: 'ingreso',
+      idNumber,
+      name: result.personName,
+      company: personDoc?.company || personDoc?.empresa || personDoc?.centroCosto || '',
+      legajo: personDoc?.legajoNormalized || personDoc?.legajo || '',
+      authorizationType: result.authorizationType || null,
+      authorizationLabel: getAuthorizationLabel(result.authorizationType || null),
+      // No embeber la foto acá (infla accessEvents y puede romper el poll).
+      // live-alerts la resuelve por personId / DNI.
+      personId: result.personId || personDoc?.id || null,
+      hasPhoto: Boolean(photoDataUrl),
+      entrySource: 'kiosk',
+      entryId: result.entryId,
+      username,
+      doorId: door.id,
+      doorName: door.name,
+      authMethod: scan.authMethod
+    }).catch(() => {});
+    responsePayload.identityVerification = {
+      required: true,
+      photoAvailable: Boolean(photoDataUrl)
+    };
   }
 
   if (result.entryId) {

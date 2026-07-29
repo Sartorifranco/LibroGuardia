@@ -44,3 +44,10 @@ functions/.env
 functions/scripts/citaciones-backfill-summary-*.json
 functions/migrate-dedupe-dirty-people.dry-run.json
 functions/migrate-dedupe-dirty-people.apply.json
+
+# Local plant configs / vendor tools
+scripts/_archivo/config.ps1
+scripts/_archivo/sr201-bridge.config.json
+scripts/_archivo/citaciones-bridge.config.json
+scripts/tools/nssm/
+

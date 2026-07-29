@@ -49,19 +49,8 @@ function HomePage({ onNavigate, onEnterAdmin }) {
       />
     );
   } else if (dashboardProfile === 'guardia') {
-    dashboard = (
-      <GuardiaDashboard
-        currentUser={currentUser}
-        entries={entries}
-        onNavigate={onNavigate}
-        authToken={authToken}
-        showFleetGps={hasPermission(currentUser, 'fleet.gps.read')}
-        showAttendanceAlerts={hasPermission(currentUser, 'attendance.alerts.read')}
-        showCitados={hasPermission(currentUser, 'attendance.alerts.read')}
-        onGpsMovementRegistered={handleGpsMovementsRegistered}
-        onAttendanceRegistered={handleAttendanceRegistered}
-      />
-    );
+    // El puesto de guardia usa un único centro operativo (KPIs + botonera + novedad).
+    dashboard = null;
   } else if (dashboardProfile === 'supervisor' || dashboardProfile === 'admin') {
     dashboard = (
       <ExecutiveDashboard
@@ -93,7 +82,7 @@ function HomePage({ onNavigate, onEnterAdmin }) {
   return (
     <>
       {showExpirationAlerts && <ExpirationAlertsBanner />}
-      {showControlCenter && <GuardiaControlCenter />}
+      {showControlCenter && <GuardiaControlCenter onNavigate={onNavigate} />}
       {dashboard}
     </>
   );

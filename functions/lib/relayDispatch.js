@@ -37,16 +37,37 @@ const resolveRelayMode = (door = {}) => (door.relayMode === 'local' ? 'local' : 
 
 /**
  * Arma los datos de conexión que viajan al bridge en modo local.
+ * Soporta SR201 (host/puerto/canal) y HTTP genérico (httpUrl/método/token).
  * @param {object} relayConfig  salida de doorController.buildRelayConfigForDoor
  */
-const buildLocalRelayPayload = (relayConfig = {}) => ({
-  driver: relayConfig.driver || 'sr201',
-  host: String(relayConfig.host || ''),
-  port: Number(relayConfig.port) || 6722,
-  channel: Number(relayConfig.relayChannel) || 1,
-  pulseMode: relayConfig.pulseMode === 'jog' ? 'jog' : 'timed',
-  pulseSeconds: Math.max(1, Math.min(99, Number(relayConfig.pulseSeconds) || 3))
-});
+const buildLocalRelayPayload = (relayConfig = {}) => {
+  const driver = relayConfig.driver === 'generic_http' ? 'generic_http' : 'sr201';
+  const base = {
+    driver,
+    pulseMode: relayConfig.pulseMode === 'jog' ? 'jog' : 'timed',
+    pulseSeconds: Math.max(1, Math.min(99, Number(relayConfig.pulseSeconds) || 3))
+  };
+  if (driver === 'generic_http') {
+    return {
+      ...base,
+      host: '',
+      port: 0,
+      channel: 1,
+      httpUrl: String(relayConfig.httpUrl || '').trim(),
+      httpMethod: String(relayConfig.httpMethod || 'POST').toUpperCase(),
+      httpAuthToken: String(relayConfig.httpAuthToken || '')
+    };
+  }
+  return {
+    ...base,
+    host: String(relayConfig.host || ''),
+    port: Number(relayConfig.port) || 6722,
+    channel: Number(relayConfig.relayChannel) || 1,
+    httpUrl: '',
+    httpMethod: 'POST',
+    httpAuthToken: ''
+  };
+};
 
 module.exports = {
   RELAY_MODES,

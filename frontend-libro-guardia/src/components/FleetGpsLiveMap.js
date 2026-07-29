@@ -20,7 +20,7 @@ import brand from '../config/brand';
 import 'leaflet/dist/leaflet.css';
 
 const ZONE_LABELS = {
-  gate: 'Port?n',
+  gate: 'Portón',
   plant: 'Planta',
   outside: 'Afuera',
   unknown: 'Sin zona'
@@ -56,12 +56,12 @@ const knotsToKmh = (speed) => `${(Number(speed || 0) * 1.852).toFixed(1)} km/h`;
 
 const buildPopupHtml = (vehicle) => `
   <div class="fleet-gps-map-popup">
-    <strong>${vehicle.name || 'M?vil'}</strong>
+    <strong>${vehicle.name || 'Móvil'}</strong>
     ${vehicle.plate ? `<div>Patente: ${vehicle.plate}</div>` : ''}
     <div>Zona: ${ZONE_LABELS[vehicle.zone] || vehicle.zone}</div>
-    ${vehicle.gateName ? `<div>Port?n: ${vehicle.gateName}</div>` : ''}
-    <div>${vehicle.moving ? 'En movimiento' : 'Detenido'} ? ${knotsToKmh(vehicle.speed)}</div>
-    ${vehicle.distanceMeters != null ? `<div>Distancia port?n: ${vehicle.distanceMeters} m</div>` : ''}
+    ${vehicle.gateName ? `<div>Portón: ${vehicle.gateName}</div>` : ''}
+    <div>${vehicle.moving ? 'En movimiento' : 'Detenido'} · ${knotsToKmh(vehicle.speed)}</div>
+    ${vehicle.distanceMeters != null ? `<div>Distancia portón: ${vehicle.distanceMeters} m</div>` : ''}
     ${vehicle.fixTime ? `<div class="fleet-gps-map-popup__time">GPS: ${formatFleetTime(vehicle.fixTime) || vehicle.fixTime}</div>` : ''}
   </div>
 `;
@@ -277,7 +277,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
           fillColor: index === 0 ? brand.primaryColor : '#ea580c',
           fillOpacity: 0.14,
           interactive: !passthrough
-        }).bindPopup(`<strong>${gate.name}</strong><div>Zona de tr?nsito / port?n</div>`);
+        }).bindPopup(`<strong>${gate.name}</strong><div>Zona de tránsito / portón</div>`);
         layer.addTo(map);
         layersRef.current.polygons.push(layer);
       });
@@ -290,7 +290,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
           fillOpacity: 0.06,
           dashArray: '8 6',
           interactive: !passthrough
-        }).bindPopup('<strong>Planta</strong><div>Per?metro interno</div>');
+        }).bindPopup('<strong>Planta</strong><div>Perímetro interno</div>');
         plantLayer.addTo(map);
         layersRef.current.polygons.push(plantLayer);
       }
@@ -327,7 +327,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
         fillOpacity: 0.05,
         dashArray: '10 8',
         interactive: false
-      }).bindPopup('<strong>Alerta de acercamiento</strong><div>M?viles en movimiento dentro de este radio avisan al guardia. Compatible con pol?gonos de port?n.</div>')
+      }).bindPopup('<strong>Alerta de acercamiento</strong><div>Móviles en movimiento dentro de este radio avisan al guardia. Compatible con polígonos de portón.</div>')
         .addTo(map);
     }
 
@@ -427,15 +427,15 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
   const handleFinishPolygon = () => {
     const patch = buildGatePolygonPatch(drawTarget, draftPoints, queryConfig.gatePolygons);
     if (!patch) {
-      setGeofenceMessage('Agreg? al menos 3 puntos para cerrar el pol?gono.');
+      setGeofenceMessage('Agregá al menos 3 puntos para cerrar el polígono.');
       return;
     }
     updateGeofence(patch);
     setDraftPoints([]);
     const targetLabel = drawTarget === 'plant'
       ? 'Planta'
-      : (GATE_TARGETS.find((gate) => gate.id === drawTarget)?.name || 'Port?n');
-    setGeofenceMessage(`Pol?gono de ${targetLabel} listo en el mapa. Presion? ?Guardar cambios del mapa? para persistir.`);
+      : (GATE_TARGETS.find((gate) => gate.id === drawTarget)?.name || 'Portón');
+    setGeofenceMessage(`Polígono de ${targetLabel} listo en el mapa. Presioná «Guardar cambios del mapa» para persistir.`);
   };
 
   const handleSaveGeofence = async () => {
@@ -449,7 +449,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       );
       const hasGate = gatePolygons.some((gate) => gate.points.length >= 3);
       if (queryConfig.geofenceMode === 'polygon' && !hasGate) {
-        throw new Error('Dibuj? y cerr? al menos un port?n (3 puntos) antes de guardar.');
+        throw new Error('Dibujá y cerrá al menos un portón (3 puntos) antes de guardar.');
       }
 
       const body = {
@@ -529,31 +529,29 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
     <div className="fleet-gps-live-map">
       <div className="fleet-gps-live-map__header">
         <div>
-          <h4 className="theme-section-title" style={{ fontSize: '1.05rem', marginBottom: '0.25rem' }}>
-            Mapa en vivo (solo admin)
-          </h4>
-          <p className="theme-section-desc" style={{ marginBottom: 0 }}>
+          <h4 className="fleet-gps-live-map__title">Mapa en vivo</h4>
+          <p className="fleet-gps-live-map__desc">
             {polygonMode
-              ? 'Dibuje pol?gonos sobre cada port?n para detectar entradas y salidas con precisi?n. Puede marcar hasta 2 portones y el per?metro de planta.'
-              : 'Visualice cada cami?n y ajuste los radios de port?n/planta hasta que las entradas y salidas coincidan con la realidad.'}
+              ? 'Dibujá polígonos sobre cada portón para detectar entradas y salidas con precisión. Hasta 2 portones y el perímetro de planta.'
+              : 'Visualizá cada móvil y ajustá los radios de portón/planta hasta que las entradas y salidas coincidan con la realidad.'}
           </p>
         </div>
         <div className="fleet-gps-live-map__header-actions">
           {editable && (
             <button
               type="button"
-              className="btn btn-primary btn-secondary-small"
+              className="btn btn-primary"
               onClick={handleSaveGeofence}
               disabled={savingGeofence || isDrawing}
             >
               {savingGeofence ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              Guardar cambios del mapa
+              Guardar mapa
             </button>
           )}
-          <button type="button" className="btn btn-secondary-small" onClick={handleCenterMap}>
-            <MapPin size={14} /> Centrar mapa
+          <button type="button" className="btn btn-secondary" onClick={handleCenterMap}>
+            <MapPin size={14} /> Centrar
           </button>
-          <button type="button" className="btn btn-secondary-small" onClick={() => fetchLive(false)} disabled={loading || isDrawing}>
+          <button type="button" className="btn btn-secondary" onClick={() => fetchLive(false)} disabled={loading || isDrawing}>
             {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             Actualizar
           </button>
@@ -570,8 +568,8 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
                 onChange={(e) => updateGeofence({ geofenceMode: e.target.value })}
                 className="input-field"
               >
-                <option value="circle">C?rculos (r?pido)</option>
-                <option value="polygon">Pol?gonos (portones)</option>
+                <option value="circle">Círculos (rápido)</option>
+                <option value="polygon">Polígonos (portones)</option>
               </select>
             </label>
             {polygonMode && (
@@ -594,23 +592,23 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
           {polygonMode && (
             <>
               <p className="fleet-gps-geofence-editor__hint">
-                Hac? clic en el mapa para agregar v?rtices (Port?n Santiago / Port?n Olmos).
-                La alerta de acercamiento a 400 m puede estar activa al mismo tiempo: avisa al guardia antes del cruce y el ingreso/egreso se registra al pasar el pol?gono del port?n.
+                Hacé clic en el mapa para agregar vértices (Portón Santiago / Portón Olmos).
+                La alerta de acercamiento a 400 m puede estar activa al mismo tiempo: avisa al guardia antes del cruce y el ingreso/egreso se registra al pasar el polígono del portón.
               </p>
               <div className="fleet-gps-geofence-editor__actions">
-                <button type="button" className="btn btn-secondary-small" onClick={handleFinishPolygon} disabled={draftPoints.length < 3}>
-                  <Pentagon size={14} /> Cerrar pol?gono ({draftPoints.length} pts)
+                <button type="button" className="btn btn-secondary" onClick={handleFinishPolygon} disabled={draftPoints.length < 3}>
+                  <Pentagon size={14} /> Cerrar polígono ({draftPoints.length} pts)
                 </button>
-                <button type="button" className="btn btn-secondary-small" onClick={() => setDraftPoints((prev) => prev.slice(0, -1))} disabled={!draftPoints.length}>
+                <button type="button" className="btn btn-secondary" onClick={() => setDraftPoints((prev) => prev.slice(0, -1))} disabled={!draftPoints.length}>
                   <Undo2 size={14} /> Deshacer punto
                 </button>
-                <button type="button" className="btn btn-secondary-small" onClick={handleClearTarget}>
+                <button type="button" className="btn btn-secondary" onClick={handleClearTarget}>
                   <Trash2 size={14} /> Borrar zona actual
                 </button>
               </div>
               <div className="fleet-gps-geofence-editor__status">
-                <span>{configuredGates} port?n(es) configurado(s)</span>
-                <span>{hasPlantPolygon ? 'Planta definida' : 'Planta sin pol?gono (usa radio)'}</span>
+                <span>{configuredGates} portón(es) configurado(s)</span>
+                <span>{hasPlantPolygon ? 'Planta definida' : 'Planta sin polígono (usa radio)'}</span>
               </div>
             </>
           )}
@@ -624,13 +622,13 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       )}
 
       {geofenceMessage && (
-        <div className={`theme-callout-${geofenceMessage.includes('Error') || geofenceMessage.includes('al menos') ? 'warn' : 'info'}`} style={{ marginBottom: '0.75rem' }}>
+        <div className={`theme-callout-${geofenceMessage.includes('Error') || geofenceMessage.includes('al menos') ? 'warn' : 'info'} fleet-gps-live-map__callout`}>
           {geofenceMessage}
         </div>
       )}
 
       {error && (
-        <div className="theme-callout-warn" style={{ marginBottom: '0.75rem' }}>
+        <div className="theme-callout-warn fleet-gps-live-map__callout">
           {error}
         </div>
       )}
@@ -638,21 +636,21 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       <div className="fleet-gps-live-map__meta">
         {polygonMode ? (
           <>
-            <span><MapPin size={14} /> Modo pol?gonos</span>
+            <span><MapPin size={14} /> Modo polígonos</span>
             <span>{configuredGates} portones</span>
           </>
         ) : (
           <>
-            <span><MapPin size={14} /> Port?n {queryConfig.gateRadiusMeters} m</span>
+            <span><MapPin size={14} /> Portón {queryConfig.gateRadiusMeters} m</span>
             <span>Planta {queryConfig.plantRadiusMeters} m</span>
           </>
         )}
-        <span>{snapshot?.vehicleCount ?? 0} m?viles</span>
+        <span>{snapshot?.vehicleCount ?? 0} móviles</span>
         {snapshot?.summary && (
           <>
             <span>{snapshot.summary.moving} en movimiento</span>
             <span>{snapshot.summary.stopped} detenidos</span>
-            <span>{snapshot.summary.atGate} en port?n</span>
+            <span>{snapshot.summary.atGate} en portón</span>
           </>
         )}
         {snapshot?.syncedAt && (
@@ -661,8 +659,8 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       </div>
 
       <div className="fleet-gps-live-map__legend">
-        <span><i style={{ background: brand.primaryColor }} /> Port?n en movimiento</span>
-        <span><i style={{ background: '#f97316' }} /> Port?n detenido</span>
+        <span><i style={{ background: brand.primaryColor }} /> Portón en movimiento</span>
+        <span><i style={{ background: '#f97316' }} /> Portón detenido</span>
         <span><i style={{ background: '#16a34a' }} /> Planta detenido</span>
         <span><i style={{ background: '#2563eb' }} /> Planta en movimiento</span>
         <span><i style={{ background: '#6b7280' }} /> Afuera detenido</span>

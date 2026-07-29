@@ -7,6 +7,7 @@ const { normalizeIdNumber } = require('../dniParser');
 const { normalizeLegajo } = require('./personMatch');
 const { normalizePersonName, buildNameTokens } = require('./nameUtils');
 const { normalizeAllowedDoorIds } = require('./doorAccess');
+const { normalizePhotoDataUrl } = require('./personPhoto');
 
 const personToAdminJSON = (doc) => {
   const data = (doc && typeof doc.data === 'function' ? doc.data() : doc) || {};
@@ -19,6 +20,10 @@ const personToAdminJSON = (doc) => {
     company: data.company || data.empresa || data.centroCosto || '',
     active: data.active !== false,
     notas: data.notas || data.notes || '',
+    photoDataUrl: data.photoDataUrl || null,
+    accessCard: data.accessCard || '',
+    biometricExternalId: data.biometricExternalId || '',
+    biometricBrand: data.biometricBrand || '',
     allowedDoorIds: normalizeAllowedDoorIds(data.allowedDoorIds)
   };
 };
@@ -71,6 +76,34 @@ const buildPersonProfilePatch = (existing = {}, body = {}) => {
 
   if (has('allowedDoorIds')) {
     patch.allowedDoorIds = normalizeAllowedDoorIds(body.allowedDoorIds);
+  }
+
+  if (has('photoDataUrl') || has('photoUrl')) {
+    const raw = has('photoDataUrl') ? body.photoDataUrl : body.photoUrl;
+    if (raw === null || raw === '') {
+      patch.photoDataUrl = null;
+    } else {
+      const photo = normalizePhotoDataUrl(raw);
+      if (!photo.ok) {
+        return { ok: false, status: 400, message: photo.message };
+      }
+      patch.photoDataUrl = photo.value;
+    }
+  }
+
+  if (has('accessCard') || has('cardCode') || has('credentialCode')) {
+    const raw = String(body.accessCard ?? body.cardCode ?? body.credentialCode ?? '').trim();
+    patch.accessCard = raw ? raw.toUpperCase() : null;
+  }
+
+  if (has('biometricExternalId') || has('biometricId')) {
+    const raw = String(body.biometricExternalId ?? body.biometricId ?? '').trim();
+    patch.biometricExternalId = raw || null;
+  }
+
+  if (has('biometricBrand') || has('biometricVendor')) {
+    const raw = String(body.biometricBrand ?? body.biometricVendor ?? '').trim().toLowerCase();
+    patch.biometricBrand = raw || null;
   }
 
   return { ok: true, patch };

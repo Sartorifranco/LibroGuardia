@@ -1,14 +1,11 @@
 /**
- * Apertura manual de puerta — nube y/o estación LAN.
+ * Apertura manual de puerta.
  *
- * Estrategia:
- * - relayMode:'local' + datos de estación → POST directo a la estación (PASO 6).
- * - Si la nube falla y hay estación → fallback LAN (PASO 5).
- * - relayMode:'cloud' (o sin estación) → POST /guard/open-door como siempre.
+ * Camino único (casi siempre): POST /guard/open-door por HTTPS.
+ * - relayMode cloud → la nube dispara por túnel.
+ * - relayMode local → la nube encola; el bridge de planta abre por LAN (~2 s).
  *
- * NOTA: /guard/open-door NO usa la colección `estaciones`. Dispara el relé
- * desde la Cloud Function (bridgeUrl/TCP). Sin `localStation` en el objeto
- * puerta, este cliente NUNCA habla con el HTTP local del bridge.
+ * forceLocal: solo diagnóstico (HTTP directo a la estación; Mixed Content en HTTPS).
  */
 import { apiFetch } from '../services/api';
 import { openDoorOnStation } from './localStationClient';
@@ -42,9 +39,9 @@ export async function openManualDoor({
   door = null,
   reason = 'apertura_manual_guardia',
   bypassAirlock = true,
-  /** Forzar solo nube (tests / admin). */
+  /** Forzar solo nube/cola (default). */
   forceCloud = false,
-  /** Forzar solo LAN. */
+  /** Forzar HTTP LAN directo (diagnóstico). */
   forceLocal = false
 } = {}) {
   const id = String(doorId || door?.id || '').trim();
@@ -69,9 +66,19 @@ export async function openManualDoor({
     direccionRedLocal: station?.direccionRedLocal || null
   };
 
-  const openLocal = async (pathLabel) => {
+  const openLocalDirect = async (pathLabel) => {
     writeOpenAudit({ ...baseAudit, attempt: pathLabel, phase: 'local_fetch_start' });
-    const res = await openDoorOnStation(station, id);
+    const host = String(door?.device?.host || '').trim();
+    const localRelay = host
+      ? {
+        host,
+        port: Number(door.device?.port) || 6722,
+        channel: Number(door.device?.channel) === 2 ? 2 : 1,
+        pulseMode: 'timed',
+        pulseSeconds: Math.max(1, Math.min(99, Number(door.pulseSeconds) || 3))
+      }
+      : undefined;
+    const res = await openDoorOnStation(station, id, { localRelay });
     if (!res.ok) {
       const err = new Error(res.data?.message || `Estación local HTTP ${res.status}`);
       err.status = res.status;
@@ -97,7 +104,7 @@ export async function openManualDoor({
     return result;
   };
 
-  const openCloud = async (pathLabel) => {
+  const openCloudOrQueue = async (pathLabel) => {
     if (!authToken) throw new Error('Sin sesión');
     writeOpenAudit({ ...baseAudit, attempt: pathLabel, phase: 'cloud_fetch_start' });
     const data = await apiFetch('/guard/open-door', {
@@ -105,9 +112,10 @@ export async function openManualDoor({
       token: authToken,
       body: { reason, doorId: id, bypassAirlock }
     });
+    const via = data?.relay?.via || data?.via || 'cloud';
     const result = {
       ...data,
-      via: data.via || 'cloud',
+      via,
       auditPath: pathLabel
     };
     writeOpenAudit({
@@ -130,51 +138,21 @@ export async function openManualDoor({
       });
       throw new Error('Sin datos de estación local para esta puerta');
     }
-    return openLocal('forceLocal');
+    return openLocalDirect('forceLocal');
   }
 
-  if (forceCloud) {
-    return openCloud('forceCloud');
-  }
-
-  // PASO 6: con internet, puertas local van directo a la estación.
-  if (relayMode === 'local' && canLocal) {
-    try {
-      return await openLocal('relayLocal_preferStation');
-    } catch (localErr) {
-      // Si la estación no responde, intentar nube por si el bridge aún pollea.
-      try {
-        return await openCloud('relayLocal_fallbackCloud');
-      } catch (cloudErr) {
-        const err = new Error(
-          localErr.message || cloudErr.message || 'No se pudo abrir (local ni nube)'
-        );
-        err.via = 'local';
-        err.causeLocal = localErr;
-        err.causeCloud = cloudErr;
-        writeOpenAudit({
-          ...baseAudit,
-          attempt: 'relayLocal_bothFailed',
-          ok: false,
-          error: err.message
-        });
-        throw err;
-      }
-    }
-  }
-
-  // Camino nube (default) con fallback LAN si la red/API falla (PASO 5).
-  // Importante: sin canLocal (0 estaciones / sin localStation), SOLO nube.
+  // Camino normal: HTTPS → API (cola local o túnel cloud). Un clic.
   try {
-    return await openCloud(
-      relayMode === 'local' && !canLocal
-        ? 'cloudOnly_localModeWithoutStation'
-        : 'cloudDefault'
+    return await openCloudOrQueue(
+      forceCloud
+        ? 'forceCloud'
+        : (relayMode === 'local' ? 'localViaQueue' : 'cloudDefault')
     );
   } catch (cloudErr) {
-    if (canLocal && isNetworkishError(cloudErr)) {
+    // Fallback LAN solo si la API no responde y hay estación (misma red).
+    if (canLocal && isNetworkishError(cloudErr) && !forceCloud) {
       try {
-        return await openLocal('cloudFailed_fallbackLocal');
+        return await openLocalDirect('cloudFailed_fallbackLocal');
       } catch (localErr) {
         const err = new Error(
           `Sin nube y estación local falló: ${localErr.message}`

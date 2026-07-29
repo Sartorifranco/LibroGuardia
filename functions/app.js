@@ -9,7 +9,7 @@ const cors = require('cors');
 const app = express();
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
-  'http://localhost:3000,https://mss-guard.web.app,https://mss-guard.firebaseapp.com,https://bacarguard.web.app,https://bacarguard.firebaseapp.com'
+  'http://localhost:3000,https://mss-guard.web.app,https://mss-guard.firebaseapp.com'
 ).split(',').map((origin) => origin.trim());
 
 app.use(cors({
@@ -41,6 +41,8 @@ app.use(require('./routes/empresasDestinos'));
 app.use(require('./routes/lectores'));
 app.use(require('./routes/estaciones'));
 app.use(require('./routes/empleado'));
+app.use(require('./routes/visitasAdmin'));
+app.use(require('./routes/appearance'));
 app.use(require('./routes/fleetGps'));
 app.use(require('./routes/attendance'));
 app.use(require('./routes/entries'));

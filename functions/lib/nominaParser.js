@@ -5,6 +5,37 @@ const { normalizeIdNumber } = require('../dniParser');
 
 const INVALID_TIPO_MARKERS = ['eliminar', 'descargar archivos', 'onboarding', 'dar de baja', 'no hay templates'];
 
+const POLICY_TO_TIPO = {
+  permanent_shift: 'PERMANENTE dentro del turno',
+  permanent: 'PERMANENTE',
+  citacion_shift: 'Ajustar citación',
+  citacion: 'Con citación',
+  previa: 'Autorización previa',
+  unknown: ''
+};
+
+const buildNominaRowFromFields = (fields = {}) => {
+  const policyCode = String(fields.authorizationPolicy || '').trim();
+  const tipo = POLICY_TO_TIPO[policyCode]
+    || String(fields.authorizationPolicyRaw || fields.tipoAutorizacion || policyCode || 'PERMANENTE');
+  const conCitacion = fields.requiresCitacion === true
+    || fields.requiresCitacion === 'true'
+    || /^si$/i.test(String(fields.conCitacion || '').trim())
+    ? 'SI'
+    : 'NO';
+
+  return {
+    Usuario: fields.name || fields.Usuario || '',
+    DNI: fields.idNumber || fields.DNI || '',
+    Legajo: fields.legajo || fields.Legajo || '',
+    Rol: fields.role || fields.Rol || '',
+    'C. Costo': fields.centroCosto || fields['C. Costo'] || '',
+    Turno: fields.turnoRaw || fields.Turno || fields.turno || '',
+    'Con citacion': conCitacion,
+    'Tipo de autorizacion': tipo
+  };
+};
+
 const normalizeHeader = (value = '') =>
   stripAccents(String(value || ''))
     .toLowerCase()
@@ -156,5 +187,7 @@ const parseNominaRow = (row = {}) => {
 module.exports = {
   parseNominaRow,
   parseAuthPolicy,
-  resolveRowKeys
+  resolveRowKeys,
+  buildNominaRowFromFields,
+  POLICY_TO_TIPO
 };

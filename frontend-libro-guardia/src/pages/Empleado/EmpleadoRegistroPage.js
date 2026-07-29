@@ -68,7 +68,8 @@ function EmpleadoRegistroPage() {
         </div>
 
         <p className="auth-help-text">
-          Solo dominios habilitados por administración. Después del registro iniciá sesión para cargar visitas.
+          Usá el email corporativo de tu empresa (el dominio tiene que estar habilitado por administración).
+          Después iniciá sesión para cargar visitas / personas autorizadas a ingresar.
         </p>
 
         {error && (

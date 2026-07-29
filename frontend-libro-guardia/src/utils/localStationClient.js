@@ -12,7 +12,28 @@ const stationBaseUrl = (station) => {
   return `http://${host}:${port}`;
 };
 
-const stationFetch = async (station, path, { method = 'GET', timeoutMs = DEFAULT_TIMEOUT_MS } = {}) => {
+const isMixedContentBlock = (err) => {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return msg.includes('mixed content')
+    || msg.includes('failed to fetch')
+    || msg.includes('networkerror')
+    || msg.includes('load failed');
+};
+
+const mixedContentHint = (station) => {
+  const base = stationBaseUrl(station);
+  return (
+    `El navegador bloquea llamadas HTTP desde el sitio HTTPS. `
+    + `Para probar la apertura local abrí ${base}/ en una PC de la planta `
+    + `(página de prueba de la estación) e ingresá el secreto local.`
+  );
+};
+
+const stationFetch = async (station, path, {
+  method = 'GET',
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  body = undefined
+} = {}) => {
   const secret = String(station?.secretoLocal || '').trim();
   if (!secret) throw new Error('Estación sin secreto local');
 
@@ -21,13 +42,21 @@ const stationFetch = async (station, path, { method = 'GET', timeoutMs = DEFAULT
     try { controller?.abort(); } catch { /* ignore */ }
   }, timeoutMs);
 
+  const headers = {
+    Accept: 'application/json',
+    Authorization: `Bearer ${secret}`
+  };
+  let payload;
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    payload = JSON.stringify(body);
+  }
+
   try {
     const response = await fetch(`${stationBaseUrl(station)}${path}`, {
       method,
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${secret}`
-      },
+      headers,
+      body: payload,
       cache: 'no-store',
       signal: controller?.signal
     });
@@ -38,6 +67,15 @@ const stationFetch = async (station, path, { method = 'GET', timeoutMs = DEFAULT
       data = {};
     }
     return { status: response.status, ok: response.ok, data };
+  } catch (err) {
+    if (isMixedContentBlock(err) && typeof window !== 'undefined'
+      && window.location?.protocol === 'https:') {
+      const hint = new Error(mixedContentHint(station));
+      hint.cause = err;
+      hint.code = 'MIXED_CONTENT';
+      throw hint;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -47,10 +85,23 @@ export async function fetchStationStatus(station, options = {}) {
   return stationFetch(station, '/status', { method: 'GET', ...options });
 }
 
+/**
+ * @param {object} station
+ * @param {string} doorId
+ * @param {{ timeoutMs?: number, localRelay?: { host: string, port?: number, channel?: number, pulseSeconds?: number, pulseMode?: string } }} [options]
+ */
 export async function openDoorOnStation(station, doorId, options = {}) {
   const id = encodeURIComponent(String(doorId || '').trim());
   if (!id) throw new Error('doorId requerido');
-  return stationFetch(station, `/open/${id}`, { method: 'POST', ...options });
+  const { localRelay, timeoutMs } = options;
+  const body = localRelay?.host
+    ? { localRelay }
+    : {};
+  return stationFetch(station, `/open/${id}`, {
+    method: 'POST',
+    timeoutMs,
+    body
+  });
 }
 
 /**

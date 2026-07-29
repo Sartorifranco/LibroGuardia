@@ -4,10 +4,18 @@ const { buildNameTokens } = require('./nameUtils');
 const { hydrateAuthorizationForRead } = require('./transportCsvParser');
 
 const CREDENTIAL_PREFIX = /^(CARD|CRED|TARJETA|RFID)[:#\s-]*/i;
+const BIOMETRIC_PREFIX = /^(BIO|BIOMETRIC|HUELLA|FACE|ROSTRO|FP)[:#\s-]*/i;
 
 const detectAuthMethod = (rawData = '') => {
   const trimmed = String(rawData || '').trim();
   if (!trimmed) return { method: null, payload: '' };
+
+  if (BIOMETRIC_PREFIX.test(trimmed)) {
+    return {
+      method: 'biometric',
+      payload: trimmed.replace(BIOMETRIC_PREFIX, '').trim()
+    };
+  }
 
   if (CREDENTIAL_PREFIX.test(trimmed)) {
     return {
@@ -35,6 +43,13 @@ const detectAuthMethod = (rawData = '') => {
 const doorAllowsMethod = (door, method) => {
   const methods = door?.authMethods || ['dni'];
   if (method === 'manual') return methods.includes('manual') || door?.manualOpenAllowed !== false;
+  // face y biometric se tratan como familia biométrica en puertas viejas con "face".
+  if (method === 'biometric') {
+    return methods.includes('biometric') || methods.includes('face');
+  }
+  if (method === 'face') {
+    return methods.includes('face') || methods.includes('biometric');
+  }
   return methods.includes(method);
 };
 
@@ -84,6 +99,23 @@ const findPersonByCredential = async (credentialCode = '') => {
   return null;
 };
 
+const findPersonByBiometricId = async (biometricExternalId = '') => {
+  const code = String(biometricExternalId || '').trim();
+  if (!code) return null;
+
+  const snap = await db.collection('people')
+    .where('biometricExternalId', '==', code)
+    .limit(1)
+    .get();
+
+  if (snap.empty) return null;
+  return {
+    person: { id: snap.docs[0].id, ...snap.docs[0].data() },
+    authorization: null,
+    method: 'biometric'
+  };
+};
+
 const resolveScanContext = async ({ rawData, door }) => {
   const detected = detectAuthMethod(rawData);
   if (!detected.method) {
@@ -100,7 +132,24 @@ const resolveScanContext = async ({ rawData, door }) => {
   if (detected.method === 'face') {
     return {
       ok: false,
-      message: 'Reconocimiento facial: configure el lector y endpoint dedicado (próximamente)'
+      message: 'Reconocimiento facial por cámara del puesto: pendiente de configuración del lector'
+    };
+  }
+
+  if (detected.method === 'biometric') {
+    const match = await findPersonByBiometricId(detected.payload);
+    if (!match) {
+      return { ok: false, message: 'Identidad biométrica no reconocida', authMethod: 'biometric' };
+    }
+    return {
+      ok: true,
+      authMethod: 'biometric',
+      biometricExternalId: detected.payload,
+      person: match.person,
+      authorization: null,
+      displayName: match.person?.name || match.person?.nombre || detected.payload,
+      idNumber: match.person?.dniNormalized || match.person?.idNumberNormalized || '',
+      parsed: null
     };
   }
 
@@ -142,5 +191,6 @@ module.exports = {
   detectAuthMethod,
   doorAllowsMethod,
   findPersonByCredential,
+  findPersonByBiometricId,
   resolveScanContext
 };

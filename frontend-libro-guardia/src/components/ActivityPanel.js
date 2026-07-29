@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, Loader2, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { formatActionLabel } from '../utils/auditLabels';
 
 function formatWhen(value) {
   if (!value) return '—';
@@ -31,13 +32,13 @@ function ActivityPanel() {
     setLoading(true);
     setError('');
     try {
-      const data = await apiFetch('/admin/activity?limit=50', {
+      const data = await apiFetch('/admin/activity?limit=80', {
         token: authToken,
         allowForbidden: true
       });
       setItems(Array.isArray(data.activity) ? data.activity : []);
     } catch (err) {
-      setError(err.message || 'No se pudo cargar la auditoría');
+      setError(err.message || 'No se pudo cargar la actividad');
       setItems([]);
     } finally {
       setLoading(false);
@@ -52,7 +53,8 @@ function ActivityPanel() {
     <div className="activity-panel admin-sub-section">
       <div className="activity-panel__toolbar">
         <p className="activity-panel__hint">
-          Últimas acciones administrativas (eliminaciones y cambios relevantes).
+          Resumen de lo que pasó en el sistema: altas, cambios, eliminaciones, aprobaciones de visitas
+          y ajustes de configuración. Pensado para lectura rápida (no hace falta saber de programación).
         </p>
         <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
           {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
@@ -76,8 +78,11 @@ function ActivityPanel() {
         <ul className="activity-panel__list">
           {items.map((item) => (
             <li key={item.id} className="activity-panel__item">
-              <div className="activity-panel__summary">{item.summary || item.action || 'Acción'}</div>
+              <div className="activity-panel__summary">
+                {item.summary || formatActionLabel(item.action) || 'Acción'}
+              </div>
               <div className="activity-panel__meta">
+                <span>{formatActionLabel(item.action)}</span>
                 <span>{item.actorUsername || item.actorId || 'Sistema'}</span>
                 <span>{formatWhen(item.createdAt)}</span>
               </div>

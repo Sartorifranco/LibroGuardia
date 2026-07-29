@@ -2,7 +2,7 @@ const { db, FieldValue } = require('../firestore');
 
 const DOORS_SETTINGS_DOC = 'doorsConfig';
 
-const AUTH_METHODS = ['dni', 'face', 'credential', 'manual'];
+const AUTH_METHODS = ['dni', 'face', 'credential', 'manual', 'biometric'];
 
 const DOOR_DRIVERS = ['sr201', 'generic_http'];
 
@@ -65,6 +65,8 @@ const DEFAULT_DOOR = {
   kioskEnabled: true,
   manualOpenAllowed: true,
   autoOpenOnAuth: true,
+  /** Ingreso principal: al escanear DNI se avisa al guardia con foto (si el feature está activo). */
+  isMainEntryDoor: false,
   airlockGroupId: null,
   airlockRole: null,
   sequenceOrder: 0
@@ -190,9 +192,16 @@ const resolveReaderFixedMovement = (door, readerId = 'default') => {
 const normalizeDoor = (door = {}, index = 0) => {
   const id = slugifyDoorId(door.id || door.name) || `puerta-${index + 1}`;
   const { readers, readerIds } = normalizeReaders(door);
+  // Campos solo de UI / enriquecimiento — no persistir en settings.
+  const {
+    localStation: _ls,
+    _localId: _lid,
+    doorCode: _dc,
+    ...persistable
+  } = door;
   return {
     ...DEFAULT_DOOR,
-    ...door,
+    ...persistable,
     id,
     name: String(door.name || id).trim(),
     active: door.active !== false,
@@ -206,6 +215,7 @@ const normalizeDoor = (door = {}, index = 0) => {
     kioskEnabled: door.kioskEnabled !== false,
     manualOpenAllowed: door.manualOpenAllowed !== false,
     autoOpenOnAuth: door.autoOpenOnAuth !== false,
+    isMainEntryDoor: door.isMainEntryDoor === true,
     airlockGroupId: door.airlockGroupId || null,
     airlockRole: ['outer', 'inner'].includes(door.airlockRole) ? door.airlockRole : null,
     sequenceOrder: Number(door.sequenceOrder) || 0

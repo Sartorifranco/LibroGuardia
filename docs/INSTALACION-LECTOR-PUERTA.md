@@ -227,15 +227,25 @@ CÃ³mo ver la versiÃ³n en la mini PC (con el servicio corriendo y el secreto 
 curl.exe -s -H "Authorization: Bearer TU_SECRETO" http://127.0.0.1:8787/status
 ```
 
-BuscÃ¡ `"bridgeVersion":"1.1.0"` y `"localStationApiVersion":2`.
+Buscá `"bridgeVersion":"1.2.0"` y `"localStationApiVersion":3`.
 
-**Actualizar sin reinstalar de cero:** copiÃ¡ el `door-reader-bridge.js` nuevo a la carpeta `scripts` de la mini PC y reiniciÃ¡ el servicio:
+**Actualizar sin reinstalar de cero:** copiá el `door-reader-bridge.js` nuevo a la carpeta `scripts` de la mini PC y reiniciá el servicio:
 
 ```powershell
+# Fácil (como Administrador, desde scripts\):
+.\actualizar-bridge.cmd
+# o:
+.\actualizar-bridge.cmd -DoorId puerta-p1
+
+# Manual:
 nssm restart LibroGuardiaDoor-puerta-p1
 ```
 
-(No hace falta re-emparejar solo por este cambio de CORS, si el JSON ya tiene `localServerPort` / `localServerSecret`.)
+Guía detallada (pendrive + prueba HTTP): [ACTUALIZAR-BRIDGE-ESTACION.md](./ACTUALIZAR-BRIDGE-ESTACION.md).
+
+(No hace falta re-emparejar solo por este cambio, si el JSON ya tiene `localServerPort` / `localServerSecret`.)
+
+**Prueba local sin Mixed Content:** abrí `http://IP-DE-LA-MINI:8787/`, pegá el secreto, la IP del relé, Cargar puertas → Abrir.
 
 ---
 

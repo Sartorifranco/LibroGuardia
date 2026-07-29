@@ -113,6 +113,28 @@ function DestinosAdminSection({ pendingAction, runAction }) {
 
   return (
     <div className="destinos-admin">
+      <aside className="destinos-admin__howto" aria-label="Cómo funciona Destinos">
+        <strong>Cómo funciona este módulo</strong>
+        <p>
+          Acá definís los
+          {' '}
+          <em>lugares</em>
+          {' '}
+          del predio (ej. Oficina Comercial, Planta) y las
+          {' '}
+          <em>puertas</em>
+          {' '}
+          que hacen falta para llegar. Esos destinos aparecen en el combo
+          {' '}
+          <strong>Destino</strong>
+          {' '}
+          cuando un empleado carga una visita en
+          {' '}
+          <code>/empleado/visitas</code>
+          . Sin destinos activos, el empleado no puede registrar visitas.
+        </p>
+      </aside>
+
       <AdminBlock title={<><MapPin size={18} /> {editingId ? 'Editar destino' : 'Nuevo destino'}</>}>
       <form onSubmit={handleSubmit} className="admin-form-card space-y-3">
         <div>
@@ -161,7 +183,7 @@ function DestinosAdminSection({ pendingAction, runAction }) {
           <AdminEmpty
             icon={MapPin}
             title="Todavía no hay destinos"
-            description="Definí destinos del predio y la secuencia de puertas para llegar."
+            description="Definí destinos del predio y la secuencia de puertas para llegar. Sin esto, el combo Destino del panel empleado queda vacío."
           />
         ) : (
           <ul className="user-list">

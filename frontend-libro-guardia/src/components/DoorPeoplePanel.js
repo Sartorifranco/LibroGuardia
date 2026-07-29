@@ -1,15 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { UserPlus, X } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Search, UserPlus, Users, X } from 'lucide-react';
 import { apiFetch } from '../services/api';
 
 /**
- * Gestión rápida de personas con lista explícita que incluye esta puerta.
- * Escribe el mismo campo people.allowedDoorIds que DoorAccessEditor.
+ * Personas autorizadas en una puerta: búsqueda + lista con scroll.
  */
 function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
   const [people, setPeople] = useState([]);
   const [note, setNote] = useState('');
   const [query, setQuery] = useState('');
+  const [listFilter, setListFilter] = useState('');
   const [searchHits, setSearchHits] = useState([]);
   const [loading, setLoading] = useState(false);
 
@@ -82,89 +82,107 @@ function DoorPeoplePanel({ authToken, doorId, doorName, onMessage, onError }) {
     }
   };
 
+  const filteredPeople = useMemo(() => {
+    const q = listFilter.trim().toLowerCase();
+    if (!q) return people;
+    return people.filter((p) => {
+      const hay = `${p.name || ''} ${p.idNumber || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [people, listFilter]);
+
   if (!doorId) {
     return (
-      <p className="historial-meta" style={{ marginTop: '0.75rem' }}>
-        Guardá un ID de puerta para gestionar personas autorizadas.
+      <p className="door-people__empty">
+        Guardá la puerta primero para poder asignar personas.
       </p>
     );
   }
 
-  const doorsCountLabel = (p) => {
-    const n = Array.isArray(p.allowedDoorIds) ? p.allowedDoorIds.length : 0;
-    if (n === 0) return ' · sin puertas';
-    return ` · ${n} puerta${n === 1 ? '' : 's'}`;
-  };
-
   return (
-    <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border, #e5e5e5)' }}>
-      <h5 className="theme-section-title" style={{ fontSize: '0.95rem', marginBottom: '0.35rem' }}>
-        Personas autorizadas en esta puerta
-      </h5>
-      <p className="historial-meta" style={{ marginBottom: '0.5rem' }}>
-        {doorName || doorId}
-      </p>
-      {note && <p className="historial-meta" style={{ marginBottom: '0.5rem' }}>{note}</p>}
+    <div className="door-people">
+      <div className="door-people__head">
+        <div>
+          <p className="door-people__title">
+            <Users size={16} aria-hidden />
+            {doorName || doorId}
+          </p>
+          <p className="door-people__desc">
+            Solo entran quienes estén en esta lista.
+            {note ? ` ${note}` : ''}
+          </p>
+        </div>
+        <span className="door-people__count">{people.length}</span>
+      </div>
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+      <label className="door-people__search">
+        <UserPlus size={15} aria-hidden />
         <input
           className="input-field"
-          placeholder="Buscar persona (nombre o DNI) para agregar…"
+          placeholder="Agregar persona (nombre o DNI)…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          aria-label="Buscar persona para agregar"
         />
-      </div>
+      </label>
       {searchHits.length > 0 && (
-        <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 0.75rem', maxHeight: 140, overflow: 'auto' }}>
-          {searchHits.map((p) => (
-            <li
-              key={p.id}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.35rem 0',
-                borderBottom: '1px solid var(--border, #eee)',
-                fontSize: '0.875rem'
-              }}
-            >
-              <span>
-                {p.name}
-                {p.idNumber ? ` (${p.idNumber})` : ''}
-                {doorsCountLabel(p)}
-              </span>
-              <button type="button" className="btn btn-secondary-small" onClick={() => addPerson(p.id)}>
-                <UserPlus size={14} /> Agregar
-              </button>
-            </li>
-          ))}
+        <ul className="door-people__hits">
+          {searchHits.map((p) => {
+            const already = people.some((x) => x.id === p.id);
+            return (
+              <li key={p.id}>
+                <span>
+                  {p.name}
+                  {p.idNumber ? ` · ${p.idNumber}` : ''}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary-small"
+                  disabled={already}
+                  onClick={() => addPerson(p.id)}
+                >
+                  {already ? 'Ya está' : 'Agregar'}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 
+      {people.length > 8 && (
+        <label className="door-people__search door-people__search--filter">
+          <Search size={15} aria-hidden />
+          <input
+            className="input-field"
+            placeholder="Filtrar en la lista…"
+            value={listFilter}
+            onChange={(e) => setListFilter(e.target.value)}
+            aria-label="Filtrar autorizados"
+          />
+        </label>
+      )}
+
       {loading ? (
-        <p className="historial-meta">Cargando…</p>
+        <p className="door-people__empty">Cargando…</p>
       ) : people.length === 0 ? (
-        <p className="historial-meta">Nadie autorizado explícitamente en esta puerta.</p>
+        <p className="door-people__empty">Todavía no hay nadie autorizado en esta puerta.</p>
+      ) : filteredPeople.length === 0 ? (
+        <p className="door-people__empty">Sin coincidencias en el filtro.</p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {people.map((p) => (
-            <li
-              key={p.id}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '0.35rem 0',
-                fontSize: '0.875rem',
-                borderBottom: '1px solid var(--border, #eee)'
-              }}
-            >
-              <span>
-                {p.name}
-                {p.idNumber ? ` (${p.idNumber})` : ''}
-              </span>
-              <button type="button" className="btn btn-danger-small" onClick={() => removePerson(p.id)} title="Quitar de esta puerta">
+        <ul className="door-people__list" aria-label="Personas autorizadas">
+          {filteredPeople.map((p) => (
+            <li key={p.id}>
+              <div className="door-people__person">
+                <strong>{p.name}</strong>
+                {p.idNumber ? <span>{p.idNumber}</span> : null}
+              </div>
+              <button
+                type="button"
+                className="door-people__remove"
+                onClick={() => removePerson(p.id)}
+                title="Quitar de esta puerta"
+                aria-label={`Quitar a ${p.name}`}
+              >
                 <X size={14} />
               </button>
             </li>

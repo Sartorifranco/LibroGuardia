@@ -6,12 +6,31 @@ const AUTH_TYPE_LABELS = {
   citacion: 'Citación',
   visita: 'Visita',
   visit: 'Visita',
+  visita_empleado: 'Visita (empleado)',
   temporal: 'Temporal',
   permanent: 'Permanente'
 };
 
+const VISITA_ESTADO_LABELS = {
+  pendiente: 'Esperando ingreso',
+  autorizada: 'Esperando ingreso',
+  ingreso_registrado: 'Ya ingresó',
+  egreso_registrado: 'Egreso registrado'
+};
+
 const formatAuthSchedule = (item) => {
   const type = item.type === 'visit' ? 'visita' : item.type;
+  if (type === 'visita_empleado') {
+    const estado = VISITA_ESTADO_LABELS[item.estado] || item.estado || '';
+    if (item.fechaHoraEsperada) {
+      const when = new Date(item.fechaHoraEsperada).toLocaleString('es-AR', {
+        dateStyle: 'short',
+        timeStyle: 'short'
+      });
+      return estado ? `${when} · ${estado}` : when;
+    }
+    return estado || item.startDate || '—';
+  }
   if (type === 'permanent') {
     const days = item.daysOfWeek?.length ? item.daysOfWeek.join(', ') : 'Todos los días';
     const time = item.timeWindow?.from && item.timeWindow?.to
@@ -76,7 +95,7 @@ function GuardAuthorizationsPanel({
     if (filterDate && item.startDate !== filterDate) return false;
     if (!search.trim()) return true;
     const q = search.trim().toLowerCase();
-    return [item.name, item.legajo, item.idNumber, item.company]
+    return [item.name, item.legajo, item.idNumber, item.company, item.destination, item.empresaNombre, item.autorizadoPor]
       .some((field) => String(field || '').toLowerCase().includes(q));
   }), [authorizations, filterDate, search]);
 
@@ -131,7 +150,8 @@ function GuardAuthorizationsPanel({
           Permisos de acceso — quién está autorizado a entrar.
         </p>
         <p className="text-sm text-gray-600">
-          Visitas, contratistas, temporales y pre-registro. La asistencia de citaciones del día está en Citados.
+          Incluye visitas cargadas por empleados, pre-registros del guardia, contratistas y temporales.
+          La asistencia de citaciones del día (nómina/transporte) está en Citados.
         </p>
       </div>
 
@@ -182,9 +202,9 @@ function GuardAuthorizationsPanel({
                 <th className="px-3 py-2 text-left text-xs uppercase">Tipo</th>
                 <th className="px-3 py-2 text-left text-xs uppercase">Vigencia</th>
                 <th className="px-3 py-2 text-left text-xs uppercase">Nombre</th>
-                <th className="px-3 py-2 text-left text-xs uppercase">Legajo</th>
+                <th className="px-3 py-2 text-left text-xs uppercase">Empresa · Autorizó</th>
                 <th className="px-3 py-2 text-left text-xs uppercase">DNI</th>
-                <th className="px-3 py-2 text-left text-xs uppercase">Empresa</th>
+                <th className="px-3 py-2 text-left text-xs uppercase">Destino / Empresa</th>
               </tr>
             </thead>
             <tbody>
@@ -196,9 +216,28 @@ function GuardAuthorizationsPanel({
                   <td className="px-3 py-2 text-sm">{AUTH_TYPE_LABELS[item.type] || item.type}</td>
                   <td className="px-3 py-2 text-sm">{formatAuthSchedule(item)}</td>
                   <td className="px-3 py-2">{item.name}</td>
-                  <td className="px-3 py-2">{item.legajo || '—'}</td>
+                  <td className="px-3 py-2 text-sm">
+                    {item.type === 'visita_empleado' ? (
+                      <span className="block leading-snug">
+                        <span className="block">{item.empresaNombre || '—'}</span>
+                        <span className="block text-sm">
+                          Generó:
+                          {' '}
+                          <strong>
+                            {item.autorizadoPor || item.createdByNombre || item.createdByUserId || '—'}
+                          </strong>
+                        </span>
+                      </span>
+                    ) : (
+                      item.legajo || '—'
+                    )}
+                  </td>
                   <td className="px-3 py-2">{item.idNumber || '—'}</td>
-                  <td className="px-3 py-2">{item.company || '—'}</td>
+                  <td className="px-3 py-2">
+                    {item.type === 'visita_empleado'
+                      ? (item.destination || item.company || '—')
+                      : (item.company || '—')}
+                  </td>
                 </tr>
               ))}
             </tbody>

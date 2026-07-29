@@ -4,12 +4,10 @@ import {
   Car,
   Truck,
   ClipboardList,
-  Scan,
   History,
   ShieldCheck,
   CalendarCheck,
   DoorOpen,
-  Radio,
   BarChart3
 } from 'lucide-react';
 import { canAccessAdmin, canAccessEmpleado, canAccessGuardia, hasPermission } from './permissions';
@@ -37,15 +35,24 @@ export const GUARDIA_TAB_SEGMENTS = {
   citados: 'citados',
   autorizados: 'autorizados',
   vehiculosAutorizados: 'vehiculos-autorizados',
-  botoneraMonitoreo: 'botonera-monitoreo',
-  botoneraGuardia: 'botonera-guardia'
+  botonera: 'botonera',
+  // Ventana dedicada (segundo monitor)
+  'botonera-ventana': 'botonera-ventana',
+  // Alias legados → misma botonera unificada
+  botoneraMonitoreo: 'botonera',
+  botoneraGuardia: 'botonera'
 };
 
 /** segmento → tab id */
 export const GUARDIA_SEGMENT_TO_TAB = Object.entries(GUARDIA_TAB_SEGMENTS).reduce((acc, [tab, seg]) => {
   if (!acc[seg]) acc[seg] = tab === 'allRecords' ? 'historial' : tab;
   return acc;
-}, {});
+}, {
+  // URLs viejas siguen abriendo la botonera única
+  'botonera-monitoreo': 'botonera',
+  'botonera-guardia': 'botonera',
+  'botonera-ventana': 'botonera-ventana'
+});
 
 /** adminSection id → segmento bajo /admin */
 export const ADMIN_SECTION_SEGMENTS = {
@@ -54,7 +61,9 @@ export const ADMIN_SECTION_SEGMENTS = {
   activity: 'activity',
   audit: 'audit',
   notifications: 'notifications',
-  doors: 'doors',
+  // Centro único de hardware (Fase A). URLs viejas redirigen acá.
+  equiposAcceso: 'equipos-acceso',
+  doors: 'equipos-acceso',
   peopleAccess: 'people-access',
   access: 'access',
   citaciones: 'citaciones',
@@ -63,15 +72,27 @@ export const ADMIN_SECTION_SEGMENTS = {
   fleet: 'fleet',
   empresas: 'empresas',
   destinos: 'destinos',
-  lectores: 'lectores',
-  estaciones: 'estaciones',
-  permissions: 'permissions'
+  visitas: 'visitas',
+  lectores: 'equipos-acceso',
+  estaciones: 'equipos-acceso',
+  permissions: 'permissions',
+  appearance: 'appearance'
 };
 
 export const ADMIN_SEGMENT_TO_SECTION = Object.entries(ADMIN_SECTION_SEGMENTS).reduce((acc, [section, seg]) => {
-  acc[seg] = section;
+  // Preferir el id canónico cuando varias secciones comparten segmento.
+  if (seg === 'equipos-acceso') {
+    acc[seg] = 'equiposAcceso';
+    return acc;
+  }
+  if (!acc[seg]) acc[seg] = section;
   return acc;
-}, {});
+}, {
+  // URLs legadas siguen abriendo el centro único
+  doors: 'equiposAcceso',
+  lectores: 'equiposAcceso',
+  estaciones: 'equiposAcceso'
+});
 
 export const guardiaPath = (tabId = 'inicio') => {
   const segment = GUARDIA_TAB_SEGMENTS[tabId] || GUARDIA_TAB_SEGMENTS.inicio;
@@ -123,11 +144,12 @@ const ADMIN_DEFAULT_SECTION_ORDER = [
       || hasPermission(u, 'master.nomina.write')
   },
   {
-    id: 'doors',
-    match: (u) => hasPermission(u, 'access.doors.manage') || hasPermission(u, 'access.control')
+    id: 'equiposAcceso',
+    match: (u) =>
+      hasPermission(u, 'access.doors.manage')
+      || hasPermission(u, 'access.control')
+      || hasPermission(u, 'lectores.manage')
   },
-  { id: 'lectores', match: (u) => hasPermission(u, 'lectores.manage') },
-  { id: 'estaciones', match: (u) => hasPermission(u, 'lectores.manage') },
   { id: 'notifications', match: (u) => hasPermission(u, 'notifications.config') },
   { id: 'access', match: (u) => hasPermission(u, 'access.control') },
   { id: 'nomina', match: (u) => hasPermission(u, 'master.nomina.write') },
@@ -136,12 +158,15 @@ const ADMIN_DEFAULT_SECTION_ORDER = [
   { id: 'fleet', match: (u) => hasPermission(u, 'fleet.upload') },
   { id: 'empresas', match: (u) => hasPermission(u, 'empresas.manage') },
   { id: 'destinos', match: (u) => hasPermission(u, 'destinos.manage') },
+  { id: 'visitas', match: (u) => hasPermission(u, 'visitas.approve') },
+  { id: 'appearance', match: (u) => hasPermission(u, 'settings.permissions') },
   {
     id: 'activity',
     match: (u) =>
       hasPermission(u, 'users.view')
       || hasPermission(u, 'roles.view')
       || hasPermission(u, 'settings.permissions')
+      || hasPermission(u, 'audit.view')
   },
   { id: 'audit', match: (u) => hasPermission(u, 'audit.view') }
 ];
@@ -164,14 +189,18 @@ export const buildSidebarItems = (user) => {
     if (condition) items.push(item);
   };
 
+  const canBotonera = hasPermission(user, 'monitoring.doors.panel')
+    || hasPermission(user, 'guard.doors.panel')
+    || hasPermission(user, 'access.manual_open');
+
   if (profile === 'monitoreo') {
     addIf(
       hasPermission(user, 'monitoring.vehicles.manage') || hasPermission(user, 'master.vehicles.quick_authorize'),
       { id: 'vehiculosAutorizados', label: 'Vehículos autorizados', icon: Car }
     );
-    addIf(hasPermission(user, 'monitoring.doors.panel'), {
-      id: 'botoneraMonitoreo',
-      label: 'Botonera portón',
+    addIf(canBotonera, {
+      id: 'botonera',
+      label: 'Botonera',
       icon: DoorOpen
     });
     addIf(hasPermission(user, 'entries.create'), {
@@ -180,41 +209,32 @@ export const buildSidebarItems = (user) => {
       icon: ClipboardList
     });
   } else if (profile === 'guardia') {
+    // Menú operativo reducido: solo lo que usa el puesto de guardia.
+    addIf(canBotonera, {
+      id: 'botonera',
+      label: 'Puertas',
+      icon: DoorOpen
+    });
+    addIf(hasPermission(user, 'entries.create'), {
+      id: 'novedad',
+      label: 'Novedades',
+      icon: ClipboardList
+    });
     addIf(hasPermission(user, 'entries.create'), { id: 'personal', label: 'Personal', icon: User });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'vehiculo',
-      label: 'Vehículos externos',
+      label: 'Vehículos',
       icon: Car
     });
     addIf(hasPermission(user, 'fleet.gps.read') || hasPermission(user, 'entries.create'), {
       id: 'flota',
-      label: 'Unidades blindadas',
+      label: 'Flota',
       icon: Truck
     });
     addIf(hasPermission(user, 'attendance.alerts.read'), {
       id: 'citados',
       label: 'Citados',
       icon: CalendarCheck
-    });
-    addIf(hasPermission(user, 'master.citaciones.read'), {
-      id: 'autorizados',
-      label: 'Autorizados',
-      icon: ShieldCheck
-    });
-    addIf(hasPermission(user, 'guard.doors.panel'), {
-      id: 'botoneraGuardia',
-      label: 'Botonera portón',
-      icon: DoorOpen
-    });
-    addIf(hasPermission(user, 'access.kiosk'), {
-      id: 'kiosk',
-      label: 'Molinete / Acceso',
-      icon: Scan
-    });
-    addIf(hasPermission(user, 'entries.create'), {
-      id: 'novedad',
-      label: 'Cargar novedad',
-      icon: ClipboardList
     });
   } else {
     addIf(hasPermission(user, 'attendance.alerts.read'), {
@@ -242,21 +262,13 @@ export const buildSidebarItems = (user) => {
       label: 'Flota / blindados',
       icon: Truck
     });
-    addIf(hasPermission(user, 'monitoring.doors.panel'), {
-      id: 'botoneraMonitoreo',
-      label: 'Botonera Monitoreo',
-      icon: Radio
-    });
-    addIf(hasPermission(user, 'guard.doors.panel'), {
-      id: 'botoneraGuardia',
-      label: 'Botonera Guardia',
+    addIf(canBotonera, {
+      id: 'botonera',
+      label: 'Botonera',
       icon: DoorOpen
     });
-    addIf(hasPermission(user, 'access.kiosk'), {
-      id: 'kiosk',
-      label: 'Molinete / Acceso',
-      icon: Scan
-    });
+    // Molinete / Acceso: pantalla kiosk dedicada. Hoy el lector físico ya
+    // registra vía door-reader-bridge; se oculta del menú para no duplicar.
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
       label: 'Cargar novedad',
@@ -270,11 +282,14 @@ export const buildSidebarItems = (user) => {
     icon: History
   });
 
-  addIf(canAccessReportes(user), {
-    id: 'reportes',
-    label: 'Reportes',
-    icon: BarChart3
-  });
+  // Reportes queda fuera del puesto operativo de guardia (va a Administración).
+  if (profile !== 'guardia') {
+    addIf(canAccessReportes(user), {
+      id: 'reportes',
+      label: 'Reportes',
+      icon: BarChart3
+    });
+  }
 
   return items;
 };

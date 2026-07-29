@@ -119,6 +119,48 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
 
   return (
     <div className="empresas-admin">
+      <aside className="empresas-admin__howto" aria-label="Cómo funciona Empresas">
+        <strong>Cómo funciona este módulo</strong>
+        <ol>
+          <li>
+            Acá cargás las empresas del predio y los
+            {' '}
+            <em>dominios de email</em>
+            {' '}
+            con los que se pueden autoregistrar (ej.
+            {' '}
+            <code>contratista.com</code>
+            ).
+          </li>
+          <li>
+            Un empleado de esa empresa entra a
+            {' '}
+            <code>/empleado/registro</code>
+            {' '}
+            con su mail corporativo, crea la cuenta y queda vinculado a la empresa.
+          </li>
+          <li>
+            Después inicia sesión en
+            {' '}
+            <code>/empleado/login</code>
+            {' '}
+            y carga
+            {' '}
+            <em>visitas</em>
+            {' '}
+            (sus autorizados): elige destino y la persona puede pasar por las puertas de ese destino.
+          </li>
+        </ol>
+        <p>
+          Si la empresa no está creada o el dominio no figura, el registro falla.
+          Desactivar la empresa corta nuevos registros; no borra cuentas ya hechas.
+          Los destinos (puertas) se configuran en el módulo
+          {' '}
+          <strong>Destinos</strong>
+          .
+        </p>
+      </aside>
+
       <AdminBlock title={<><Building2 size={18} /> {editingId ? 'Editar empresa' : 'Nueva empresa'}</>}>
       <form onSubmit={handleSubmit} className="admin-form-card space-y-3">
         <div>

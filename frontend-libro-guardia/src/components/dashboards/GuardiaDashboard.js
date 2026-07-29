@@ -3,7 +3,7 @@ import {
   User,
   Truck,
   ClipboardList,
-  Scan,
+  DoorOpen,
   ArrowDownCircle,
   ArrowUpCircle,
   Activity
@@ -74,7 +74,7 @@ function GuardiaDashboard({
       quickActions={[
         { id: 'personal', label: 'Registrar personal', icon: User },
         { id: 'flota', label: 'Unidad blindada', icon: Truck },
-        { id: 'kiosk', label: 'Molinete / acceso', icon: Scan },
+        { id: 'botonera', label: 'Botonera', icon: DoorOpen },
         { id: 'novedad', label: 'Cargar novedad', icon: ClipboardList }
       ]}
     />

@@ -98,6 +98,24 @@ router.put(
         }
       }
 
+      if (Object.prototype.hasOwnProperty.call(patch, 'accessCard') && patch.accessCard) {
+        const conflicts = await findPeopleByField('accessCard', patch.accessCard);
+        if (hasForeignConflict(conflicts, personId)) {
+          return res.status(409).json({
+            message: `Ya existe otra persona con la tarjeta ${patch.accessCard}`
+          });
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(patch, 'biometricExternalId') && patch.biometricExternalId) {
+        const conflicts = await findPeopleByField('biometricExternalId', patch.biometricExternalId);
+        if (hasForeignConflict(conflicts, personId)) {
+          return res.status(409).json({
+            message: `Ya existe otra persona con el ID biométrico ${patch.biometricExternalId}`
+          });
+        }
+      }
+
       // Compat: si no mandan allowedDoorIds, conservar el actual (comportamiento previo).
       if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'allowedDoorIds')
         && !Object.prototype.hasOwnProperty.call(patch, 'allowedDoorIds')) {

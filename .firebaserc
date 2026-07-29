@@ -7,9 +7,6 @@
       "hosting": {
         "mss-guard": [
           "mss-guard"
-        ],
-        "bacarguard": [
-          "bacarguard"
         ]
       }
     }

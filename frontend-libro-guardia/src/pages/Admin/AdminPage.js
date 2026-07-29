@@ -16,8 +16,7 @@ import {
   Building2,
   MapPin,
   Satellite,
-  ScanLine,
-  Server
+  Palette
 } from 'lucide-react';
 import { hasPermission } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
@@ -31,7 +30,6 @@ import NominaAdminSection from './NominaAdmin/NominaAdminSection';
 import VehiclesAdminSection from './VehiclesAdmin/VehiclesAdminSection';
 import FleetAdminSection from './FleetAdmin/FleetAdminSection';
 import PermissionsAdminSection from './PermissionsAdmin/PermissionsAdminSection';
-import DoorsAdminSection from './DoorsAdmin/DoorsAdminSection';
 import PeopleAccessAdminSection from './PeopleAccessAdmin/PeopleAccessAdminSection';
 import RolesAdminSection from './RolesAdmin/RolesAdminSection';
 import ActivityAdminSection from './ActivityAdmin/ActivityAdminSection';
@@ -39,8 +37,9 @@ import AuditAdminSection from './AuditAdmin/AuditAdminSection';
 import NotificationsAdminSection from './NotificationsAdmin/NotificationsAdminSection';
 import EmpresasAdminSection from './EmpresasAdmin/EmpresasAdminSection';
 import DestinosAdminSection from './DestinosAdmin/DestinosAdminSection';
-import LectoresAdminSection from './LectoresAdmin/LectoresAdminSection';
-import EstacionesAdminSection from './EstacionesAdmin/EstacionesAdminSection';
+import EquiposAccesoAdminSection from './EquiposAccesoAdmin/EquiposAccesoAdminSection';
+import VisitasAdminSection from './VisitasAdmin/VisitasAdminSection';
+import AppearanceAdminSection from './AppearanceAdmin/AppearanceAdminSection';
 import './admin-ui.css';
 
 /** Grupos de navegación admin (orden de producto). */
@@ -78,22 +77,13 @@ const ADMIN_NAV_GROUPS = [
     label: 'Infraestructura',
     items: [
       {
-        id: 'doors',
-        label: 'Puertas y acceso',
+        id: 'equiposAcceso',
+        label: 'Equipos de acceso',
         icon: DoorOpen,
-        match: (u) => hasPermission(u, 'access.doors.manage') || hasPermission(u, 'access.control')
-      },
-      {
-        id: 'lectores',
-        label: 'Lectores',
-        icon: ScanLine,
-        match: (u) => hasPermission(u, 'lectores.manage')
-      },
-      {
-        id: 'estaciones',
-        label: 'Estaciones',
-        icon: Server,
-        match: (u) => hasPermission(u, 'lectores.manage')
+        match: (u) =>
+          hasPermission(u, 'access.doors.manage')
+          || hasPermission(u, 'access.control')
+          || hasPermission(u, 'lectores.manage')
       },
       {
         id: 'notifications',
@@ -148,6 +138,12 @@ const ADMIN_NAV_GROUPS = [
         label: 'Destinos',
         icon: MapPin,
         match: (u) => hasPermission(u, 'destinos.manage')
+      },
+      {
+        id: 'visitas',
+        label: 'Aprobar visitas',
+        icon: ClipboardList,
+        match: (u) => hasPermission(u, 'visitas.approve')
       }
     ]
   },
@@ -163,12 +159,19 @@ const ADMIN_NAV_GROUPS = [
           hasPermission(u, 'users.view')
           || hasPermission(u, 'roles.view')
           || hasPermission(u, 'settings.permissions')
+          || hasPermission(u, 'audit.view')
       },
       {
         id: 'audit',
         label: 'Auditoría',
         icon: ScrollText,
         match: (u) => hasPermission(u, 'audit.view')
+      },
+      {
+        id: 'appearance',
+        label: 'Apariencia',
+        icon: Palette,
+        match: (u) => hasPermission(u, 'settings.permissions')
       }
     ]
   }
@@ -266,9 +269,26 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
               />
             )}
 
-            {adminSection === 'doors' && (hasPermission(currentUser, 'access.doors.manage') || hasPermission(currentUser, 'access.control')) && (
-              <DoorsAdminSection pendingAction={pendingAction} runAction={runAction} onAccessConfigSaved={onAccessConfigSaved} />
-            )}
+            {['equiposAcceso', 'doors', 'lectores', 'estaciones'].includes(adminSection)
+              && (hasPermission(currentUser, 'access.doors.manage')
+                || hasPermission(currentUser, 'access.control')
+                || hasPermission(currentUser, 'lectores.manage'))
+              && (
+                <EquiposAccesoAdminSection
+                  pendingAction={pendingAction}
+                  runAction={runAction}
+                  onAccessConfigSaved={onAccessConfigSaved}
+                  initialTab={
+                    adminSection === 'lectores'
+                      ? 'lectores'
+                      : adminSection === 'estaciones'
+                        ? 'estaciones'
+                        : adminSection === 'doors'
+                          ? 'puertas'
+                          : 'guia'
+                  }
+                />
+              )}
 
             {adminSection === 'peopleAccess'
               && (hasPermission(currentUser, 'access.doors.manage')
@@ -283,7 +303,7 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
             )}
 
             {adminSection === 'nomina' && hasPermission(currentUser, 'master.nomina.write') && (
-              <NominaAdminSection pendingAction={pendingAction} setPendingAction={setPendingAction} />
+              <NominaAdminSection pendingAction={pendingAction} setPendingAction={setPendingAction} runAction={runAction} />
             )}
 
             {adminSection === 'vehicles' && hasPermission(currentUser, 'master.vehicles.write') && (
@@ -302,12 +322,12 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
               <DestinosAdminSection pendingAction={pendingAction} runAction={runAction} />
             )}
 
-            {adminSection === 'lectores' && hasPermission(currentUser, 'lectores.manage') && (
-              <LectoresAdminSection pendingAction={pendingAction} runAction={runAction} />
+            {adminSection === 'visitas' && hasPermission(currentUser, 'visitas.approve') && (
+              <VisitasAdminSection />
             )}
 
-            {adminSection === 'estaciones' && hasPermission(currentUser, 'lectores.manage') && (
-              <EstacionesAdminSection pendingAction={pendingAction} runAction={runAction} />
+            {adminSection === 'appearance' && hasPermission(currentUser, 'settings.permissions') && (
+              <AppearanceAdminSection />
             )}
 
             {adminSection === 'roles' && (hasPermission(currentUser, 'roles.view') || hasPermission(currentUser, 'roles.manage')) && (

@@ -227,6 +227,9 @@ describe('lectores â€” helpers', () => {
     assert.ok(user);
     assert.equal(user.role, 'kiosk_puerta');
     assert.ok(await bcrypt.compare(result.password, user.password));
+    const roleDoc = bag.roles.get('kiosk_puerta');
+    assert.ok(roleDoc);
+    assert.equal(roleDoc.label, 'Estación de acceso');
 
     const listed = await bag.api.listLectores();
     assert.equal(listed.length, 1);

@@ -224,13 +224,44 @@ const afterInnerDoorOpened = async ({ group }) => {
   });
 };
 
-const pulseDoorRelay = async (door, globalConfig, { force = false, pulseSeconds, pulseMode } = {}) => {
+const pulseDoorRelay = async (door, globalConfig, {
+  force = false,
+  pulseSeconds,
+  pulseMode,
+  requestedBy = null,
+  reason = 'pulse_local'
+} = {}) => {
   const relayConfig = buildRelayConfigForDoor(door, globalConfig, { pulseSeconds, pulseMode });
   if (!isDoorRelayConfigured(door, globalConfig)) {
     const error = new Error(`Puerta "${door.name}" sin dispositivo configurado`);
     error.status = 503;
     throw error;
   }
+
+  // Modo local: no usar túnel. Encolar para que el bridge de planta dispare por LAN.
+  const { resolveRelayMode, buildLocalRelayPayload } = require('./lib/relayDispatch');
+  if (resolveRelayMode(door) === 'local') {
+    const { enqueuePendingLocalOpen } = require('./lib/pendingLocalOpens');
+    const localRelay = buildLocalRelayPayload(relayConfig);
+    const queued = await enqueuePendingLocalOpen({
+      doorId: door.id,
+      localRelay,
+      requestedBy,
+      reason
+    });
+    return {
+      via: 'local-queue',
+      command: 'queued',
+      host: localRelay.host,
+      port: localRelay.port,
+      channel: localRelay.channel,
+      seconds: localRelay.pulseSeconds,
+      mode: localRelay.pulseMode,
+      queueId: queued.id,
+      message: queued.message
+    };
+  }
+
   return triggerRelay(relayConfig, { force: force || !globalConfig.enabled });
 };
 
@@ -316,7 +347,9 @@ const openDoor = async ({
     const relay = await pulseDoorRelay(door, globalConfig, {
       force: manual || force || bypassAirlock,
       pulseSeconds,
-      pulseMode
+      pulseMode,
+      requestedBy: username || userId || null,
+      reason: reason || (manual ? 'apertura_manual' : 'acceso_autorizado')
     });
     manualCooldownByDoor.set(cooldownKey, now);
 
@@ -349,9 +382,12 @@ const openDoor = async ({
     const airlockState = group ? await getAirlockState(group.id) : null;
 
     return {
-      message: manual ? `${door.name} abierta manualmente` : `${door.name} abierta`,
+      message: relay.via === 'local-queue'
+        ? (relay.message || `${door.name}: pedido enviado a la estación`)
+        : (manual ? `${door.name} abierta manualmente` : `${door.name} abierta`),
       door: { id: door.id, name: door.name, airlockRole: door.airlockRole },
       relay,
+      via: relay.via || null,
       airlock: group ? {
         groupId: group.id,
         groupName: group.name,
@@ -420,29 +456,83 @@ const listActiveDoors = async () => {
 };
 
 /**
- * Estado físico (relé) por puerta vía bridge.
- * Abierta = canal activado (1); Cerrada = canal en reposo (0).
+ * Estado físico (relé) por puerta.
+ * - Modo local: no consulta el túnel (la mini PC abre en planta).
+ * - Modo nube: consulta vía conexión a planta.
  */
 const getDoorsPhysicalStatus = async () => {
   const { queryRelayStatusViaBridge } = require('./lib/doorDrivers/sr201');
+  const { resolveRelayMode } = require('./lib/relayDispatch');
   const [globalConfig, doorsConfig] = await Promise.all([
     getAccessControlConfig(),
     getDoorsConfig()
   ]);
 
   const bridgeUrl = String(globalConfig.bridgeUrl || '').trim();
-  if (!bridgeUrl) {
+  const activeDoors = (doorsConfig.doors || []).filter((d) => d.active !== false);
+  const doorsStatus = [];
+  const boardErrors = [];
+
+  const localDoors = [];
+  const cloudDoors = [];
+  for (const door of activeDoors) {
+    if (resolveRelayMode(door) === 'local') localDoors.push(door);
+    else cloudDoors.push(door);
+  }
+
+  for (const door of localDoors) {
+    const relay = buildRelayConfigForDoor(door, globalConfig);
+    doorsStatus.push({
+      doorId: door.id,
+      doorName: door.name,
+      host: relay.host,
+      channel: relay.relayChannel,
+      relayMode: 'local',
+      relayOn: null,
+      physicalState: 'local',
+      physicalLabel: 'En planta',
+      hint: 'Abre desde su estación local. El estado en vivo se controla en planta.',
+      queriedAt: new Date().toISOString()
+    });
+  }
+
+  if (cloudDoors.length === 0) {
     return {
-      ok: false,
-      message: 'Sin URL de puente: no se puede leer el estado físico',
-      doors: []
+      ok: true,
+      message: localDoors.length
+        ? 'Puertas en modo local: el estado se controla en planta'
+        : 'Sin puertas activas',
+      doors: doorsStatus,
+      boardErrors: []
     };
   }
 
-  const doors = (doorsConfig.doors || []).filter((d) => d.active !== false);
-  const byHost = new Map();
+  if (!bridgeUrl) {
+    for (const door of cloudDoors) {
+      const relay = buildRelayConfigForDoor(door, globalConfig);
+      doorsStatus.push({
+        doorId: door.id,
+        doorName: door.name,
+        host: relay.host,
+        channel: relay.relayChannel,
+        relayMode: 'cloud',
+        relayOn: null,
+        physicalState: 'unknown',
+        physicalLabel: 'Sin enlace',
+        error: 'Falta la conexión a planta para leer el estado a distancia.',
+        queriedAt: new Date().toISOString()
+      });
+    }
+    return {
+      ok: false,
+      message: 'Hay puertas que abren a distancia y falta la conexión a planta',
+      doors: doorsStatus,
+      boardErrors: [{ host: '*', message: 'Sin conexión a planta' }]
+    };
+  }
 
-  for (const door of doors) {
+  const byHost = new Map();
+  for (const door of cloudDoors) {
     const relay = buildRelayConfigForDoor(door, globalConfig);
     const host = relay.host;
     const port = relay.port;
@@ -457,8 +547,16 @@ const getDoorsPhysicalStatus = async () => {
     });
   }
 
-  const doorsStatus = [];
-  const boardErrors = [];
+  const friendlyBridgeError = (err) => {
+    const raw = String(err?.message || err || '');
+    if (/fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|network/i.test(raw)) {
+      return 'No se pudo contactar la planta. Revisá la conexión a planta o pasá la puerta a modo local.';
+    }
+    if (/Falta la URL/i.test(raw)) {
+      return 'Falta la conexión a planta.';
+    }
+    return raw.replace(/^No se pudo consultar estado vía puente:\s*/i, '') || 'No se pudo leer el estado';
+  };
 
   for (const board of byHost.values()) {
     try {
@@ -476,6 +574,7 @@ const getDoorsPhysicalStatus = async () => {
           doorName: item.doorName,
           host: board.host,
           channel: item.channel,
+          relayMode: 'cloud',
           relayOn: known ? relayOn : null,
           physicalState: !known ? 'unknown' : (relayOn ? 'open' : 'closed'),
           physicalLabel: !known ? 'Sin dato' : (relayOn ? 'Abierta' : 'Cerrada'),
@@ -484,17 +583,19 @@ const getDoorsPhysicalStatus = async () => {
         });
       }
     } catch (err) {
-      boardErrors.push({ host: board.host, message: err.message });
+      const message = friendlyBridgeError(err);
+      boardErrors.push({ host: board.host, message });
       for (const item of board.doorIds) {
         doorsStatus.push({
           doorId: item.doorId,
           doorName: item.doorName,
           host: board.host,
           channel: item.channel,
+          relayMode: 'cloud',
           relayOn: null,
           physicalState: 'error',
-          physicalLabel: 'Sin lectura',
-          error: err.message,
+          physicalLabel: 'Sin conexión',
+          error: message,
           queriedAt: new Date().toISOString()
         });
       }
@@ -504,7 +605,7 @@ const getDoorsPhysicalStatus = async () => {
   return {
     ok: boardErrors.length === 0,
     message: boardErrors.length
-      ? `Algunas placas no respondieron (${boardErrors.length})`
+      ? `No se pudo leer el estado a distancia (${boardErrors.length})`
       : 'Estado físico actualizado',
     doors: doorsStatus,
     boardErrors

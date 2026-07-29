@@ -14,6 +14,7 @@ import { useOfflineQueue } from '../context/OfflineQueueContext';
 import { useClockPrefill } from '../context/ClockPrefillContext';
 import { useTheme } from '../hooks/useTheme';
 import { buildSidebarItems, guardiaPath, adminPath, getDefaultAdminSection } from '../utils/navigation';
+import { openBotoneraWindow } from '../utils/openBotoneraWindow';
 import { saveAuthManualPrefill } from '../utils/authPrefill';
 import { isOnboardingDone } from '../components/OnboardingTour';
 
@@ -37,7 +38,11 @@ export function AppChromeProvider({ children }) {
   const [lastGuardiaPath, setLastGuardiaPath] = useState(guardiaPath('inicio'));
 
   useEffect(() => {
-    if (location.pathname.startsWith('/guardia/') && !location.pathname.endsWith('/kiosk')) {
+    if (
+      location.pathname.startsWith('/guardia/')
+      && !location.pathname.endsWith('/kiosk')
+      && !location.pathname.endsWith('/botonera-ventana')
+    ) {
       setLastGuardiaPath(location.pathname);
     }
   }, [location.pathname]);
@@ -97,6 +102,13 @@ export function AppChromeProvider({ children }) {
   const navigateToTab = useCallback((tab, timeValue) => {
     if (tab === 'adminPanel') {
       enterAdminPanel();
+      return;
+    }
+    // Botonera: ventana aparte para segundo monitor (si el popup está bloqueado, navega).
+    if (tab === 'botonera' || tab === 'botoneraMonitoreo' || tab === 'botoneraGuardia') {
+      const win = openBotoneraWindow();
+      if (win) return;
+      navigate(guardiaPath('botonera'));
       return;
     }
     navigate(guardiaPath(tab));

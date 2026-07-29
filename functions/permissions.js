@@ -39,6 +39,8 @@ const PERMISSION_KEYS = [
   'destinos.manage',
   'lectores.manage',
   'visitas.create',
+  'visitas.request',
+  'visitas.approve',
   'visitas.view.own'
 ];
 
@@ -103,10 +105,15 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.manual_open',
     'access.kiosk',
     'access.exceptional_entry',
-    'attendance.alerts.read'
+    'attendance.alerts.read',
+    'visitas.approve'
   ],
   'empleado-visitas': [
     'visitas.create',
+    'visitas.view.own'
+  ],
+  'empleado-solicitar-visitas': [
+    'visitas.request',
     'visitas.view.own'
   ],
   admin: PERMISSION_KEYS.slice()

@@ -124,34 +124,68 @@ router.get('/api/search', auth, async (req, res) => {
 router.get(
   '/api/admin/activity',
   auth,
-  requireAnyPermission(['users.view', 'roles.view', 'settings.permissions']),
+  requireAnyPermission(['users.view', 'roles.view', 'settings.permissions', 'audit.view']),
   async (req, res) => {
     try {
       const limitRaw = Number(req.query.limit);
       const limit = Number.isFinite(limitRaw)
         ? Math.min(Math.max(Math.floor(limitRaw), 1), 100)
-        : 50;
-      const snap = await db.collection('activityLog')
-        .orderBy('createdAt', 'desc')
-        .limit(limit)
-        .get();
-      const activity = snap.docs.map((doc) => {
+        : 80;
+      const { buildAuditSummary } = require('../lib/auditLabels');
+
+      const [activitySnap, auditSnap] = await Promise.all([
+        db.collection('activityLog').orderBy('createdAt', 'desc').limit(limit).get()
+          .catch(() => ({ docs: [] })),
+        db.collection('auditLog').orderBy('createdAt', 'desc').limit(limit).get()
+          .catch(() => ({ docs: [] }))
+      ]);
+
+      const toIso = (value) => {
+        if (!value) return null;
+        if (typeof value.toDate === 'function') return value.toDate().toISOString();
+        return value;
+      };
+
+      const fromActivity = (activitySnap.docs || []).map((doc) => {
         const data = doc.data() || {};
-        let createdAt = data.createdAt || null;
-        if (createdAt && typeof createdAt.toDate === 'function') {
-          createdAt = createdAt.toDate().toISOString();
-        }
         return {
-          id: doc.id,
+          id: `activity:${doc.id}`,
+          source: 'activity',
           actorUsername: data.actorUsername || '',
           actorId: data.actorId || '',
           action: data.action || '',
-          summary: data.summary || '',
+          summary: data.summary || data.action || 'Acción',
           meta: data.meta || null,
-          createdAt
+          createdAt: toIso(data.createdAt)
         };
       });
-      res.json({ activity });
+
+      const fromAudit = (auditSnap.docs || []).map((doc) => {
+        const data = doc.data() || {};
+        const item = {
+          id: `audit:${doc.id}`,
+          source: 'audit',
+          actorUsername: data.actorUsername || '',
+          actorId: data.actorId || '',
+          action: data.action || '',
+          targetType: data.targetType || null,
+          targetId: data.targetId || null,
+          summary: buildAuditSummary(data),
+          meta: {
+            targetType: data.targetType || null,
+            targetId: data.targetId || null,
+            changedKeys: data.changedKeys || []
+          },
+          createdAt: toIso(data.createdAt)
+        };
+        return item;
+      });
+
+      const merged = [...fromActivity, ...fromAudit]
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+        .slice(0, limit);
+
+      res.json({ activity: merged });
     } catch (err) {
       res.status(500).json({ message: 'Error al obtener actividad', error: err.message });
     }

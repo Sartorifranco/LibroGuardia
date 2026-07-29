@@ -29,7 +29,7 @@ Get-NetTCPConnection -LocalPort 5022 -State Listen -ErrorAction SilentlyContinue
   if ($procId -and $procId -gt 0) {
     Write-Host "  Matando PID $procId"
     Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-    & taskkill.exe /F /PID $procId 2>$null | Out-Null
+    cmd /c "taskkill /F /PID $procId >nul 2>&1"
   }
 }
 Start-Sleep -Seconds 2

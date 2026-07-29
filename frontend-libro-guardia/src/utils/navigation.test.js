@@ -12,16 +12,32 @@ describe('navigation routes', () => {
   test('guardiaPath y adminPath generan URLs esperadas', () => {
     expect(guardiaPath('inicio')).toBe('/guardia/inicio');
     expect(guardiaPath('kiosk')).toBe('/guardia/kiosk');
+    expect(guardiaPath('botonera')).toBe('/guardia/botonera');
+    expect(guardiaPath('botonera-ventana')).toBe('/guardia/botonera-ventana');
+    expect(guardiaPath('botoneraMonitoreo')).toBe('/guardia/botonera');
+    expect(guardiaPath('botoneraGuardia')).toBe('/guardia/botonera');
     expect(guardiaPath('vehiculosAutorizados')).toBe('/guardia/vehiculos-autorizados');
     expect(adminPath('users')).toBe('/admin/users');
     expect(adminPath('peopleAccess')).toBe('/admin/people-access');
+    expect(adminPath('equiposAcceso')).toBe('/admin/equipos-acceso');
+    expect(adminPath('doors')).toBe('/admin/equipos-acceso');
+    expect(adminPath('lectores')).toBe('/admin/equipos-acceso');
+    expect(adminPath('visitas')).toBe('/admin/visitas');
+    expect(adminPath('appearance')).toBe('/admin/appearance');
   });
 
   test('segmentos se mapean de vuelta a tabs/secciones', () => {
     expect(tabFromGuardiaSegment('vehiculos-autorizados')).toBe('vehiculosAutorizados');
     expect(tabFromGuardiaSegment('historial')).toBe('historial');
+    expect(tabFromGuardiaSegment('botonera')).toBe('botonera');
+    expect(tabFromGuardiaSegment('botonera-ventana')).toBe('botonera-ventana');
+    expect(tabFromGuardiaSegment('botonera-monitoreo')).toBe('botonera');
+    expect(tabFromGuardiaSegment('botonera-guardia')).toBe('botonera');
     expect(sectionFromAdminSegment('people-access')).toBe('peopleAccess');
+    expect(sectionFromAdminSegment('equipos-acceso')).toBe('equiposAcceso');
     expect(sectionFromAdminSegment('citaciones')).toBe('citaciones');
+    expect(sectionFromAdminSegment('visitas')).toBe('visitas');
+    expect(sectionFromAdminSegment('appearance')).toBe('appearance');
   });
 
   test('resolveHomePath según permisos', () => {
@@ -61,7 +77,7 @@ describe('navigation routes', () => {
     expect(getDefaultAdminSection(soloFlota)).toBe('fleet');
 
     // Deep-link: segmento válido no depende del default
-    expect(sectionFromAdminSegment('doors')).toBe('doors');
-    expect(adminPath('doors')).toBe('/admin/doors');
+    expect(sectionFromAdminSegment('doors')).toBe('equiposAcceso');
+    expect(adminPath('doors')).toBe('/admin/equipos-acceso');
   });
 });

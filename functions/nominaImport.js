@@ -1,11 +1,36 @@
 const { db, FieldValue } = require('./firestore');
-const { parseNominaRow } = require('./lib/nominaParser');
+const { parseNominaRow, buildNominaRowFromFields } = require('./lib/nominaParser');
 const { buildAuthorizationRecord } = require('./authorizations');
 const { resolveOrCreatePerson } = require('./people');
 const { buildNameTokens } = require('./authorizations');
 
+const buildMasterPayload = (personId, parsed, { active = true } = {}) => ({
+  name: parsed.name,
+  nameLower: parsed.name.toLowerCase(),
+  nameKey: buildNameTokens(parsed.name),
+  idNumber: parsed.idNumberNormalized || '',
+  idNumberNormalized: parsed.idNumberNormalized || '',
+  legajo: parsed.legajoNormalized || '',
+  legajoNormalized: parsed.legajoNormalized || '',
+  role: parsed.role || '',
+  centroCosto: parsed.centroCosto || '',
+  company: parsed.centroCosto || '',
+  destination: parsed.centroCosto || '',
+  turnoRaw: parsed.turnoRaw || '',
+  shiftSchedule: parsed.shiftSchedule?.valid ? {
+    daysOfWeek: parsed.shiftSchedule.daysOfWeek,
+    timeWindow: parsed.shiftSchedule.timeWindow
+  } : null,
+  requiresCitacion: parsed.requiresCitacion === true,
+  authorizationPolicy: parsed.authorizationPolicy,
+  conCitacionRaw: parsed.conCitacionRaw || '',
+  personId: personId || null,
+  source: 'nomina',
+  active: active !== false,
+  updatedAt: FieldValue.serverTimestamp()
+});
+
 const upsertPersonalMaster = async (personId, parsed) => {
-  const nameLower = parsed.name.toLowerCase();
   let existing = null;
 
   if (parsed.legajoNormalized) {
@@ -24,37 +49,13 @@ const upsertPersonalMaster = async (personId, parsed) => {
   }
   if (!existing) {
     const snap = await db.collection('personalMaster')
-      .where('nameLower', '==', nameLower)
+      .where('nameLower', '==', parsed.name.toLowerCase())
       .limit(1)
       .get();
     if (!snap.empty) existing = snap.docs[0];
   }
 
-  const payload = {
-    name: parsed.name,
-    nameLower,
-    nameKey: buildNameTokens(parsed.name),
-    idNumber: parsed.idNumberNormalized || '',
-    idNumberNormalized: parsed.idNumberNormalized || '',
-    legajo: parsed.legajoNormalized || '',
-    legajoNormalized: parsed.legajoNormalized || '',
-    role: parsed.role || '',
-    centroCosto: parsed.centroCosto || '',
-    company: parsed.centroCosto || '',
-    destination: parsed.centroCosto || '',
-    turnoRaw: parsed.turnoRaw || '',
-    shiftSchedule: parsed.shiftSchedule?.valid ? {
-      daysOfWeek: parsed.shiftSchedule.daysOfWeek,
-      timeWindow: parsed.shiftSchedule.timeWindow
-    } : null,
-    requiresCitacion: parsed.requiresCitacion === true,
-    authorizationPolicy: parsed.authorizationPolicy,
-    conCitacionRaw: parsed.conCitacionRaw || '',
-    personId: personId || null,
-    source: 'nomina',
-    active: true,
-    updatedAt: FieldValue.serverTimestamp()
-  };
+  const payload = buildMasterPayload(personId, parsed);
 
   if (existing) {
     await existing.ref.set(payload, { merge: true });
@@ -69,7 +70,7 @@ const upsertPersonalMaster = async (personId, parsed) => {
 };
 
 const syncNominaAuthorization = async (person, parsed) => {
-  if (!parsed.createPermanent || !person?.id) return null;
+  if (!person?.id) return null;
 
   const snap = await db.collection('authorizations')
     .where('personId', '==', person.id)
@@ -80,6 +81,16 @@ const syncNominaAuthorization = async (person, parsed) => {
     const data = doc.data();
     return data.source === 'nomina' && data.type === 'permanent';
   });
+
+  if (!parsed.createPermanent) {
+    if (existingDoc) {
+      await existingDoc.ref.set({
+        active: false,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+    return null;
+  }
 
   const record = buildAuthorizationRecord({
     type: 'permanent',
@@ -106,6 +117,90 @@ const syncNominaAuthorization = async (person, parsed) => {
 
   await existingDoc.ref.set({ ...record, active: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   return existingDoc.id;
+};
+
+const applyParsedToPersonAndAuth = async (parsed) => {
+  const person = await resolveOrCreatePerson({
+    name: parsed.name,
+    idNumber: parsed.idNumberNormalized,
+    idNumberNormalized: parsed.idNumberNormalized,
+    legajo: parsed.legajoNormalized,
+    legajoNormalized: parsed.legajoNormalized,
+    company: parsed.centroCosto,
+    destination: parsed.centroCosto,
+    role: parsed.role,
+    centroCosto: parsed.centroCosto,
+    turnoRaw: parsed.turnoRaw,
+    shiftSchedule: parsed.shiftSchedule,
+    requiresCitacion: parsed.requiresCitacion,
+    authorizationPolicy: parsed.authorizationPolicy
+  }, { origen: 'nomina', tipo: 'empleado', skipPersonalMasterSync: true });
+
+  await syncNominaAuthorization(person, parsed);
+  return person;
+};
+
+const saveNominaEmployee = async (fields = {}, { id } = {}) => {
+  const parsed = parseNominaRow(buildNominaRowFromFields(fields));
+  if (!parsed.valid) {
+    const err = new Error(parsed.reason || 'Datos de nómina inválidos');
+    err.code = 'invalid_nomina';
+    err.reason = parsed.reason;
+    throw err;
+  }
+
+  const person = await applyParsedToPersonAndAuth(parsed);
+  const payload = buildMasterPayload(person.id, parsed, {
+    active: fields.active === false ? false : true
+  });
+
+  if (id) {
+    const ref = db.collection('personalMaster').doc(id);
+    const existing = await ref.get();
+    if (!existing.exists) {
+      const err = new Error('Empleado de nómina no encontrado');
+      err.code = 'not_found';
+      throw err;
+    }
+    await ref.set(payload, { merge: true });
+    return { id, created: false, ...payload };
+  }
+
+  return upsertPersonalMaster(person.id, parsed);
+};
+
+const deactivateNominaEmployee = async (id) => {
+  const ref = db.collection('personalMaster').doc(id);
+  const existing = await ref.get();
+  if (!existing.exists) {
+    const err = new Error('Empleado de nómina no encontrado');
+    err.code = 'not_found';
+    throw err;
+  }
+
+  const data = existing.data() || {};
+  await ref.set({
+    active: false,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  if (data.personId) {
+    const authSnap = await db.collection('authorizations')
+      .where('personId', '==', data.personId)
+      .limit(50)
+      .get();
+    await Promise.all(authSnap.docs
+      .filter((doc) => {
+        const auth = doc.data();
+        return auth.source === 'nomina' && auth.type === 'permanent';
+      })
+      .map((doc) => doc.ref.set({
+        active: false,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true })));
+  }
+
+  return { id, active: false, name: data.name || '' };
 };
 
 const trimNominaRowPayload = (row = {}) => {
@@ -147,24 +242,8 @@ const importNominaRows = async (rows = [], meta = {}) => {
     }
 
     try {
-      const person = await resolveOrCreatePerson({
-        name: parsed.name,
-        idNumber: parsed.idNumberNormalized,
-        idNumberNormalized: parsed.idNumberNormalized,
-        legajo: parsed.legajoNormalized,
-        legajoNormalized: parsed.legajoNormalized,
-        company: parsed.centroCosto,
-        destination: parsed.centroCosto,
-        role: parsed.role,
-        centroCosto: parsed.centroCosto,
-        turnoRaw: parsed.turnoRaw,
-        shiftSchedule: parsed.shiftSchedule,
-        requiresCitacion: parsed.requiresCitacion,
-        authorizationPolicy: parsed.authorizationPolicy
-      }, { origen: 'nomina', tipo: 'empleado', skipPersonalMasterSync: true });
-
+      const person = await applyParsedToPersonAndAuth(parsed);
       const master = await upsertPersonalMaster(person.id, parsed);
-      await syncNominaAuthorization(person, parsed);
 
       stats.imported += 1;
       if (master.created) stats.created += 1;
@@ -197,5 +276,7 @@ module.exports = {
   importNominaRows,
   listNominaPersonal,
   upsertPersonalMaster,
-  syncNominaAuthorization
+  syncNominaAuthorization,
+  saveNominaEmployee,
+  deactivateNominaEmployee
 };

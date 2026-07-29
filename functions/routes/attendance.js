@@ -1,6 +1,11 @@
 const express = require('express');
 const { db, FieldValue, Timestamp } = require('../firestore');
-const { importNominaRows, listNominaPersonal } = require('../nominaImport');
+const {
+  importNominaRows,
+  listNominaPersonal,
+  saveNominaEmployee,
+  deactivateNominaEmployee
+} = require('../nominaImport');
 const {
   getMissingAttendanceAlerts,
   dismissAttendanceAlert,
@@ -16,12 +21,67 @@ const {
 
 const router = express.Router();
 
+const nominaReasonMessage = (reason) => {
+  switch (reason) {
+    case 'nombre_vacio':
+      return 'El nombre es obligatorio';
+    case 'sin_dni_ni_legajo':
+      return 'Indicá DNI o legajo';
+    case 'tipo_autorizacion_invalido':
+      return 'Tipo de autorización inválido';
+    default:
+      return 'Datos de nómina inválidos';
+  }
+};
+
 router.get('/api/admin/nomina', auth, requirePermission('master.nomina.read'), async (_req, res) => {
   try {
     const personal = await listNominaPersonal();
     res.json({ personal, count: personal.length });
   } catch (err) {
     res.status(500).json({ message: 'Error al listar nómina', error: err.message });
+  }
+});
+
+router.post('/api/admin/nomina', auth, requirePermission('master.nomina.write'), async (req, res) => {
+  try {
+    const employee = await saveNominaEmployee(req.body || {});
+    res.status(employee.created ? 201 : 200).json({
+      message: employee.created ? 'Empleado agregado a la nómina' : 'Empleado actualizado en la nómina',
+      employee
+    });
+  } catch (err) {
+    if (err.code === 'invalid_nomina') {
+      return res.status(400).json({ message: nominaReasonMessage(err.reason), reason: err.reason });
+    }
+    res.status(500).json({ message: 'Error al guardar empleado', error: err.message });
+  }
+});
+
+router.put('/api/admin/nomina/:id', auth, requirePermission('master.nomina.write'), async (req, res) => {
+  try {
+    const employee = await saveNominaEmployee(req.body || {}, { id: req.params.id });
+    res.json({ message: 'Empleado actualizado', employee });
+  } catch (err) {
+    if (err.code === 'not_found') {
+      return res.status(404).json({ message: err.message });
+    }
+    if (err.code === 'invalid_nomina') {
+      return res.status(400).json({ message: nominaReasonMessage(err.reason), reason: err.reason });
+    }
+    res.status(500).json({ message: 'Error al actualizar empleado', error: err.message });
+  }
+});
+
+router.delete('/api/admin/nomina/:id', auth, requirePermission('master.nomina.write'), async (req, res) => {
+  try {
+    const employee = await deactivateNominaEmployee(req.params.id);
+    res.json({ message: 'Empleado dado de baja en nómina', employee });
+  } catch (err) {
+    if (err.code === 'not_found') {
+      return res.status(404).json({ message: err.message });
+    }
+    res.status(500).json({ message: 'Error al dar de baja', error: err.message });
   }
 });
 

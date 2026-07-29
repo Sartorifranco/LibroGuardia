@@ -1,111 +1,217 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Truck, ClipboardList, X } from 'lucide-react';
+import {
+  Truck,
+  ClipboardList,
+  X,
+  Users,
+  UserCheck,
+  Car,
+  CalendarCheck,
+  DoorOpen
+} from 'lucide-react';
 import { hasPermission } from '../utils/permissions';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
 import DigitalDoorPanel from './DigitalDoorPanel';
 import NovedadPage from '../pages/Novedad/NovedadPage';
 
-function FleetPresenceBlock({ authToken, enabled, pollSeconds = 12 }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-
-  const reload = useCallback(async () => {
-    if (!authToken || !enabled) return;
-    try {
-      const presence = await apiFetch('/guard/fleet-presence', {
-        token: authToken,
-        allowForbidden: true
-      });
-      setData(presence);
-      setError('');
-    } catch (err) {
-      setError(err.message || 'No se pudo cargar presencia de flota');
-    }
-  }, [authToken, enabled]);
-
-  useEffect(() => {
-    reload();
-    // Sin onSnapshot en el proyecto: mismo patrón de poll que FleetGatePanel / EntriesContext.
-    const id = setInterval(reload, Math.max(5, pollSeconds) * 1000);
-    return () => clearInterval(id);
-  }, [reload, pollSeconds]);
-
-  if (!enabled) return null;
-
+function StatTile({ icon: Icon, label, value, hint, tone = 'neutral' }) {
   return (
-    <section className="control-fleet" aria-live="polite">
-      <div className="control-fleet__header">
-        <Truck size={22} />
-        <div>
-          <h3>Flota en planta</h3>
-          <p>Según el último ingreso/egreso registrado de cada móvil</p>
-        </div>
+    <article className={`guard-ops-tile guard-ops-tile--${tone}`}>
+      <div className="guard-ops-tile__icon" aria-hidden>
+        <Icon size={22} />
       </div>
-      {error && <p className="control-fleet__error">{error}</p>}
-      <div className="control-fleet__counts">
-        <div className="control-fleet__stat control-fleet__stat--in">
-          <span className="control-fleet__num">{data?.inside ?? '—'}</span>
-          <span className="control-fleet__label">Adentro</span>
-        </div>
-        <div className="control-fleet__stat control-fleet__stat--out">
-          <span className="control-fleet__num">{data?.outside ?? '—'}</span>
-          <span className="control-fleet__label">Afuera</span>
-        </div>
+      <div className="guard-ops-tile__body">
+        <span className="guard-ops-tile__value">{value ?? '—'}</span>
+        <span className="guard-ops-tile__label">{label}</span>
+        {hint ? <span className="guard-ops-tile__hint">{hint}</span> : null}
       </div>
-      {data?.queriedAt && (
-        <p className="control-fleet__meta">
-          Actualizado {new Date(data.queriedAt).toLocaleTimeString('es-AR')}
-        </p>
-      )}
-    </section>
+    </article>
   );
 }
 
 /**
- * Centro de control operativo: flota + puertas + novedad rápida.
+ * Puesto operativo de guardia: KPIs en vivo + botonera de puertas + novedad.
  */
-function GuardiaControlCenter({ showFleet = true, showDoors = true, showNovedad = true }) {
+function GuardiaControlCenter({
+  showFleet = true,
+  showDoors = true,
+  showNovedad = true,
+  onNavigate
+}) {
   const { authToken, currentUser } = useAuth();
   const [novedadOpen, setNovedadOpen] = useState(false);
+  const [fleet, setFleet] = useState(null);
+  const [attendance, setAttendance] = useState(null);
+  const [citados, setCitados] = useState(null);
+  const [authorizations, setAuthorizations] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
   const canFleet = showFleet && (
     hasPermission(currentUser, 'entries.view')
     || hasPermission(currentUser, 'entries.create')
     || hasPermission(currentUser, 'fleet.gps.read')
   );
-  const canDoors = showDoors && hasPermission(currentUser, 'access.manual_open');
+  const canDoors = showDoors && (
+    hasPermission(currentUser, 'access.manual_open')
+    || hasPermission(currentUser, 'guard.doors.panel')
+  );
   const canNovedad = showNovedad && hasPermission(currentUser, 'entries.create');
+  const canAttendance = hasPermission(currentUser, 'attendance.alerts.read');
+  const canAuthToday = hasPermission(currentUser, 'master.citaciones.read');
 
-  if (!canFleet && !canDoors && !canNovedad) return null;
+  const reloadKpis = useCallback(async () => {
+    if (!authToken) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const tasks = [];
+
+    if (canFleet) {
+      tasks.push(
+        apiFetch('/guard/fleet-presence', { token: authToken, allowForbidden: true })
+          .then((d) => setFleet(d))
+          .catch((err) => {
+            setFleet(null);
+            setLoadError(err.message || 'No se pudo cargar presencia de flota');
+          })
+      );
+    }
+    if (canAttendance) {
+      tasks.push(
+        apiFetch('/guard/attendance/missing', { token: authToken, allowForbidden: true })
+          .then((d) => setAttendance(d))
+          .catch(() => setAttendance(null))
+      );
+      tasks.push(
+        apiFetch('/guard/citados/today', { token: authToken, allowForbidden: true })
+          .then((d) => setCitados(d))
+          .catch(() => setCitados(null))
+      );
+    }
+    if (canAuthToday) {
+      tasks.push(
+        apiFetch(`/guard/authorizations?scope=external&date=${today}`, {
+          token: authToken,
+          allowForbidden: true
+        })
+          .then((d) => setAuthorizations(d))
+          .catch(() => setAuthorizations(null))
+      );
+    }
+
+    try {
+      await Promise.all(tasks);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err.message || 'No se pudieron actualizar los indicadores');
+    }
+  }, [authToken, canFleet, canAttendance, canAuthToday]);
+
+  useEffect(() => {
+    reloadKpis();
+    const id = setInterval(reloadKpis, 15000);
+    return () => clearInterval(id);
+  }, [reloadKpis]);
+
+  if (!canFleet && !canDoors && !canNovedad && !canAttendance) return null;
+
+  const authCount = Array.isArray(authorizations?.authorizations)
+    ? authorizations.authorizations.length
+    : (Number(authorizations?.count) || null);
 
   return (
-    <div className="guardia-control-center">
-      <div className="guardia-control-center__title">
-        <h2>Centro de control</h2>
-        <p>Estado en vivo y acciones del puesto</p>
-      </div>
-
-      <div className="guardia-control-center__row">
-        {canFleet && (
-          <FleetPresenceBlock authToken={authToken} enabled pollSeconds={12} />
-        )}
-        {canNovedad && (
-          <section className="control-novedad-quick">
-            <ClipboardList size={22} />
-            <div>
-              <h3>Novedad urgente</h3>
-              <p>Registrar sin salir del centro de control</p>
-            </div>
-            <button type="button" className="btn btn-primary" onClick={() => setNovedadOpen(true)}>
+    <div className="guard-ops">
+      <header className="guard-ops__hero">
+        <div>
+          <p className="guard-ops__eyebrow">Puesto de guardia</p>
+          <h2>Centro operativo</h2>
+          <p>Estado de planta, puertas y novedades — pensado para uso rápido en puesto.</p>
+        </div>
+        <div className="guard-ops__hero-actions">
+          {canNovedad && (
+            <button type="button" className="btn btn-primary guard-ops__novedad-btn" onClick={() => setNovedadOpen(true)}>
+              <ClipboardList size={18} />
               Cargar novedad
             </button>
-          </section>
+          )}
+          {typeof onNavigate === 'function' && canDoors && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => onNavigate('botonera')}
+            >
+              <DoorOpen size={18} />
+              Solo puertas
+            </button>
+          )}
+        </div>
+      </header>
+
+      {loadError ? <p className="guard-ops__error">{loadError}</p> : null}
+
+      <section className="guard-ops__kpis" aria-label="Indicadores de planta">
+        {canFleet && (
+          <>
+            <StatTile
+              icon={Truck}
+              label="Móviles en planta"
+              value={fleet?.inside}
+              tone="in"
+              hint="Según último ingreso/egreso"
+            />
+            <StatTile
+              icon={Truck}
+              label="Móviles afuera"
+              value={fleet?.outside}
+              tone="out"
+            />
+          </>
         )}
-      </div>
+        {canAttendance && (
+          <>
+            <StatTile
+              icon={UserCheck}
+              label="Personal en planta"
+              value={attendance?.presentCount}
+              tone="in"
+              hint={attendance?.expectedCount != null
+                ? `Esperados hoy: ${attendance.expectedCount}`
+                : null}
+            />
+            <StatTile
+              icon={Users}
+              label="Ausentes / faltantes"
+              value={attendance?.absentCount}
+              tone="warn"
+            />
+            <StatTile
+              icon={CalendarCheck}
+              label="Citados hoy"
+              value={citados?.expectedCount ?? citados?.presentCount}
+              hint={citados?.absentCount != null
+                ? `Sin marcar: ${citados.absentCount}`
+                : null}
+            />
+          </>
+        )}
+        {canAuthToday && (
+          <StatTile
+            icon={Car}
+            label="Autorizados / visitas del día"
+            value={authCount}
+            hint="Personas/vehículos autorizados para hoy"
+          />
+        )}
+      </section>
 
       {canDoors && (
-        <DigitalDoorPanel profile="guardia" canManualOpen pollSeconds={20} />
+        <section className="guard-ops__doors">
+          <DigitalDoorPanel
+            profile="guardia"
+            canManualOpen
+            pollSeconds={20}
+            botoneraMode
+          />
+        </section>
       )}
 
       {novedadOpen && (

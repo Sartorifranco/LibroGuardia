@@ -79,6 +79,8 @@ router.put('/api/admin/permissions/roles', auth, requirePermission('settings.per
 
 router.get('/api/admin/roles', auth, requireAnyPermission(['roles.view', 'roles.manage', 'settings.permissions']), async (_req, res) => {
   try {
+    const { ensureKioskRole } = require('../lib/lectores');
+    await ensureKioskRole().catch(() => {});
     const roles = await listRoles();
     res.json({ roles, permissionKeys: PERMISSION_KEYS });
   } catch (err) {

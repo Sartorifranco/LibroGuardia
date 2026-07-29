@@ -272,6 +272,19 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       serialPort: req.body?.serialPort || req.body?.puertoDetectado || null,
       inputMode: req.body?.inputMode || req.body?.inputModeDetectado || null
     });
+
+    let pendingOpens = [];
+    const doorId = String(req.body?.doorId || lector.doorId || '').trim();
+    if (doorId && req.body?.claimPendingOpens !== false) {
+      try {
+        const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
+        const claimed = await claimPendingLocalOpens(doorId);
+        pendingOpens = claimed.opens || [];
+      } catch (claimErr) {
+        console.warn('[lectores/heartbeat] claimPendingLocalOpens', claimErr.message);
+      }
+    }
+
     res.json({
       ok: true,
       lectorId: lector.id,
@@ -279,11 +292,37 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       connectionStatus: resolveConnectionStatus(lector.ultimaConexion),
       forceResync: Boolean(lector.forceResync),
       puertoDetectado: lector.puertoDetectado || null,
-      inputModeDetectado: lector.inputModeDetectado || null
+      inputModeDetectado: lector.inputModeDetectado || null,
+      pendingOpens
     });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || 'Error en heartbeat',
+      code: err.code
+    });
+  }
+});
+
+/**
+ * Poll rápido del bridge para aperturas en cola (modo local).
+ * Mismo auth kiosk que heartbeat.
+ */
+router.post('/api/lectores/claim-pending-opens', auth, async (req, res) => {
+  try {
+    const username = resolveAuthUsername(req.user);
+    if (!username) {
+      return res.status(401).json({ message: 'No autenticado' });
+    }
+    const doorId = String(req.body?.doorId || '').trim();
+    if (!doorId) {
+      return res.status(400).json({ message: 'doorId requerido' });
+    }
+    const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
+    const claimed = await claimPendingLocalOpens(doorId);
+    res.json({ ok: true, doorId, opens: claimed.opens || [] });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error al reclamar aperturas',
       code: err.code
     });
   }

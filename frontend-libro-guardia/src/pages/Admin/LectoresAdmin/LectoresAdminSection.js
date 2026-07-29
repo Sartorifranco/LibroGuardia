@@ -650,7 +650,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
 
       <AdminBlock
         title="Nuevo lector"
-        description="Al crear se genera el usuario kiosk. Después usá “Generar código de instalación” en la fila y corré instalar-lector.ps1 en la mini PC."
+        description="Al crear se genera la cuenta de estación de acceso. Después usá “Generar código de instalación” en la fila y corré instalar-lector.ps1 en la mini PC."
       >
         <AdminFormCard onSubmit={handleCreateSubmit}>
           <div className="admin-form-grid">
@@ -784,7 +784,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
           <AdminEmpty
             icon={ScanLine}
             title="Todavía no hay lectores"
-            description="Creá uno para generar el usuario kiosk y el JSON de la mini PC."
+            description="Creá uno para generar la estación de acceso y el JSON de la mini PC."
           />
         ) : (
           <AdminTable>
@@ -912,27 +912,6 @@ function LectoresAdminSection({ pendingAction, runAction }) {
           letter-spacing: 0.02em;
         }
         .admin-row-actions { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-        .admin-modal-backdrop {
-          position: fixed; inset: 0; z-index: 80;
-          background: rgba(0,0,0,0.55);
-          display: flex; align-items: center; justify-content: center;
-          padding: 1rem;
-        }
-        .admin-modal {
-          background: var(--card, #1a1a1a);
-          border: 1px solid var(--border, #2a2a2a);
-          border-radius: 0.75rem;
-          padding: 1.25rem;
-          max-width: 32rem;
-          width: 100%;
-          max-height: calc(100vh - 2rem);
-          overflow: auto;
-        }
-        .admin-modal--wide { max-width: 40rem; }
-        .admin-modal__head {
-          display: flex; justify-content: space-between; align-items: center;
-          margin-bottom: 0.75rem;
-        }
         .admin-form-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));

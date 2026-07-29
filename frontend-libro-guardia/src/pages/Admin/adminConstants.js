@@ -1,30 +1,42 @@
 export const ADMIN_SECTION_META = {
   users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
-  access: { title: 'GPS flota UBIKA', description: 'Monitoreo de móviles en portón y registro automático.' },
-  doors: { title: 'Puertas y acceso', description: 'SR201, multi-puerta, autenticación y estancos en un solo lugar.' },
+  access: { title: 'GPS flota UBIKA', description: 'Conexión, reglas de tránsito y geocercas del mapa en vivo.' },
+  equiposAcceso: {
+    title: 'Equipos de acceso',
+    description: 'Un solo lugar para puertas, lectores, estaciones y marcas homologadas.'
+  },
+  doors: { title: 'Equipos de acceso', description: 'Puertas, lectores y estaciones en un solo lugar.' },
   peopleAccess: {
     title: 'Acceso a puertas (personal)',
-    description: 'Por persona: solo las puertas marcadas explícitamente. Sin lista = ninguna puerta.'
+    description: 'Por persona: puertas permitidas, tarjeta, ID biométrico y foto opcional.'
   },
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
-  nomina: { title: 'Nómina de personal', description: 'Base de empleados, turnos y tipos de autorización.' },
+  nomina: { title: 'Nómina de personal', description: 'Importar, buscar y editar empleados, turnos y tipo de autorización.' },
   vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },
   fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
   empresas: {
     title: 'Empresas del predio',
-    description: 'Empresas que comparten la instalación y dominios de email autorizados (autoregistro).'
+    description: 'Dominios de email para autoregistro de empleados que luego cargan visitas/autorizados.'
   },
   destinos: {
     title: 'Destinos',
     description: 'Lugares del predio con la secuencia de puertas necesarias para llegar.'
   },
+  visitas: {
+    title: 'Aprobar visitas',
+    description: 'Solicitudes de empleados que no pueden autorizar visitas por sí mismos.'
+  },
+  appearance: {
+    title: 'Apariencia',
+    description: 'Colores de marca y textos visibles de esta instalación.'
+  },
   lectores: {
-    title: 'Lectores físicos',
-    description: 'Asignación de mini PC + GADNIC a cada puerta: usuario kiosk, config JSON y estado de conexión.'
+    title: 'Equipos de acceso',
+    description: 'Puertas, lectores y estaciones en un solo lugar.'
   },
   estaciones: {
-    title: 'Estaciones',
-    description: 'Agrupá varios lectores en un mismo proceso (USB directo o Raspberry Pi) y descargá un JSON unificado con servidor LAN.'
+    title: 'Equipos de acceso',
+    description: 'Puertas, lectores y estaciones en un solo lugar.'
   },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },

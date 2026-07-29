@@ -11,7 +11,8 @@ function ActivityAdminSection() {
 
   const canView = hasPermission(currentUser, 'users.view') ||
     hasPermission(currentUser, 'roles.view') ||
-    hasPermission(currentUser, 'settings.permissions');
+    hasPermission(currentUser, 'settings.permissions') ||
+    hasPermission(currentUser, 'audit.view');
 
   if (!canView) return null;
 

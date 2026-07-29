@@ -241,7 +241,7 @@ function ReportesPage() {
         </span>
         <button
           type="button"
-          className="btn-primary"
+          className="btn btn-primary reportes-export-pdf"
           onClick={exportPdf}
           disabled={!summary || exporting || loading}
         >

@@ -4,7 +4,10 @@ const {
   isVisitaWithinWindow,
   findEligibleVisita,
   endOfArgentinaDay,
-  filterOwnVisitas
+  filterOwnVisitas,
+  listVisitasEsperadasForDate,
+  visitaToAuthorizationRow,
+  argentinaDayBounds
 } = require('../lib/visitasAccess');
 const { normalizeDomain } = require('../lib/empresasDestinos');
 const { validateNewPassword } = require('../lib/changePassword');
@@ -123,6 +126,97 @@ describe('visitas — scoping por empleado', () => {
     const mine = filterOwnVisitas(list, 'a@co.com');
     assert.deepEqual(mine.map((v) => v.id), ['1', '3']);
     assert.equal(mine.some((v) => v.createdByUserId === 'b@co.com'), false);
+  });
+});
+
+describe('visitas — listado Autorizados por día AR', () => {
+  const docs = [
+    {
+      id: 'v-ok',
+      nombreVisitante: 'Ana Visitante',
+      dniVisitanteNormalized: '30111222',
+      destinoNombre: 'Planta Norte',
+      fechaHoraEsperada: '2026-07-28T17:00:00.000Z', // 14:00 AR
+      estado: 'pendiente'
+    },
+    {
+      id: 'v-other-day',
+      nombreVisitante: 'Otro Día',
+      dniVisitanteNormalized: '20999888',
+      destinoNombre: 'Planta Norte',
+      fechaHoraEsperada: '2026-07-27T17:00:00.000Z',
+      estado: 'pendiente'
+    },
+    {
+      id: 'v-egreso',
+      nombreVisitante: 'Ya Salió',
+      dniVisitanteNormalized: '11122333',
+      destinoNombre: 'Planta Norte',
+      fechaHoraEsperada: '2026-07-28T15:00:00.000Z',
+      estado: 'egreso_registrado'
+    },
+    {
+      id: 'v-ingreso',
+      nombreVisitante: 'Ya Entró',
+      dniVisitanteNormalized: '44555666',
+      destinoNombre: 'Oficinas',
+      fechaHoraEsperada: '2026-07-28T12:00:00.000Z',
+      estado: 'ingreso_registrado'
+    }
+  ];
+
+  it('argentinaDayBounds arma inicio/fin AR', () => {
+    const b = argentinaDayBounds('2026-07-28');
+    assert.ok(b);
+    assert.equal(b.start.toISOString(), '2026-07-28T03:00:00.000Z');
+    assert.equal(b.end.toISOString(), '2026-07-29T02:59:59.999Z');
+  });
+
+  it('visitaToAuthorizationRow mapea tipo visita_empleado', () => {
+    const row = visitaToAuthorizationRow(docs[0], {
+      empresaNombre: 'Bacarsa',
+      autorizadoPor: 'Juan Empleado'
+    });
+    assert.equal(row.type, 'visita_empleado');
+    assert.equal(row.source, 'empleado');
+    assert.equal(row.id, 'visita:v-ok');
+    assert.equal(row.startDate, '2026-07-28');
+    assert.equal(row.idNumber, '30111222');
+    assert.equal(row.company, 'Planta Norte');
+    assert.equal(row.empresaNombre, 'Bacarsa');
+    assert.equal(row.autorizadoPor, 'Juan Empleado');
+  });
+
+  it('prioriza createdByNombre denormalizado sobre lookup', () => {
+    const row = visitaToAuthorizationRow({
+      ...docs[0],
+      createdByUserId: 'id-viejo',
+      createdByNombre: 'Nombre Guardado'
+    });
+    assert.equal(row.autorizadoPor, 'Nombre Guardado');
+  });
+
+  it('listVisitasEsperadasForDate filtra día y estados operativos', async () => {
+    const rows = await listVisitasEsperadasForDate('2026-07-28', {
+      visitasDocs: [
+        {
+          ...docs[0],
+          empresaId: 'e1',
+          empresaNombre: 'Bacarsa',
+          createdByUserId: 'juan@co.com',
+          autorizadoPor: 'Juan Empleado'
+        },
+        docs[1],
+        docs[2],
+        docs[3]
+      ]
+    });
+    const ids = rows.map((r) => r.visitaId).sort();
+    assert.deepEqual(ids, ['v-ingreso', 'v-ok']);
+    assert.ok(rows.every((r) => r.type === 'visita_empleado'));
+    const ana = rows.find((r) => r.visitaId === 'v-ok');
+    assert.equal(ana.empresaNombre, 'Bacarsa');
+    assert.equal(ana.autorizadoPor, 'Juan Empleado');
   });
 });
 

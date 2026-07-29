@@ -33,7 +33,8 @@ Get-NetTCPConnection -LocalPort 5022 -State Listen -ErrorAction SilentlyContinue
   if ($procId -and $procId -gt 0) {
     Write-Host ("Stopping old listener PID {0}" -f $procId) -ForegroundColor Yellow
     Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-    & taskkill.exe /F /PID $procId 2>$null | Out-Null
+    # Puede que Stop-Process ya lo haya matado: no fallar el script por eso.
+    cmd /c "taskkill /F /PID $procId >nul 2>&1"
   }
 }
 Start-Sleep -Seconds 1

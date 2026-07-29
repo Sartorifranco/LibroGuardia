@@ -12,13 +12,20 @@ const DEFAULT_ACCESS_CONTROL = {
   triggerOn: 'ingreso',
   allowManualOverride: false,
   denyMessage: 'Acceso denegado: no tiene autorización vigente',
-  kioskResetSeconds: 4
+  kioskResetSeconds: 4,
+  /** Feature opcional por cliente: popup con foto en puerta de ingreso principal. */
+  identityVerificationAtMainEntry: false
 };
 
 const getAccessControlConfig = async () => {
   const snap = await db.collection('settings').doc('accessControl').get();
   if (!snap.exists) return { ...DEFAULT_ACCESS_CONTROL };
-  return { ...DEFAULT_ACCESS_CONTROL, ...snap.data() };
+  const data = snap.data() || {};
+  return {
+    ...DEFAULT_ACCESS_CONTROL,
+    ...data,
+    identityVerificationAtMainEntry: data.identityVerificationAtMainEntry === true
+  };
 };
 
 const logAccessEvent = async (event) => {
@@ -46,13 +53,19 @@ const GLOBAL_ACCESS_KEYS = [
   'pulseSeconds',
   'allowManualOverride',
   'denyMessage',
-  'kioskResetSeconds'
+  'kioskResetSeconds',
+  'identityVerificationAtMainEntry'
 ];
 
 const saveGlobalAccessSettings = async (globalAccess = {}) => {
   const updates = { updatedAt: FieldValue.serverTimestamp() };
   GLOBAL_ACCESS_KEYS.forEach((key) => {
-    if (globalAccess[key] !== undefined) updates[key] = globalAccess[key];
+    if (globalAccess[key] === undefined) return;
+    if (key === 'identityVerificationAtMainEntry') {
+      updates[key] = globalAccess[key] === true;
+      return;
+    }
+    updates[key] = globalAccess[key];
   });
   await db.collection('settings').doc('accessControl').set(updates, { merge: true });
   return getAccessControlConfig();

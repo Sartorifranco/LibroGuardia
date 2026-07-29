@@ -85,3 +85,24 @@ test('buildLiveAlertsFromDocs: denegados bajo umbral no alertan; al umbral sí (
   });
   assert.equal(again.find((a) => a.type === 'repeated_denials').id, repeated[0].id);
 });
+
+test('buildLiveAlertsFromDocs: identity_verification genera alerta de verificación', () => {
+  const now = Date.parse('2026-07-22T15:00:00Z');
+  const alerts = buildLiveAlertsFromDocs({
+    nowMs: now,
+    doorNamesById: { d1: 'Acceso principal' },
+    accessEvents: [{
+      id: 'ev-id',
+      type: 'identity_verification',
+      doorId: 'd1',
+      name: 'Juan Pérez',
+      idNumber: '30111222',
+      photoDataUrl: 'data:image/jpeg;base64,abc',
+      createdAt: '2026-07-22T14:59:30Z'
+    }]
+  });
+  const identity = alerts.find((a) => a.type === 'identity_verification');
+  assert.ok(identity);
+  assert.equal(identity.meta.name, 'Juan Pérez');
+  assert.equal(identity.meta.photoUrl, 'data:image/jpeg;base64,abc');
+});

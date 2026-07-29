@@ -9,6 +9,7 @@ const {
   listExternalAuthorizations,
   AUTHORIZATION_TYPES
 } = require('../authorizations');
+const { listVisitasEsperadasForDate } = require('../lib/visitasAccess');
 const { parseImportRows } = require('../citacionesImport');
 const {
   getCitacionesBridgeConfig,
@@ -53,8 +54,28 @@ const listAuthorizationsHandler = async (req, res) => {
     const targetDate = date || todayDateString();
 
     if (req.query.scope === 'external') {
-      const authorizations = await listExternalAuthorizations(targetDate);
-      return res.json({ authorizations, date: targetDate, mode: 'external' });
+      const [external, visitasEmpleado] = await Promise.all([
+        listExternalAuthorizations(targetDate),
+        listVisitasEsperadasForDate(targetDate)
+      ]);
+      const authorizations = [...external, ...visitasEmpleado]
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'es'));
+      const byDate = new Map();
+      authorizations.forEach((item) => {
+        if (item.type === 'permanent') return;
+        const d = item.startDate;
+        if (!d) return;
+        byDate.set(d, (byDate.get(d) || 0) + 1);
+      });
+      const plannedDates = [...byDate.entries()]
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      return res.json({
+        authorizations,
+        date: targetDate,
+        mode: 'external',
+        plannedDates
+      });
     }
 
     const authorizations = await listAuthorizationsByDate(targetDate, type || null);

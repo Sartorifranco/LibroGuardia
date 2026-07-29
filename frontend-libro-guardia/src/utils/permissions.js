@@ -24,7 +24,7 @@ export const PERMISSION_LABELS = {
   'access.manual_open': 'Abrir puerta manualmente (SR201)',
   'access.manual_override': 'Autorizar ingreso manual sin citación',
   'access.exceptional_entry': 'Registrar ingreso excepcional con motivo',
-  'access.kiosk': 'Usar pantalla de molinete',
+  'access.kiosk': 'Estación de acceso (lector / bridge)',
   'master.citaciones.preregister': 'Pre-registrar visitas esperadas',
   'fleet.gps.read': 'Ver alertas GPS de flota cercana',
   'master.nomina.read': 'Ver nómina de personal',
@@ -36,7 +36,9 @@ export const PERMISSION_LABELS = {
   'empresas.manage': 'Gestionar empresas del predio',
   'destinos.manage': 'Gestionar destinos y secuencias de puertas',
   'lectores.manage': 'Gestionar lectores físicos (mini PC / GADNIC)',
-  'visitas.create': 'Cargar visitas de invitados (empleado)',
+  'visitas.create': 'Cargar visitas autorizadas (sin aprobación)',
+  'visitas.request': 'Solicitar visita (queda pendiente de aprobación)',
+  'visitas.approve': 'Aprobar o rechazar solicitudes de visita',
   'visitas.view.own': 'Ver solo mis visitas cargadas'
 };
 
@@ -60,6 +62,8 @@ export const PERMISSION_CATEGORIES = [
       'master.nomina.write',
       'attendance.alerts.read',
       'visitas.create',
+      'visitas.request',
+      'visitas.approve',
       'visitas.view.own'
     ]
   },
@@ -182,7 +186,8 @@ export const ROLE_TEMPLATES = {
       'access.manual_open',
       'access.kiosk',
       'access.exceptional_entry',
-      'attendance.alerts.read'
+      'attendance.alerts.read',
+      'visitas.approve'
     ]
   },
   monitoreo: {
@@ -201,9 +206,15 @@ export const ROLE_TEMPLATES = {
   },
   'empleado-visitas': {
     label: 'Empleado — visitas',
-    description: 'Autoregistro: solo carga y ve sus propias visitas de invitados.',
+    description: 'Puede cargar visitas ya autorizadas y ver las propias.',
     dashboardProfile: 'operational',
     permissions: ['visitas.create', 'visitas.view.own']
+  },
+  'empleado-solicitar-visitas': {
+    label: 'Empleado — solicitar visitas',
+    description: 'Solo puede solicitar visitas; un admin/supervisor debe aprobarlas.',
+    dashboardProfile: 'operational',
+    permissions: ['visitas.request', 'visitas.view.own']
   },
   admin: {
     label: 'Admin',
@@ -266,7 +277,8 @@ export const canAccessAdmin = (user) =>
   hasPermission(user, 'notifications.config') ||
   hasPermission(user, 'empresas.manage') ||
   hasPermission(user, 'destinos.manage') ||
-  hasPermission(user, 'lectores.manage');
+  hasPermission(user, 'lectores.manage') ||
+  hasPermission(user, 'visitas.approve');
 
 /**
  * Árbol operativo /guardia (sidebar de operación, no panel admin).
@@ -290,11 +302,12 @@ export const canAccessGuardia = (user) => {
   );
 };
 
-/** Panel /empleado — carga de visitas propias (rol mínimo). */
+/** Panel /empleado — carga o solicitud de visitas propias. */
 export const canAccessEmpleado = (user) => {
   if (!user) return false;
   return (
     hasPermission(user, 'visitas.create')
+    || hasPermission(user, 'visitas.request')
     || hasPermission(user, 'visitas.view.own')
   );
 };
@@ -309,4 +322,20 @@ export const canManageTargetUser = (actor, targetUser) => {
   if (actor.role === 'admin') return targetUser.role !== 'admin' || actor.id === targetUser.id;
   if (actor.role === 'supervisor') return ['guardia', 'monitoreo'].includes(targetUser.role);
   return false;
+};
+
+/** Rol técnico de lectores físicos (ID legado en Firestore). */
+export const ACCESS_STATION_ROLE_ID = 'kiosk_puerta';
+export const ACCESS_STATION_ROLE_LABEL = 'Estación de acceso';
+
+/** Cuentas de bridge/lector — no son usuarios humanos. */
+export const isAccessStationAccount = (user) => {
+  if (!user) return false;
+  if (user.role === ACCESS_STATION_ROLE_ID) return true;
+  return String(user.username || '').toLowerCase().startsWith('kiosk.');
+};
+
+export const humanRoleLabel = (systemRoles, roleId) => {
+  if (roleId === ACCESS_STATION_ROLE_ID) return ACCESS_STATION_ROLE_LABEL;
+  return systemRoles?.find((r) => r.id === roleId)?.label || roleId || '—';
 };

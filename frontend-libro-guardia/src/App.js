@@ -23,6 +23,8 @@ import GlobalSearch from './components/GlobalSearch';
 import OnboardingTour from './components/OnboardingTour';
 import ForceChangePasswordModal from './components/ForceChangePasswordModal';
 import ChangePasswordForm from './components/ChangePasswordForm';
+import BotoneraPopupPage from './pages/Guardia/BotoneraPopupPage';
+import { openBotoneraWindow } from './utils/openBotoneraWindow';
 import { hasPermission, canAccessAdmin, canAccessGuardia, canAccessEmpleado } from './utils/permissions';
 import {
   guardiaPath,
@@ -52,6 +54,7 @@ import AdminPage from './pages/Admin/AdminPage';
 import ModeSelectPage from './pages/ModeSelect/ModeSelectPage';
 import EmpleadoRegistroPage from './pages/Empleado/EmpleadoRegistroPage';
 import EmpleadoVisitasPage from './pages/Empleado/EmpleadoVisitasPage';
+import VisitaInvitacionPage from './pages/Empleado/VisitaInvitacionPage';
 import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
 import LiveAlertsToaster from './components/LiveAlertsToaster';
@@ -235,6 +238,14 @@ function GuardiaLayout() {
   const chrome = useAppChrome();
   const { tabSegment } = useParams();
 
+  if (tabSegment === 'botonera-ventana') {
+    return (
+      <ForcePasswordGate>
+        <BotoneraPopupPage />
+      </ForcePasswordGate>
+    );
+  }
+
   if (!GUARDIA_SEGMENT_TO_TAB[tabSegment]) {
     return <Navigate to={guardiaPath('inicio')} replace />;
   }
@@ -322,7 +333,7 @@ function GuardiaLayout() {
                 activeTab={activeTab}
                 onNavigate={navigateToTab}
                 onEnterAdmin={enterAdminPanel}
-                showAdmin={canAccessAdmin(currentUser)}
+                showAdmin={false}
                 items={sidebarItems}
               />
               <div className="app-content">
@@ -359,14 +370,30 @@ function GuardiaLayout() {
                       />
                     </div>
                   )}
-                  {activeTab === 'botoneraMonitoreo' && hasPermission(currentUser, 'monitoring.doors.panel') && (
-                    <div className="form-section">
-                      <DigitalDoorPanel profile="monitoreo" canManualOpen={hasPermission(currentUser, 'access.manual_open')} />
-                    </div>
-                  )}
-                  {activeTab === 'botoneraGuardia' && hasPermission(currentUser, 'guard.doors.panel') && (
-                    <div className="form-section">
-                      <DigitalDoorPanel profile="guardia" canManualOpen={hasPermission(currentUser, 'access.manual_open')} />
+                  {activeTab === 'botonera' && (
+                    hasPermission(currentUser, 'monitoring.doors.panel')
+                    || hasPermission(currentUser, 'guard.doors.panel')
+                    || hasPermission(currentUser, 'access.manual_open')
+                  ) && (
+                    <div className="form-section botonera-inline-fallback">
+                      <div className="botonera-inline-fallback__banner">
+                        <p>
+                          La botonera está pensada para una <strong>ventana aparte</strong>
+                          {' '}(otro monitor). Podés seguir usándola acá si el navegador bloqueó el popup.
+                        </p>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => openBotoneraWindow()}
+                        >
+                          Abrir en otra ventana
+                        </button>
+                      </div>
+                      <DigitalDoorPanel
+                        profile={hasPermission(currentUser, 'guard.doors.panel') ? 'guardia' : 'monitoreo'}
+                        canManualOpen={hasPermission(currentUser, 'access.manual_open')}
+                        botoneraMode
+                      />
                     </div>
                   )}
                   {activeTab === 'citados' && hasPermission(currentUser, 'attendance.alerts.read') && (
@@ -562,6 +589,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
+      <Route path="/invitacion/:token" element={<VisitaInvitacionPage />} />
       <Route path="/empleado/registro" element={<EmpleadoRegistroPage />} />
       <Route path="/empleado/login" element={<EmpleadoLoginRoute />} />
       <Route

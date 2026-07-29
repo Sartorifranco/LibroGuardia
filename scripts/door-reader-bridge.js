@@ -1,30 +1,32 @@
 ﻿/**
- * Puente de producciÃ³n (estaciÃ³n = uno o varios lectores en el mismo proceso):
- *   lector(es) GADNIC CODBAR14 (RS-232) â†’ POST /api/access/kiosk-scan
+ * Puente de producción (estación = uno o varios lectores en el mismo proceso):
+ *   lector(es) → plugin de marca → POST /api/access/ingest
+ *   (compat: mismo contrato que kiosk-scan vía normalizador en la nube)
  *
  * Formato config:
  *   - Nuevo: { apiBaseUrl, readers: [...], localServerPort?, localServerSecret? }
- *   - Legacy (retrocompat): un solo lector plano en la raÃ­z (doorId/username/â€¦).
+ *   - Legacy (retrocompat): un solo lector plano en la raíz (doorId/username/…).
+ *   - Por lector: plugin = serial_dni | zkteco | hikvision | suprema | hid
  *
- * Servidor HTTP local (opcional, solo LAN â€” sin tÃºnel):
+ * Servidor HTTP local (opcional, solo LAN — sin túnel):
  *   GET  /status          estado de todos los lectores
- *   POST /open/:doorId    dispara relÃ© local si esta estaciÃ³n maneja esa puerta
+ *   POST /open/:doorId    dispara relé local si esta estación maneja esa puerta
  *   OPTIONS /*            preflight CORS + Private Network Access (panel guardia HTTPS)
  *   Auth: Authorization: Bearer <localServerSecret>
  *
- * VersiÃ³n bridge (local station API): ver BRIDGE_VERSION / LOCAL_STATION_API_VERSION.
+ * Versión bridge (local station API): ver BRIDGE_VERSION / LOCAL_STATION_API_VERSION.
  *
- * RelÃ© en modo local: TCP directo a la placa SR201 (fireLocalRelay).
+ * Relé en modo local: SR201 (TCP) o HTTP genérico (fireLocalRelay).
  *
  * Framing serie: mismo criterio validado en scripts/test-lector-rele.js
  * (buffer hasta CR / CRLF / LF, o silencio idleMs).
  *
- * InstalaciÃ³n (una vez):
+ * Instalación (una vez):
  *   cd scripts && npm install
  *
  * Config:
  *   copy door-reader.config.example.json door-reader.config.json
- *   (editar credenciales / doorId / puerto COM)
+ *   (editar credenciales / doorId / puerto COM / plugin)
  *
  * Uso:
  *   set DOOR_READER_CONFIG=C:\ruta\door-reader.config.json
@@ -48,6 +50,12 @@ const {
 } = require('../functions/lib/doorDrivers/sr201');
 
 const { parseScanData, normalizeIdNumber } = require('../functions/dniParser');
+const {
+  resolvePluginId,
+  getReaderPlugin,
+  parseReaderFrame,
+  toIngestBody
+} = require('./lib/stationReaderPlugins');
 
 const DEFAULTS = {
   serialPort: 'COM3',
@@ -62,10 +70,12 @@ const DEFAULTS = {
   reconnectMinMs: 2000,
   reconnectMaxMs: 60000,
   inputMode: 'serial', // serial | stdin
+  /** Plugin de marca: serial_dni (default) | zkteco | hikvision | suprema | hid */
+  plugin: 'serial_dni',
   /** Modo offline opcional: cachea allowlist y decide local si cae la red. */
   offlineCache: false,
   offlineCacheRefreshMs: 15 * 60 * 1000,
-  /** Si la lista tiene mÃ¡s de N horas, no confiar y denegar offline. */
+  /** Si la lista tiene más de N horas, no confiar y denegar offline. */
   offlineCacheMaxAgeHours: 24,
   /**
    * Con offlineCache + cachÃ© vigente: decide YA con la lista (sin kiosk-scan),
@@ -86,16 +96,14 @@ const DEFAULTS = {
  * VersiÃ³n del proceso door-reader-bridge (semver de scripts).
  * Bump cuando cambie el contrato del servidor local o el framing.
  */
-const BRIDGE_VERSION = '1.1.0';
+const BRIDGE_VERSION = '1.4.0';
 /** API del servidor HTTP local (status/open/CORS). Subir si cambia el contrato. */
-const LOCAL_STATION_API_VERSION = 2;
+const LOCAL_STATION_API_VERSION = 3;
 
 /** OrÃ­genes del panel (HTTPS pÃºblico) autorizados a hablar con la estaciÃ³n LAN. */
 const DEFAULT_CORS_ORIGINS = [
   'https://mss-guard.web.app',
-  'https://mss-guard.firebaseapp.com',
-  'https://bacarguard.web.app',
-  'https://bacarguard.firebaseapp.com'
+  'https://mss-guard.firebaseapp.com'
 ];
 
 const CONTROL_NAMES = {
@@ -107,6 +115,43 @@ const parseBool = (raw, fallback = false) => {
   if (raw === true || raw === '1' || String(raw).toLowerCase() === 'true') return true;
   if (raw === false || raw === '0' || String(raw).toLowerCase() === 'false') return false;
   return fallback;
+};
+
+const sanitizeLocalRelay = (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const driver = raw.driver === 'generic_http' ? 'generic_http' : 'sr201';
+  const pulseMode = raw.pulseMode === 'jog' ? 'jog' : 'timed';
+  const pulseSeconds = Math.max(1, Math.min(99, Number(raw.pulseSeconds) || 3));
+
+  if (driver === 'generic_http') {
+    const httpUrl = String(raw.httpUrl || '').trim();
+    if (!httpUrl) return null;
+    return {
+      driver,
+      host: '',
+      port: 0,
+      channel: 1,
+      pulseMode,
+      pulseSeconds,
+      httpUrl,
+      httpMethod: String(raw.httpMethod || 'POST').toUpperCase(),
+      httpAuthToken: String(raw.httpAuthToken || '')
+    };
+  }
+
+  const host = String(raw.host || '').trim();
+  if (!host) return null;
+  return {
+    driver: 'sr201',
+    host,
+    port: Number(raw.port) || 6722,
+    channel: Number(raw.channel) === 2 ? 2 : 1,
+    pulseMode,
+    pulseSeconds,
+    httpUrl: '',
+    httpMethod: 'POST',
+    httpAuthToken: ''
+  };
 };
 
 /**
@@ -135,6 +180,7 @@ const normalizeReaderConfig = (raw = {}, shared = {}) => {
     baudRate: Number(raw.baudRate) || DEFAULTS.baudRate,
     idleMs: Number(raw.idleMs != null ? raw.idleMs : shared.idleMs) || DEFAULTS.idleMs,
     inputMode: String(raw.inputMode || shared.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
+    plugin: resolvePluginId(raw.plugin || raw.brand || raw.readerPlugin || shared.plugin || DEFAULTS.plugin),
     logFile: String(raw.logFile || shared.logFile || DEFAULTS.logFile).trim(),
     reconnectMinMs: Number(shared.reconnectMinMs) || DEFAULTS.reconnectMinMs,
     reconnectMaxMs: Number(shared.reconnectMaxMs) || DEFAULTS.reconnectMaxMs,
@@ -152,6 +198,8 @@ const normalizeReaderConfig = (raw = {}, shared = {}) => {
     ).trim(),
     onlineScanTimeoutMs: Number(raw.onlineScanTimeoutMs) || DEFAULTS.onlineScanTimeoutMs,
     allowlistTimeoutMs: Number(raw.allowlistTimeoutMs) || DEFAULTS.allowlistTimeoutMs,
+    // Relé opcional en config (fallback si aún no hubo allowlist/kiosk-scan).
+    localRelay: sanitizeLocalRelay(raw.localRelay || raw.relay || null),
     configPath
   };
 };
@@ -209,6 +257,7 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
         || path.join(legacyDir, `offline-queue-${legacyDoorId}.json`),
       onlineScanTimeoutMs: env.ONLINE_SCAN_TIMEOUT_MS || fileCfg.onlineScanTimeoutMs,
       allowlistTimeoutMs: env.ALLOWLIST_TIMEOUT_MS || fileCfg.allowlistTimeoutMs,
+      localRelay: fileCfg.localRelay || fileCfg.relay || null,
       logFile: env.LOG_FILE || fileCfg.logFile
     }];
   }
@@ -309,19 +358,53 @@ const formatChunk = (buf) => {
 };
 
 /**
- * MODO LOCAL: dispara el relÃ© SR201 directo por la LAN, con los datos de
- * conexiÃ³n (host/puerto/canal/pulseSeconds) que devuelve /api/access/kiosk-scan
- * cuando la puerta estÃ¡ en relayMode 'local'. Reusa el driver ya validado.
- *
- * No bloquea: en 'timed' el ON confirma y el OFF sigue async (mismo criterio
- * que producciÃ³n), asÃ­ el escaneo queda libre para la prÃ³xima lectura.
+ * MODO LOCAL: dispara el relé en planta.
+ * - SR201: TCP directo (host/puerto/canal)
+ * - generic_http: POST/PUT a device.httpUrl con { action, seconds }
  */
 const fireLocalRelay = async (cfg, localRelay = {}) => {
-  const host = String(localRelay.host || '').trim();
-  const port = Number(localRelay.port) || 6722;
-  const channel = Number(localRelay.channel) || 1;
-  const mode = localRelay.pulseMode === 'jog' ? 'jog' : 'timed';
-  const seconds = Math.max(1, Math.min(99, Number(localRelay.pulseSeconds) || 3));
+  const sanitized = sanitizeLocalRelay(localRelay) || localRelay;
+  const driver = sanitized.driver === 'generic_http' ? 'generic_http' : 'sr201';
+  const mode = sanitized.pulseMode === 'jog' ? 'jog' : 'timed';
+  const seconds = Math.max(1, Math.min(99, Number(sanitized.pulseSeconds) || 3));
+
+  if (driver === 'generic_http') {
+    const httpUrl = String(sanitized.httpUrl || '').trim();
+    if (!httpUrl) {
+      throw new Error('localRelay HTTP sin httpUrl');
+    }
+    const method = String(sanitized.httpMethod || 'POST').toUpperCase();
+    const action = mode === 'timed' ? 'pulse' : 'open';
+    const headers = {
+      ...(sanitized.httpAuthToken
+        ? { Authorization: `Bearer ${String(sanitized.httpAuthToken)}` }
+        : {})
+    };
+    const res = await requestJson(method, httpUrl, {
+      headers,
+      body: method === 'GET' ? undefined : { action, seconds },
+      timeoutMs: 8000
+    });
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(
+        (res.data && res.data.message) || `Relé HTTP respondió ${res.status}`
+      );
+    }
+    return {
+      via: 'http-local',
+      driver: 'generic_http',
+      httpUrl,
+      method,
+      mode,
+      seconds,
+      httpStatus: res.status,
+      ...(res.data || {})
+    };
+  }
+
+  const host = String(sanitized.host || '').trim();
+  const port = Number(sanitized.port) || 6722;
+  const channel = Number(sanitized.channel) || 1;
 
   if (!host) {
     throw new Error('localRelay sin host (la puerta en modo local necesita IP de la placa)');
@@ -331,12 +414,12 @@ const fireLocalRelay = async (cfg, localRelay = {}) => {
     const timed = await sendTimedPulseTcp(host, port, channel, seconds, 4000, {
       waitForComplete: false
     });
-    return { via: 'tcp-local', host, port, channel, mode, seconds, ...timed };
+    return { via: 'tcp-local', driver: 'sr201', host, port, channel, mode, seconds, ...timed };
   }
 
   const command = buildPulseCommand(channel, 'jog', seconds);
   const tcp = await sendTcpCommand(host, port, command);
-  return { via: 'tcp-local', host, port, channel, mode, command, ...tcp };
+  return { via: 'tcp-local', driver: 'sr201', host, port, channel, mode, command, ...tcp };
 };
 
 const requestJson = (method, urlString, { headers = {}, body, timeoutMs = 25000 } = {}) =>
@@ -498,6 +581,30 @@ const createApiClient = (cfg) => {
       timeoutMs: timeoutMs || cfg.onlineScanTimeoutMs || 25000
     });
 
+  /** Contrato unificado multi-hardware (pref. sobre kiosk-scan). */
+  const accessIngest = async (ingestBody, { timeoutMs } = {}) =>
+    authorizedRequest('POST', '/access/ingest', {
+      body: {
+        ...ingestBody,
+        doorId: ingestBody.doorId || cfg.doorId,
+        readerId: ingestBody.readerId || cfg.readerId
+      },
+      timeoutMs: timeoutMs || cfg.onlineScanTimeoutMs || 25000
+    });
+
+  /**
+   * Traduce frame del lector con el plugin de marca y llama a /access/ingest.
+   * Fallback a kiosk-scan solo si el frame no parsea (no debería pasar).
+   */
+  const scanIdentity = async (rawFrame, { timeoutMs } = {}) => {
+    const parsed = parseReaderFrame(cfg.plugin || 'serial_dni', rawFrame);
+    const body = toIngestBody(parsed, { doorId: cfg.doorId, readerId: cfg.readerId });
+    if (!body) {
+      return kioskScan(rawFrame, { timeoutMs });
+    }
+    return accessIngest(body, { timeoutMs });
+  };
+
   const heartbeat = async () =>
     authorizedRequest('POST', '/lectores/heartbeat', {
       body: {
@@ -519,6 +626,15 @@ const createApiClient = (cfg) => {
     authorizedRequest('POST', '/access/offline-entries', {
       body: { events },
       timeoutMs: 60000
+    });
+
+  const claimPendingOpens = async () =>
+    authorizedRequest('POST', '/lectores/claim-pending-opens', {
+      body: {
+        doorId: cfg.doorId,
+        ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {})
+      },
+      timeoutMs: 15000
     });
 
   const withNetworkRetry = async (fn, label) => {
@@ -545,7 +661,10 @@ const createApiClient = (cfg) => {
   return {
     login,
     kioskScan,
+    accessIngest,
+    scanIdentity,
     heartbeat,
+    claimPendingOpens,
     fetchDoorAllowlist,
     postOfflineEntries,
     withNetworkRetry
@@ -819,11 +938,190 @@ const buildCorsHeaders = (req, env = process.env) => {
   return headers;
 };
 
+const readJsonBody = (req, limitBytes = 64 * 1024) => new Promise((resolve, reject) => {
+  const chunks = [];
+  let size = 0;
+  req.on('data', (chunk) => {
+    size += chunk.length;
+    if (size > limitBytes) {
+      reject(new Error('Body demasiado grande'));
+      req.destroy();
+      return;
+    }
+    chunks.push(chunk);
+  });
+  req.on('end', () => {
+    const raw = Buffer.concat(chunks).toString('utf8').trim();
+    if (!raw) {
+      resolve({});
+      return;
+    }
+    try {
+      resolve(JSON.parse(raw));
+    } catch (_e) {
+      reject(new Error('JSON inválido en el body'));
+    }
+  });
+  req.on('error', reject);
+});
+
+const buildLocalTestPageHtml = () => `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Estación local — prueba de apertura</title>
+  <style>
+    :root { color-scheme: light; font-family: Segoe UI, system-ui, sans-serif; }
+    body { margin: 0; padding: 1.5rem; background: #f4f6f8; color: #1a1f2c; }
+    main { max-width: 28rem; margin: 0 auto; }
+    h1 { font-size: 1.25rem; margin: 0 0 .35rem; }
+    p { margin: 0 0 1rem; color: #4b5563; font-size: .95rem; }
+    label { display: block; font-size: .85rem; margin-bottom: .35rem; }
+    input, select { width: 100%; box-sizing: border-box; padding: .55rem .7rem; margin-bottom: .85rem; border: 1px solid #c5ccd6; border-radius: 6px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+    button { width: 100%; padding: .7rem; border: 0; border-radius: 6px; background: #1d4ed8; color: #fff; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    #doors { display: grid; gap: .55rem; margin-top: 1rem; }
+    .door { padding: .75rem; background: #fff; border: 1px solid #d7dde5; border-radius: 8px; text-align: left; color: #1a1f2c; }
+    .door strong { display: block; margin-bottom: .35rem; }
+    #msg { margin-top: 1rem; min-height: 1.25rem; font-size: .9rem; }
+    .ok { color: #047857; } .err { color: #b91c1c; }
+    .hint { font-size: .8rem; color: #6b7280; margin: -.5rem 0 .85rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Prueba de apertura local</h1>
+    <p>Abrí esta página desde la red de la planta. No uses el admin HTTPS para esta prueba.</p>
+    <label for="secret">Secreto de estación</label>
+    <input id="secret" type="password" autocomplete="off" placeholder="el de Admin → Estaciones" />
+    <label for="relayHost">IP del módulo de relé (SR-201)</label>
+    <input id="relayHost" type="text" placeholder="ej. 192.168.0.38" />
+    <p class="hint">Es la misma IP que en Admin → Puertas → Host del relé.</p>
+    <div class="row">
+      <div>
+        <label for="relayChannel">Canal</label>
+        <select id="relayChannel">
+          <option value="1">1</option>
+          <option value="2">2</option>
+        </select>
+      </div>
+      <div>
+        <label for="pulseSeconds">Segundos</label>
+        <input id="pulseSeconds" type="number" min="1" max="99" value="3" />
+      </div>
+    </div>
+    <button type="button" id="load">1) Cargar puertas</button>
+    <div id="doors"></div>
+    <div id="msg"></div>
+  </main>
+  <script>
+    const msg = document.getElementById('msg');
+    const doorsEl = document.getElementById('doors');
+    const secretEl = document.getElementById('secret');
+    const hostEl = document.getElementById('relayHost');
+    const channelEl = document.getElementById('relayChannel');
+    const pulseEl = document.getElementById('pulseSeconds');
+    try {
+      const saved = JSON.parse(localStorage.getItem('lg.station.test') || '{}');
+      if (saved.secret) secretEl.value = saved.secret;
+      if (saved.host) hostEl.value = saved.host;
+      if (saved.channel) channelEl.value = String(saved.channel);
+      if (saved.pulse) pulseEl.value = String(saved.pulse);
+    } catch (_e) {}
+    const persist = () => {
+      try {
+        localStorage.setItem('lg.station.test', JSON.stringify({
+          secret: secretEl.value,
+          host: hostEl.value,
+          channel: Number(channelEl.value) || 1,
+          pulse: Number(pulseEl.value) || 3
+        }));
+      } catch (_e) {}
+    };
+    const setMsg = (text, ok) => {
+      msg.textContent = text || '';
+      msg.className = ok ? 'ok' : 'err';
+    };
+    const authHeaders = () => ({
+      Accept: 'application/json',
+      Authorization: 'Bearer ' + String(secretEl.value || '').trim()
+    });
+    const relayBody = () => {
+      const host = String(hostEl.value || '').trim();
+      if (!host) return {};
+      return {
+        localRelay: {
+          host,
+          port: 6722,
+          channel: Number(channelEl.value) === 2 ? 2 : 1,
+          pulseMode: 'timed',
+          pulseSeconds: Math.max(1, Math.min(99, Number(pulseEl.value) || 3))
+        }
+      };
+    };
+    document.getElementById('load').onclick = async () => {
+      persist();
+      setMsg('Consultando…', true);
+      doorsEl.innerHTML = '';
+      try {
+        const res = await fetch('/status', { headers: authHeaders(), cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.message || ('HTTP ' + res.status));
+        const readers = Array.isArray(data.readers) ? data.readers : [];
+        const seen = new Set();
+        readers.forEach((r) => {
+          const id = String(r.doorId || '').trim();
+          if (!id || seen.has(id)) return;
+          seen.add(id);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'door';
+          btn.innerHTML = '<strong>' + id + '</strong>2) Abrir ahora';
+          btn.onclick = async () => {
+            persist();
+            const body = relayBody();
+            if (!body.localRelay) {
+              setMsg('Completá la IP del módulo de relé antes de abrir.', false);
+              return;
+            }
+            btn.disabled = true;
+            setMsg('Abriendo ' + id + '…', true);
+            try {
+              const openRes = await fetch('/open/' + encodeURIComponent(id), {
+                method: 'POST',
+                headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+                cache: 'no-store'
+              });
+              const openData = await openRes.json().catch(() => ({}));
+              if (!openRes.ok) throw new Error(openData.message || ('HTTP ' + openRes.status));
+              setMsg(openData.message || ('OK: ' + id), true);
+            } catch (e) {
+              setMsg(e.message || String(e), false);
+            } finally {
+              btn.disabled = false;
+            }
+          };
+          doorsEl.appendChild(btn);
+        });
+        if (!seen.size) setMsg('No hay puertas en esta estación.', false);
+        else setMsg('Listo. Bridge ' + (data.bridgeVersion || '?') + ' — ahora abrí una puerta.', true);
+      } catch (e) {
+        setMsg(e.message || String(e), false);
+      }
+    };
+  </script>
+</body>
+</html>`;
+
 /**
- * Servidor HTTP local de la estaciÃ³n (solo LAN). Endpoints:
+ * Servidor HTTP local de la estación (solo LAN). Endpoints:
+ *   GET  /                página HTML de prueba (sin Mixed Content)
  *   GET  /status
- *   POST /open/:doorId
- *   OPTIONS (preflight CORS / PNA) â€” sin auth
+ *   POST /open/:doorId    body opcional: { localRelay: { host, port, channel, pulseSeconds } }
+ *   OPTIONS (preflight CORS / PNA) — sin auth
  *
  * CORS habilita que https://mss-guard.web.app lea la respuesta en el navegador.
  * La seguridad sigue siendo el secreto Bearer: CORS no abre el endpoint a cualquiera.
@@ -841,7 +1139,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
   const env = opts.env || process.env;
 
   if (!Number.isFinite(port) || port <= 0) {
-    reject(new Error('createLocalStationServer: puerto invÃ¡lido'));
+    reject(new Error('createLocalStationServer: puerto inválido'));
     return;
   }
   if (!secret) {
@@ -861,9 +1159,18 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
     res.end(payload);
   };
 
+  const sendHtml = (res, statusCode, html) => {
+    res.writeHead(statusCode, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(html),
+      'Cache-Control': 'no-store'
+    });
+    res.end(html);
+  };
+
   const requireAuth = (req, res) => {
     if (extractStationSecret(req) !== secret) {
-      sendJson(res, 401, { ok: false, message: 'Secreto de estaciÃ³n invÃ¡lido' }, req);
+      sendJson(res, 401, { ok: false, message: 'Secreto de estación inválido' }, req);
       return false;
     }
     return true;
@@ -874,7 +1181,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const method = (req.method || 'GET').toUpperCase();
 
-      // Preflight: no exige secreto (el browser aÃºn no manda Authorization).
+      // Preflight: no exige secreto (el browser aún no manda Authorization).
       if (method === 'OPTIONS') {
         const cors = buildCorsHeaders(req, env);
         res.writeHead(204, {
@@ -883,6 +1190,11 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
           'Cache-Control': 'no-store'
         });
         res.end();
+        return;
+      }
+
+      if (method === 'GET' && (url.pathname === '/' || url.pathname === '/panel')) {
+        sendHtml(res, 200, buildLocalTestPageHtml());
         return;
       }
 
@@ -902,18 +1214,22 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
       if (method === 'POST' && openMatch) {
         if (!requireAuth(req, res)) return;
         const doorId = decodeURIComponent(openMatch[1]);
-        const result = await Promise.resolve(openDoor(doorId));
+        const body = await readJsonBody(req);
+        const relayOverride = sanitizeLocalRelay(
+          body.localRelay || body.relay || (body.host ? body : null)
+        );
+        const result = await Promise.resolve(openDoor(doorId, relayOverride));
         if (result && result.notFound) {
           sendJson(res, 404, {
             ok: false,
-            message: `Esta estaciÃ³n no maneja la puerta "${doorId}"`
+            message: `Esta estación no maneja la puerta "${doorId}"`
           }, req);
           return;
         }
         sendJson(res, 200, {
           ok: true,
           doorId,
-          message: 'RelÃ© local disparado',
+          message: 'Relé local disparado',
           ...(result && typeof result === 'object' ? result : {})
         }, req);
         return;
@@ -921,7 +1237,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
 
       sendJson(res, 404, { ok: false, message: 'No encontrado' }, req);
     } catch (err) {
-      logFn('error', 'Error en servidor local de estaciÃ³n', { error: err.message });
+      logFn('error', 'Error en servidor local de estación', { error: err.message });
       sendJson(res, 500, { ok: false, message: err.message || 'Error interno' }, req);
     }
   });
@@ -967,17 +1283,15 @@ const buildStationLocalHandlers = (runtimes = []) => {
         connected: false
       }))
     }),
-    openDoor: async (doorId) => {
+    openDoor: async (doorId, relayOverride = null) => {
       const key = String(doorId || '').trim();
       const list = byDoorId.get(key);
       if (!list || list.length === 0) return { notFound: true };
-      // Una puerta puede tener varios lectores en la misma estaciÃ³n; basta
-      // disparar el relÃ© una vez (mismo localRelay en allowlist de esa puerta).
       const rt = list[0];
       if (typeof rt.openLocal !== 'function') {
         throw new Error('Runtime sin openLocal');
       }
-      const relay = await rt.openLocal();
+      const relay = await rt.openLocal(relayOverride);
       return { notFound: false, relay };
     }
   };
@@ -1020,7 +1334,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
 
   const persistAllowlist = (data) => {
     cachedAllowlist = data;
-    if (data?.localRelay?.host) lastLocalRelay = data.localRelay;
+    if (data?.localRelay?.host || data?.localRelay?.httpUrl) lastLocalRelay = data.localRelay;
     writeJsonFile(cfg.offlineAllowlistFile, data);
   };
 
@@ -1180,6 +1494,8 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     readerId: cfg.readerId,
     apiBaseUrl: cfg.apiBaseUrl,
     inputMode: cfg.inputMode,
+    plugin: cfg.plugin || 'serial_dni',
+    pluginBrand: getReaderPlugin(cfg.plugin).brand,
     serialPort: cfg.serialPort,
     baudRate: cfg.baudRate,
     offlineCache: cfg.offlineCache,
@@ -1199,6 +1515,38 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
   }
 
   const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 5 * 60 * 1000);
+  const OPEN_POLL_MS = Number(process.env.OPEN_POLL_MS || 2000);
+
+  const processPendingOpens = async (opens, source) => {
+    const list = Array.isArray(opens) ? opens : [];
+    for (const item of list) {
+      const relay = sanitizeLocalRelay(item?.localRelay) || item?.localRelay || null;
+      if (!relay?.host && !relay?.httpUrl) {
+        log(cfg, 'warn', 'Pedido de apertura sin localRelay', { source, id: item?.id });
+        continue;
+      }
+      try {
+        const result = await fireLocalRelay(cfg, relay);
+        lastLocalRelay = relay;
+        log(cfg, 'info', 'Relé local por cola de admin/guardia', {
+          source,
+          queueId: item.id,
+          driver: relay.driver || 'sr201',
+          host: relay.host || null,
+          httpUrl: relay.httpUrl || null,
+          channel: relay.channel,
+          via: result.via
+        });
+      } catch (err) {
+        log(cfg, 'error', 'Falló apertura en cola', {
+          source,
+          queueId: item?.id,
+          error: err.message
+        });
+      }
+    }
+  };
+
   const sendHeartbeat = async () => {
     try {
       const res = await api.heartbeat();
@@ -1206,8 +1554,11 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
         log(cfg, 'info', 'Heartbeat OK', {
           lectorId: res.data?.lectorId,
           status: res.data?.connectionStatus,
-          forceResync: Boolean(res.data?.forceResync)
+          forceResync: Boolean(res.data?.forceResync),
+          pendingOpens: Array.isArray(res.data?.pendingOpens) ? res.data.pendingOpens.length : 0
         });
+
+        await processPendingOpens(res.data?.pendingOpens, 'heartbeat');
 
         if (cfg.offlineCache) {
           try {
@@ -1233,9 +1584,29 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
       log(cfg, 'warn', 'Heartbeat fallÃ³', { error: err.message });
     }
   };
+
+  const pollPendingOpens = async () => {
+    try {
+      const res = await api.claimPendingOpens();
+      if (res.status >= 200 && res.status < 300) {
+        await processPendingOpens(res.data?.opens, 'poll');
+      }
+    } catch (err) {
+      // Silencioso: la red puede fallar; el próximo poll reintenta.
+      if (/401|403/.test(String(err.message || ''))) {
+        log(cfg, 'warn', 'Poll de aperturas: auth', { error: err.message });
+      }
+    }
+  };
+
   sendHeartbeat();
   const heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS);
   cleanups.push(() => clearInterval(heartbeatTimer));
+
+  const openPollTimer = setInterval(pollPendingOpens, OPEN_POLL_MS);
+  cleanups.push(() => clearInterval(openPollTimer));
+  // Primer poll pronto (sin esperar 2s) para que el admin sienta ~1 clic.
+  setTimeout(() => { pollPendingOpens().catch(() => {}); }, 500);
 
   let allowlistTimer = null;
   if (cfg.offlineCache) {
@@ -1292,10 +1663,10 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
       if (!res) {
         if (cfg.offlineCache) {
           try {
-            res = await api.kioskScan(text);
+            res = await api.scanIdentity(text);
           } catch (err) {
             if (isNetworkError(err)) {
-              log(cfg, 'warn', 'kiosk-scan sin red â€” modo offline', { error: err.message });
+              log(cfg, 'warn', 'access/ingest sin red — modo offline', { error: err.message });
               const offlineResult = await decideOffline(text);
               usedOffline = true;
               res = { status: 200, data: offlineResult };
@@ -1305,8 +1676,8 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
           }
         } else {
           res = await api.withNetworkRetry(
-            () => api.kioskScan(text),
-            'kiosk-scan'
+            () => api.scanIdentity(text),
+            'access/ingest'
           );
         }
       }
@@ -1316,7 +1687,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
       const level = data.authorized ? 'info' : 'warn';
       const resultLabel = usedLocalFirst
         ? 'Resultado local-first'
-        : (usedOffline ? 'Resultado offline' : 'Resultado kiosk-scan');
+        : (usedOffline ? 'Resultado offline' : 'Resultado access/ingest');
       log(cfg, level, resultLabel, {
         doorId: cfg.doorId,
         status: res.status,
@@ -1329,10 +1700,11 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
         relayError: data.relayError || null,
         offline: Boolean(data.offline || usedOffline),
         localFirst: usedLocalFirst,
+        plugin: cfg.plugin || 'serial_dni',
         elapsedMs
       });
 
-      if (data.localRelay?.host) {
+      if (data.localRelay?.host || data.localRelay?.httpUrl) {
         lastLocalRelay = data.localRelay;
       }
 
@@ -1375,18 +1747,29 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     allowlistGeneratedAt: cachedAllowlist?.generatedAt || null
   });
 
-  const openLocal = async () => {
-    const relay = lastLocalRelay || cachedAllowlist?.localRelay || null;
-    if (!relay?.host) {
+  const openLocal = async (overrideRelay = null) => {
+    const relay = sanitizeLocalRelay(overrideRelay)
+      || lastLocalRelay
+      || sanitizeLocalRelay(cachedAllowlist?.localRelay)
+      || sanitizeLocalRelay(cfg.localRelay)
+      || null;
+    if (!relay?.host && !relay?.httpUrl) {
       throw new Error(
-        `Sin datos de relÃ© local para ${cfg.doorId} (falta allowlist/cachÃ© con localRelay)`
+        `Sin datos de relé local para ${cfg.doorId}. `
+        + 'Pasá host/canal o httpUrl en el POST /open, o configurá localRelay en door-reader.config.json, '
+        + 'o habilitá offlineCache para cachear la allowlist.'
       );
     }
     const result = await fireLocalRelay(cfg, relay);
-    log(cfg, 'info', 'RelÃ© local disparado vÃ­a servidor de estaciÃ³n', {
+    log(cfg, 'info', 'Relé local disparado vía servidor de estación', {
       doorId: cfg.doorId,
-      host: relay.host,
-      channel: relay.channel
+      driver: relay.driver || 'sr201',
+      host: relay.host || null,
+      httpUrl: relay.httpUrl || null,
+      channel: relay.channel,
+      source: (overrideRelay?.host || overrideRelay?.httpUrl)
+        ? 'request'
+        : (lastLocalRelay ? 'cache' : 'config')
     });
     return result;
   };
@@ -1490,7 +1873,10 @@ module.exports = {
   buildCorsHeaders,
   createLocalStationServer,
   buildStationLocalHandlers,
+  sanitizeLocalRelay,
   fireLocalRelay,
+  parseReaderFrame,
+  resolvePluginId,
   BRIDGE_VERSION,
   LOCAL_STATION_API_VERSION,
   DEFAULT_CORS_ORIGINS,
