@@ -229,8 +229,8 @@ function EditLectorModal({
           </button>
         </div>
         <p className="historial-meta" style={{ marginBottom: '0.75rem' }}>
-          Si cambiás puerta, readerId o modos offline/instantáneo, descargá de nuevo el
-          {' '}<code>door-reader.config.json</code> y copialo a la mini PC (o regenerá credenciales).
+          Si cambiás puerta, readerId o modos offline/instantáneo, descargá de nuevo la
+          {' '}<code>configuracion-estacion.json</code> y copiala a la mini PC (o regenerá credenciales / usá el código de instalación).
         </p>
         <form
           onSubmit={(e) => {
@@ -369,6 +369,14 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   const { showSuccess, showError } = useToast();
   const { confirm } = useConfirm();
 
+  const run = async (actionId, fn) => {
+    if (typeof runAction === 'function') {
+      await runAction(actionId, fn);
+      return;
+    }
+    await fn();
+  };
+
   const [lectores, setLectores] = useState([]);
   const [doors, setDoors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -444,7 +452,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
     e.preventDefault();
     if (!canManage) return;
     const { nombre, doorId, readerId, direction } = createForm;
-    await runAction('createLector', async () => {
+    await run('createLector', async () => {
       try {
         const data = await apiFetch('/admin/lectores', {
           method: 'POST',
@@ -475,7 +483,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   const handleEditSave = async () => {
     if (!canManage || !editDraft?.id) return;
     const { id, nombre, doorId, readerId, direction } = editDraft;
-    await runAction('updateLector', async () => {
+    await run('updateLector', async () => {
       try {
         const data = await apiFetch(`/admin/lectores/${id}`, {
           method: 'PUT',
@@ -505,7 +513,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       tone: 'danger'
     });
     if (!ok) return;
-    await runAction(`deleteLector-${row.id}`, async () => {
+    await run(`deleteLector-${row.id}`, async () => {
       try {
         await apiFetch(`/admin/lectores/${row.id}`, { method: 'DELETE', token: authToken });
         setLectores((prev) => prev.filter((x) => x.id !== row.id));
@@ -525,7 +533,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       tone: 'danger'
     });
     if (!ok) return;
-    await runAction(`regen-${row.id}`, async () => {
+    await run(`regen-${row.id}`, async () => {
       try {
         const data = await apiFetch(`/admin/lectores/${row.id}/regenerate-credentials`, {
           method: 'POST',
@@ -544,7 +552,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   };
 
   const handleDownloadConfig = async (row) => {
-    await runAction(`config-${row.id}`, async () => {
+    await run(`config-${row.id}`, async () => {
       try {
         const data = await apiFetch(`/admin/lectores/${row.id}/config`, { token: authToken });
         downloadJson(`door-reader-${row.doorId || row.id}.config.json`, data.config);
@@ -556,7 +564,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   };
 
   const handleGeneratePairingCode = async (row) => {
-    await runAction(`pairing-${row.id}`, async () => {
+    await run(`pairing-${row.id}`, async () => {
       try {
         const data = await apiFetch(`/admin/lectores/${row.id}/pairing-code`, {
           method: 'POST',
@@ -585,7 +593,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       tone: 'default'
     });
     if (!ok) return;
-    await runAction(`unlock-${row.id}`, async () => {
+    await run(`unlock-${row.id}`, async () => {
       try {
         const data = await apiFetch(`/admin/lectores/${row.id}/clear-login-failures`, {
           method: 'POST',
@@ -599,7 +607,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   };
 
   const handleForceResync = async (row) => {
-    await runAction(`resync-${row.id}`, async () => {
+    await run(`resync-${row.id}`, async () => {
       try {
         await apiFetch(`/admin/lectores/${row.id}/force-resync`, {
           method: 'POST',

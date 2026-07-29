@@ -44,6 +44,14 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
   const { showSuccess, showError } = useToast();
   const { confirm } = useConfirm();
 
+  const run = async (actionId, fn) => {
+    if (typeof runAction === 'function') {
+      await runAction(actionId, fn);
+      return;
+    }
+    await fn();
+  };
+
   const canManage = hasPermission(currentUser, 'lectores.manage');
 
   const [loading, setLoading] = useState(true);
@@ -162,7 +170,7 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
     };
     if (form.secretoLocal.trim()) body.secretoLocal = form.secretoLocal.trim();
 
-    await runAction(editingId ? `update-est-${editingId}` : 'create-est', async () => {
+    await run(editingId ? `update-est-${editingId}` : 'create-est', async () => {
       try {
         if (editingId) {
           const data = await apiFetch(`/admin/estaciones/${editingId}`, {
@@ -204,7 +212,7 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
       tone: 'danger'
     });
     if (!ok) return;
-    await runAction(`del-est-${row.id}`, async () => {
+    await run(`del-est-${row.id}`, async () => {
       try {
         await apiFetch(`/admin/estaciones/${row.id}`, { method: 'DELETE', token: authToken });
         setEstaciones((prev) => prev.filter((x) => x.id !== row.id));
@@ -240,7 +248,7 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
 
   const saveAssign = async () => {
     if (!assigningId) return;
-    await runAction(`assign-est-${assigningId}`, async () => {
+    await run(`assign-est-${assigningId}`, async () => {
       try {
         const data = await apiFetch(`/admin/estaciones/${assigningId}/lectores`, {
           method: 'PUT',
@@ -273,7 +281,7 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
   };
 
   const handleDownloadConfig = async (row) => {
-    await runAction(`config-est-${row.id}`, async () => {
+    await run(`config-est-${row.id}`, async () => {
       try {
         const data = await apiFetch(`/admin/estaciones/${row.id}/config`, { token: authToken });
         const slug = String(row.nombre || row.id).replace(/[^\w.-]+/g, '-').toLowerCase();

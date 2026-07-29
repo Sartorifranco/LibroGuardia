@@ -135,11 +135,17 @@ function EquiposAccesoAdminSection({
         )}
 
         {activeTab === 'lectores' && canLectores && (
-          <LectoresAdminSection />
+          <LectoresAdminSection
+            pendingAction={pendingAction}
+            runAction={runAction}
+          />
         )}
 
         {activeTab === 'estaciones' && canLectores && (
-          <EstacionesAdminSection />
+          <EstacionesAdminSection
+            pendingAction={pendingAction}
+            runAction={runAction}
+          />
         )}
 
         {activeTab === 'marcas' && (
