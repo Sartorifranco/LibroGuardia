@@ -84,8 +84,19 @@ En Admin → Equipos de acceso → Puertas elegís el modo de cada puerta.
 
 ## Después de actualizar el código
 
-1. Asegurate de tener los archivos nuevos en esta carpeta.
+1. Asegurate de tener los archivos nuevos en esta carpeta (`programa-estacion.js`, etc.).
 2. Doble clic en **02-reiniciar-estacion.cmd** (como Administrador).
 3. En el navegador: Ctrl+F5 en mss-guard.web.app y probá abrir.
+
+**¿Hay que actualizar `programa-estacion.js` a mano?**  
+No en el día a día. Ese archivo lo mantenemos en el repo (`Desktop\LG\scripts`). El servicio de Windows apunta a **esa misma carpeta**. Cuando hay un cambio importante (offline, lectores, etc.):
+
+1. Yo (o un `git pull`) dejo el `.js` nuevo en `scripts\`.
+2. Vos corrés **02-reiniciar-estacion.cmd** una vez.
+3. Listo: no hace falta editar el archivo a mano ni copiarlo a otro lado **si la estación es esta misma PC**.
+
+Si en el futuro la estación es **otra mini PC** distinta de esta, ahí sí hay que copiar la carpeta `scripts` (o al menos `programa-estacion.js` + `lib` + configs) a esa máquina y reiniciar el servicio.
+
+**¿Cada cuánto?** Solo cuando haya una mejora o corrección del programa de estación. No es periódico. El panel web (mss-guard) se actualiza solo con el deploy; el `.js` de la PC **no** se actualiza solo por internet.
 
 Si renombramos el programa y el servicio sigue apuntando al nombre viejo, corré **01b-reinstalar-servicio-estacion.cmd** una vez.

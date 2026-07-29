@@ -41,7 +41,11 @@ describe('LectoresAdminSection — modal de edición', () => {
             direction: 'ingreso',
             usuarioSistemaId: 'kiosk.puerta-p1.ingreso-p1',
             ultimaConexion: null,
-            connectionStatus: 'offline'
+            connectionStatus: 'offline',
+            offlineCache: true,
+            offlineCacheMaxAgeHours: 24,
+            allowlistGeneratedAt: '2026-07-29T10:30:00.000Z',
+            allowlistEntryCount: 17
           }]
         };
       }
@@ -110,9 +114,30 @@ describe('LectoresAdminSection — modal de edición', () => {
     expect(within(dialog).getByDisplayValue('Puerta 1')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('INGRESO_P1 (ingreso)')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('Ingreso')).toBeInTheDocument();
+    const allowlistBox = within(dialog).getByRole('status');
+    expect(allowlistBox).toHaveTextContent(/lista de autorizados en la mini pc/i);
+    expect(allowlistBox).toHaveTextContent(/17 autorizados/i);
+    expect(within(dialog).getByRole('button', { name: /sincronizar ahora/i })).toBeInTheDocument();
 
     // El formulario de alta arriba sigue siendo "Nuevo lector", no "Editar".
     expect(screen.getByText('Nuevo lector')).toBeInTheDocument();
+  });
+
+  it('en la tabla muestra la columna de lista offline', async () => {
+    render(
+      <LectoresAdminSection
+        pendingAction={null}
+        runAction={async (_id, fn) => fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Ingreso Puerta 1')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Lista offline')).toBeInTheDocument();
+    expect(screen.getAllByText(/17 autorizados/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/offline activo/i)).toBeInTheDocument();
   });
 
   it('al hacer click en Sincronizar ahora pide force-resync', async () => {
@@ -136,7 +161,7 @@ describe('LectoresAdminSection — modal de edición', () => {
       );
     });
 
-    expect(screen.getByText(/próximo heartbeat/i)).toBeInTheDocument();
+    expect(screen.getByText(/unos segundos/i)).toBeInTheDocument();
   });
 
   it('genera código de instalación y lo muestra grande', async () => {

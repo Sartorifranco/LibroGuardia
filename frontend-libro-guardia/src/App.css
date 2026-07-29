@@ -3555,6 +3555,67 @@ html.dark .doors-plant-bar__body {
   color: #fecaca;
 }
 
+.door-people__banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.door-people__banner--warn {
+  border: 1px solid #a16207;
+  background: rgba(161, 98, 7, 0.12);
+  color: #fde68a;
+}
+
+.door-people__banner--info {
+  border: 1px solid #334155;
+  background: rgba(51, 65, 85, 0.35);
+  color: #cbd5e1;
+}
+
+.door-people__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.door-people__only-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.door-people__row--blocked {
+  background: rgba(185, 28, 28, 0.08);
+}
+
+.door-people__issue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #fbbf24;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.door-people__ok {
+  color: #4ade80;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.door-people__warn-text {
+  color: #fbbf24 !important;
+}
+
 .door-people__search {
   display: flex;
   align-items: center;

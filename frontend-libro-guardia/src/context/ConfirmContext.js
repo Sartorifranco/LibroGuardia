@@ -45,7 +45,17 @@ export function ConfirmProvider({ children }) {
     });
   }, []);
 
-  const value = useMemo(() => ({ confirm }), [confirm]);
+  /** Aviso de un solo botón (Entendido). Siempre resuelve true. */
+  const alert = useCallback((options = {}) => confirm({
+    title: 'Atención',
+    message: '',
+    confirmLabel: 'Entendido',
+    cancelLabel: null,
+    tone: 'warning',
+    ...options
+  }), [confirm]);
+
+  const value = useMemo(() => ({ confirm, alert }), [confirm, alert]);
 
   return (
     <ConfirmContext.Provider value={value}>

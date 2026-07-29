@@ -615,14 +615,15 @@ const createApiClient = (cfg) => {
     return accessIngest(body, { timeoutMs });
   };
 
-  const heartbeat = async () =>
+  const heartbeat = async (extra = {}) =>
     authorizedRequest('POST', '/lectores/heartbeat', {
       body: {
         doorId: cfg.doorId,
         readerId: cfg.readerId,
         serialPort: cfg.serialPort,
         inputMode: cfg.inputMode,
-        ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {})
+        ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {}),
+        ...extra
       },
       timeoutMs: 20000
     });
@@ -642,6 +643,7 @@ const createApiClient = (cfg) => {
     authorizedRequest('POST', '/lectores/claim-pending-opens', {
       body: {
         doorId: cfg.doorId,
+        readerId: cfg.readerId,
         ...(cfg.lectorId ? { lectorId: cfg.lectorId } : {})
       },
       timeoutMs: 15000
@@ -1526,6 +1528,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
 
   const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 5 * 60 * 1000);
   const OPEN_POLL_MS = Number(process.env.OPEN_POLL_MS || 2000);
+  let allowlistTimer = null;
 
   const processPendingOpens = async (opens, source) => {
     const list = Array.isArray(opens) ? opens : [];
@@ -1557,18 +1560,86 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     }
   };
 
+  const adoptOfflineFromCloud = async (cloud = {}) => {
+    if (!cloud.offlineCache || cfg.offlineCache) return false;
+    cfg.offlineCache = true;
+    if (cloud.localFirstMode != null) cfg.localFirstMode = Boolean(cloud.localFirstMode);
+    if (Number(cloud.offlineCacheRefreshMs) > 0) {
+      cfg.offlineCacheRefreshMs = Number(cloud.offlineCacheRefreshMs);
+    }
+    if (Number(cloud.offlineCacheMaxAgeHours) > 0) {
+      cfg.offlineCacheMaxAgeHours = Number(cloud.offlineCacheMaxAgeHours);
+    }
+    log(cfg, 'info', 'Modo offline activado desde Admin', {
+      refreshMs: cfg.offlineCacheRefreshMs,
+      maxAgeHours: cfg.offlineCacheMaxAgeHours
+    });
+    try {
+      await refreshAllowlist('cloud-enable');
+    } catch (syncErr) {
+      log(cfg, 'warn', 'No se pudo bajar allowlist al activar offline', {
+        error: syncErr.message
+      });
+    }
+    if (!allowlistTimer) {
+      allowlistTimer = setInterval(() => {
+        refreshAllowlist('interval').catch((err) => {
+          log(cfg, 'warn', 'Refresh periódico de allowlist falló', { error: err.message });
+        });
+      }, cfg.offlineCacheRefreshMs);
+      cleanups.push(() => clearInterval(allowlistTimer));
+    }
+    return true;
+  };
+
+  const reportAllowlistToCloud = async (reason = 'report') => {
+    if (!cfg.offlineCache) return;
+    const report = await api.heartbeat({
+      allowlistGeneratedAt: cachedAllowlist?.generatedAt || null,
+      allowlistEntryCount: Array.isArray(cachedAllowlist?.entries)
+        ? cachedAllowlist.entries.length
+        : (Number.isFinite(Number(cachedAllowlist?.count))
+          ? Number(cachedAllowlist.count)
+          : null)
+    });
+    if (report.status < 200 || report.status >= 300) {
+      log(cfg, 'warn', `No se pudo reportar allowlist (${reason})`, {
+        status: report.status
+      });
+    }
+  };
+
+  const handleForceResync = async (reason = 'forceResync') => {
+    if (!cfg.offlineCache) return false;
+    await refreshAllowlist(reason);
+    await reportAllowlistToCloud(reason);
+    return true;
+  };
+
   const sendHeartbeat = async () => {
     try {
-      const res = await api.heartbeat();
+      const allowlistPayload = cfg.offlineCache
+        ? {
+            allowlistGeneratedAt: cachedAllowlist?.generatedAt || null,
+            allowlistEntryCount: Array.isArray(cachedAllowlist?.entries)
+              ? cachedAllowlist.entries.length
+              : (Number.isFinite(Number(cachedAllowlist?.count))
+                ? Number(cachedAllowlist.count)
+                : null)
+          }
+        : {};
+      const res = await api.heartbeat(allowlistPayload);
       if (res.status >= 200 && res.status < 300) {
         log(cfg, 'info', 'Heartbeat OK', {
           lectorId: res.data?.lectorId,
           status: res.data?.connectionStatus,
           forceResync: Boolean(res.data?.forceResync),
-          pendingOpens: Array.isArray(res.data?.pendingOpens) ? res.data.pendingOpens.length : 0
+          pendingOpens: Array.isArray(res.data?.pendingOpens) ? res.data.pendingOpens.length : 0,
+          allowlistGeneratedAt: allowlistPayload.allowlistGeneratedAt || null
         });
 
         await processPendingOpens(res.data?.pendingOpens, 'heartbeat');
+        await adoptOfflineFromCloud(res.data);
 
         if (cfg.offlineCache) {
           try {
@@ -1578,9 +1649,9 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
           }
           if (res.data?.forceResync) {
             try {
-              await refreshAllowlist('forceResync');
+              await handleForceResync('forceResync-heartbeat');
             } catch (syncErr) {
-              log(cfg, 'warn', 'forceResync fallÃ³', { error: syncErr.message });
+              log(cfg, 'warn', 'forceResync falló', { error: syncErr.message });
             }
           }
         }
@@ -1591,7 +1662,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
         });
       }
     } catch (err) {
-      log(cfg, 'warn', 'Heartbeat fallÃ³', { error: err.message });
+      log(cfg, 'warn', 'Heartbeat falló', { error: err.message });
     }
   };
 
@@ -1600,6 +1671,20 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
       const res = await api.claimPendingOpens();
       if (res.status >= 200 && res.status < 300) {
         await processPendingOpens(res.data?.opens, 'poll');
+        await adoptOfflineFromCloud(res.data);
+        if (res.data?.forceResync) {
+          try {
+            await handleForceResync('forceResync-poll');
+            log(cfg, 'info', 'Allowlist refrescada por Sincronizar ahora (poll ~2s)', {
+              generatedAt: cachedAllowlist?.generatedAt || null,
+              count: Array.isArray(cachedAllowlist?.entries)
+                ? cachedAllowlist.entries.length
+                : cachedAllowlist?.count
+            });
+          } catch (syncErr) {
+            log(cfg, 'warn', 'forceResync (poll) falló', { error: syncErr.message });
+          }
+        }
       }
     } catch (err) {
       // Silencioso: la red puede fallar; el próximo poll reintenta.
@@ -1618,11 +1703,10 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
   // Primer poll pronto (sin esperar 2s) para que el admin sienta ~1 clic.
   setTimeout(() => { pollPendingOpens().catch(() => {}); }, 500);
 
-  let allowlistTimer = null;
   if (cfg.offlineCache) {
     allowlistTimer = setInterval(() => {
       refreshAllowlist('interval').catch((err) => {
-        log(cfg, 'warn', 'Refresh periÃ³dico de allowlist fallÃ³', { error: err.message });
+        log(cfg, 'warn', 'Refresh periódico de allowlist falló', { error: err.message });
       });
     }, cfg.offlineCacheRefreshMs);
     cleanups.push(() => clearInterval(allowlistTimer));

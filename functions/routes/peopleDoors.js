@@ -138,7 +138,7 @@ router.put(
   }
 );
 
-/** Personas con esta puerta explícitamente en su lista. */
+/** Personas con esta puerta + diagnóstico de quién puede pasar ahora. */
 router.get(
   '/api/admin/doors/:doorId/people',
   auth,
@@ -150,9 +150,16 @@ router.get(
         return res.status(400).json({ message: 'doorId inválido' });
       }
 
+      const diagnose = String(req.query.diagnose || '1') !== '0';
+      if (diagnose) {
+        const { diagnoseDoorPeople } = require('../lib/doorPeopleDiagnostics');
+        const result = await diagnoseDoorPeople(doorId);
+        return res.json(result);
+      }
+
       const explicitSnap = await db.collection('people')
         .where('allowedDoorIds', 'array-contains', doorId)
-        .limit(200)
+        .limit(500)
         .get();
 
       res.json({
@@ -161,7 +168,10 @@ router.get(
         note: 'Solo ingresan quienes tengan esta puerta marcada explícitamente en su lista.'
       });
     } catch (err) {
-      res.status(500).json({ message: 'Error al listar personas de la puerta', error: err.message });
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al listar personas de la puerta',
+        code: err.code
+      });
     }
   }
 );

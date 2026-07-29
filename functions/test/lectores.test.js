@@ -134,11 +134,20 @@ const installLectoresMock = () => {
         doors: [{
           id: 'puerta-p1',
           name: 'Puerta 1',
+          relayMode: 'local',
           readers: [
             { id: 'INGRESO_P1', direction: 'ingreso' },
             { id: 'EGRESO_P1', direction: 'egreso' }
           ],
           readerIds: ['INGRESO_P1', 'EGRESO_P1']
+        }, {
+          id: 'puerta-cloud',
+          name: 'Puerta Cloud',
+          relayMode: 'cloud',
+          readers: [
+            { id: 'INGRESO_CLOUD', direction: 'ingreso' }
+          ],
+          readerIds: ['INGRESO_CLOUD']
         }]
       }),
       findDoorById: (config, doorId) => (config.doors || []).find((d) => d.id === doorId) || null
@@ -277,6 +286,30 @@ describe('lectores â€” helpers', () => {
     assert.equal(stored.ultimaConexion, 'SERVER_TIMESTAMP');
   });
 
+  it('forceResync: requestForceResync + claimForceResync lo consume en el poll rápido', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector Poll Resync',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso',
+      offlineCache: true
+    });
+
+    await bag.api.requestForceResync(created.lector.id);
+    const first = await bag.api.claimForceResync({
+      username: created.username,
+      lectorId: created.lector.id
+    });
+    assert.equal(first.forceResync, true);
+    assert.equal(bag.lectores.get(created.lector.id).forceResync, false);
+
+    const second = await bag.api.claimForceResync({
+      username: created.username,
+      lectorId: created.lector.id
+    });
+    assert.equal(second.forceResync, false);
+  });
+
   it('forceResync: requestForceResync + heartbeat lo consume una sola vez', async () => {
     const created = await bag.api.createLector({
       nombre: 'Lector Resync',
@@ -322,6 +355,31 @@ describe('lectores â€” helpers', () => {
     const stored = bag.lectores.get(created.lector.id);
     assert.equal(stored.puertoDetectado, 'COM3');
     assert.equal(stored.inputModeDetectado, 'serial');
+  });
+
+  it('heartbeat guarda allowlistGeneratedAt y allowlistEntryCount reportados por la estación', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector Allowlist',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso',
+      offlineCache: true
+    });
+
+    const generatedAt = '2026-07-29T12:00:00.000Z';
+    const touched = await bag.api.touchHeartbeat({
+      username: created.username,
+      lectorId: created.lector.id,
+      allowlistGeneratedAt: generatedAt,
+      allowlistEntryCount: 42
+    });
+    assert.equal(touched.allowlistGeneratedAt, generatedAt);
+    assert.equal(touched.allowlistEntryCount, 42);
+    assert.equal(touched.allowlistReportedAt, 'SERVER_TIMESTAMP');
+
+    const stored = bag.lectores.get(created.lector.id);
+    assert.equal(stored.allowlistGeneratedAt, generatedAt);
+    assert.equal(stored.allowlistEntryCount, 42);
   });
 
   it('updateLector persiste offline/localFirst y sale en el JSON descargable', async () => {
@@ -418,6 +476,19 @@ describe('lectores â€” helpers', () => {
       lectorId: created.lector.id
     });
     assert.equal(touched.ultimaConexion, 'SERVER_TIMESTAMP');
+  });
+
+  it('rechaza offlineCache si la puerta está a distancia', async () => {
+    await assert.rejects(
+      () => bag.api.createLector({
+        nombre: 'Lector Cloud Offline',
+        doorId: 'puerta-cloud',
+        readerId: 'INGRESO_CLOUD',
+        direction: 'ingreso',
+        offlineCache: true
+      }),
+      (err) => err.status === 400 && err.code === 'offline_requires_local_relay'
+    );
   });
 
   it('deleteLector borra tambiÃ©n el usuario de sistema', async () => {

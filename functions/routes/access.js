@@ -216,6 +216,11 @@ router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
   try {
     const before = await getDoorsConfig();
     const { globalAccess, ...doorsPayload } = req.body || {};
+    if (Array.isArray(doorsPayload.doors)) {
+      const { assertDoorsCompatibleWithOfflineLectores } = require('../lib/accessHardwareCoherence');
+      const { listLectores } = require('../lib/lectores');
+      await assertDoorsCompatibleWithOfflineLectores(doorsPayload.doors, listLectores);
+    }
     const config = await saveDoorsConfig(doorsPayload);
     let savedGlobalAccess = null;
     if (globalAccess && typeof globalAccess === 'object') {
@@ -244,7 +249,10 @@ router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       globalAccess: savedGlobalAccess || await getAccessControlConfig()
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.status || 500).json({
+      message: err.message || 'Error al guardar puertas',
+      code: err.code
+    });
   }
 });
 

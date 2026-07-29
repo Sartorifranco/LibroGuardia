@@ -19,6 +19,7 @@ const {
   regenerateCredentials,
   buildConfigForDownload,
   touchHeartbeat,
+  claimForceResync,
   requestForceResync,
   resolveAuthUsername,
   resolveApiBaseUrl,
@@ -223,7 +224,8 @@ router.post(
 );
 
 /**
- * Pide al bridge que refresque la allowlist offline en el próximo heartbeat (hasta ~5 min).
+ * Pide a la estación que refresque la allowlist offline de inmediato
+ * (la PC lo toma en el poll de ~2 s, no en el heartbeat de 5 min).
  */
 router.post(
   '/api/admin/lectores/:id/force-resync',
@@ -240,7 +242,7 @@ router.post(
         after: { forceResync: true }
       }).catch(() => {});
       res.json({
-        message: 'Resincronización pedida. Se aplica en el próximo heartbeat de la mini PC (hasta ~5 minutos).',
+        message: 'Resincronización pedida. La mini PC la aplica en unos segundos (poll ~2 s) y reporta la lista al instante.',
         lector: {
           ...lector,
           connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
@@ -270,7 +272,9 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       doorId: req.body?.doorId || null,
       readerId: req.body?.readerId || null,
       serialPort: req.body?.serialPort || req.body?.puertoDetectado || null,
-      inputMode: req.body?.inputMode || req.body?.inputModeDetectado || null
+      inputMode: req.body?.inputMode || req.body?.inputModeDetectado || null,
+      allowlistGeneratedAt: req.body?.allowlistGeneratedAt,
+      allowlistEntryCount: req.body?.allowlistEntryCount
     });
 
     let pendingOpens = [];
@@ -291,6 +295,11 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       ultimaConexion: lector.ultimaConexion,
       connectionStatus: resolveConnectionStatus(lector.ultimaConexion),
       forceResync: Boolean(lector.forceResync),
+      // Flags de Admin: la estación puede adoptarlos sin re-descargar el JSON.
+      offlineCache: Boolean(lector.offlineCache),
+      localFirstMode: Boolean(lector.localFirstMode),
+      offlineCacheRefreshMs: lector.offlineCacheRefreshMs ?? null,
+      offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours ?? null,
       puertoDetectado: lector.puertoDetectado || null,
       inputModeDetectado: lector.inputModeDetectado || null,
       pendingOpens
@@ -304,7 +313,7 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
 });
 
 /**
- * Poll rápido del bridge para aperturas en cola (modo local).
+ * Poll rápido del bridge (~2 s): aperturas en cola + forceResync de allowlist.
  * Mismo auth kiosk que heartbeat.
  */
 router.post('/api/lectores/claim-pending-opens', auth, async (req, res) => {
@@ -319,7 +328,41 @@ router.post('/api/lectores/claim-pending-opens', auth, async (req, res) => {
     }
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
     const claimed = await claimPendingLocalOpens(doorId);
-    res.json({ ok: true, doorId, opens: claimed.opens || [] });
+
+    let forceResync = false;
+    let offlineCache = false;
+    let localFirstMode = false;
+    let offlineCacheRefreshMs = null;
+    let offlineCacheMaxAgeHours = null;
+    try {
+      const claimedResync = await claimForceResync({
+        username,
+        lectorId: req.body?.lectorId || null,
+        doorId,
+        readerId: req.body?.readerId || null
+      });
+      forceResync = Boolean(claimedResync.forceResync);
+      offlineCache = Boolean(claimedResync.offlineCache);
+      localFirstMode = Boolean(claimedResync.localFirstMode);
+      offlineCacheRefreshMs = claimedResync.offlineCacheRefreshMs;
+      offlineCacheMaxAgeHours = claimedResync.offlineCacheMaxAgeHours;
+    } catch (resyncErr) {
+      // Si no hay lector vinculado, igual devolvemos opens.
+      if (resyncErr.status !== 404) {
+        console.warn('[lectores/claim-pending-opens] claimForceResync', resyncErr.message);
+      }
+    }
+
+    res.json({
+      ok: true,
+      doorId,
+      opens: claimed.opens || [],
+      forceResync,
+      offlineCache,
+      localFirstMode,
+      offlineCacheRefreshMs,
+      offlineCacheMaxAgeHours
+    });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || 'Error al reclamar aperturas',

@@ -3,6 +3,11 @@ import { ChevronLeft, DoorOpen, Info, PlusCircle, Save, Trash2, X } from 'lucide
 import PendingButton from './PendingButton';
 import DoorPeoplePanel from './DoorPeoplePanel';
 import { apiFetch } from '../services/api';
+import { useConfirm } from '../context/ConfirmContext';
+import {
+  offlineNeedsLocalRelayMessage,
+  OFFLINE_NEEDS_LOCAL_RELAY_TITLE
+} from '../utils/accessHardwareCoherence';
 
 const createLocalId = (prefix = 'item') =>
   typeof crypto !== 'undefined' && crypto.randomUUID
@@ -188,6 +193,7 @@ function PlantConnectionInfo({ open, onClose }) {
  * Admin puertas: listado + ficha individual con Guardar por puerta.
  */
 function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onError, onGlobalAccessSaved }) {
+  const { alert } = useConfirm();
   const [doors, setDoors] = useState([]);
   const [airlockGroups, setAirlockGroups] = useState([]);
   const [defaultDoorId, setDefaultDoorId] = useState(null);
@@ -395,6 +401,31 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
   const saveCurrentDoor = async () => {
     if (!draft) return;
     const isLocalRelay = draft.relayMode === 'local';
+    if (!isLocalRelay && draft.id) {
+      try {
+        const data = await apiFetch('/admin/lectores', {
+          token: authToken,
+          allowForbidden: true
+        });
+        const blockers = (data.lectores || []).filter(
+          (l) => l.doorId === draft.id && l.offlineCache
+        );
+        if (blockers.length) {
+          await alert({
+            title: OFFLINE_NEEDS_LOCAL_RELAY_TITLE,
+            message: (
+              `${offlineNeedsLocalRelayMessage({
+                doorName: draft.name || draft.id,
+                context: 'door'
+              })}\n\nLectores con offline: ${blockers.map((b) => b.nombre || b.id).join(', ')}.`
+            )
+          });
+          return;
+        }
+      } catch {
+        // El PUT de puertas también valida en servidor.
+      }
+    }
     await onPending(`save-door-${draft._localId}`, async () => {
       const isHttp = draft.device?.driver === 'generic_http';
       if (isHttp) {
@@ -415,14 +446,26 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
       const nextDoors = exists
         ? doors.map((d) => (d._localId === normalized._localId ? normalized : d))
         : [...doors, normalized];
-      const list = await persistDoors(nextDoors, defaultDoorId || normalized.id, globalAccess);
-      const saved = list.find((d) => d.id === slugify(normalized.id)) || list.find((d) => d.name === normalized.name);
-      if (saved) {
-        setSelectedId(saved._localId);
-        setDraft(saved);
+      try {
+        const list = await persistDoors(nextDoors, defaultDoorId || normalized.id, globalAccess);
+        const saved = list.find((d) => d.id === slugify(normalized.id)) || list.find((d) => d.name === normalized.name);
+        if (saved) {
+          setSelectedId(saved._localId);
+          setDraft(saved);
+        }
+        setDirty(false);
+        onSuccess?.(`Puerta “${normalized.name}” guardada`);
+      } catch (err) {
+        if (err?.data?.code === 'cloud_relay_blocks_offline_lectores'
+          || /En planta|A distancia|Modo offline/i.test(err.message || '')) {
+          await alert({
+            title: OFFLINE_NEEDS_LOCAL_RELAY_TITLE,
+            message: err.message
+          });
+          return;
+        }
+        throw err;
       }
-      setDirty(false);
-      onSuccess?.(`Puerta “${normalized.name}” guardada`);
     });
   };
 
@@ -828,10 +871,13 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                 <h5>2. Cómo se abre</h5>
                 <SectionTip>
                   <p>
-                    <strong>En planta:</strong> la mini PC de la puerta manda la orden. Más simple y no depende del enlace remoto.
+                    <strong>En planta:</strong> la mini PC de la puerta manda la orden. Recomendado
+                    si querés que siga abriendo sin internet (junto con Modo offline en el lector).
                   </p>
                   <p>
-                    <strong>A distancia:</strong> el sistema online manda la orden. Sirve para abrir desde internet; necesita “Conexión a planta” (salvo apertura por URL).
+                    <strong>A distancia:</strong> el sistema online manda la orden. Sirve para abrir
+                    desde internet; necesita “Conexión a planta” (salvo apertura por URL). No combina
+                    con Modo offline del lector.
                   </p>
                   <p>
                     <strong>Placa SR201:</strong> relé por IP y canal (1 o 2).
@@ -849,12 +895,40 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                   onClick={() => patchDraft({ relayMode: 'local' })}
                 >
                   <strong>En planta</strong>
-                  <span>La mini PC abre la puerta. Recomendado.</span>
+                  <span>La mini PC abre la puerta. Recomendado para online + offline.</span>
                 </button>
                 <button
                   type="button"
                   className={`doors-mode-card${(draft.relayMode || 'cloud') === 'cloud' ? ' is-selected' : ''}`}
-                  onClick={() => patchDraft({ relayMode: 'cloud' })}
+                  onClick={async () => {
+                    if ((draft.relayMode || 'cloud') === 'cloud') return;
+                    if (draft.id) {
+                      try {
+                        const data = await apiFetch('/admin/lectores', {
+                          token: authToken,
+                          allowForbidden: true
+                        });
+                        const blockers = (data.lectores || []).filter(
+                          (l) => l.doorId === draft.id && l.offlineCache
+                        );
+                        if (blockers.length) {
+                          await alert({
+                            title: OFFLINE_NEEDS_LOCAL_RELAY_TITLE,
+                            message: (
+                              `${offlineNeedsLocalRelayMessage({
+                                doorName: draft.name || draft.id,
+                                context: 'door'
+                              })}\n\nLectores con offline: ${blockers.map((b) => b.nombre || b.id).join(', ')}.`
+                            )
+                          });
+                          return;
+                        }
+                      } catch {
+                        // El guardado en servidor también valida.
+                      }
+                    }
+                    patchDraft({ relayMode: 'cloud' });
+                  }}
                 >
                   <strong>A distancia</strong>
                   <span>Se abre desde internet. Requiere conexión a planta (placa) o URL pública.</span>
@@ -1063,6 +1137,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                   authToken={authToken}
                   doorId={draft.id}
                   doorName={draft.name}
+                  doorRelayMode={draft.relayMode}
                   onMessage={onSuccess}
                   onError={onError}
                 />

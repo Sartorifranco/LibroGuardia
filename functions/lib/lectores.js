@@ -117,6 +117,11 @@ const toLectorJson = (doc) => {
     localFirstMode: offline.localFirstMode,
     offlineCacheRefreshMs: offline.offlineCacheRefreshMs,
     offlineCacheMaxAgeHours: offline.offlineCacheMaxAgeHours,
+    allowlistGeneratedAt: data.allowlistGeneratedAt || null,
+    allowlistEntryCount: Number.isFinite(Number(data.allowlistEntryCount))
+      ? Number(data.allowlistEntryCount)
+      : null,
+    allowlistReportedAt: data.allowlistReportedAt || null,
     puertoDetectado: data.puertoDetectado || null,
     inputModeDetectado: data.inputModeDetectado || null,
     createdAt: data.createdAt || null,
@@ -333,8 +338,13 @@ const getLectorById = async (id) => {
 
 const createLector = async (body, { apiBaseUrl } = {}) => {
   const fields = sanitizeLectorFields(body);
-  await validateDoorAndReader(fields);
+  const { door } = await validateDoorAndReader(fields);
   await assertEstacionExistsIfSet(fields.estacionId);
+  const { assertOfflineCompatibleWithDoor } = require('./accessHardwareCoherence');
+  assertOfflineCompatibleWithDoor(door, {
+    offlineCache: fields.offlineCache,
+    doorName: door?.name || fields.doorId
+  });
 
   const password = generatePassword();
   const username = await allocateUsername(fields.nombre, fields.doorId, fields.readerId);
@@ -378,8 +388,13 @@ const updateLector = async (id, body) => {
   if (!beforeSnap.exists) throw httpError(404, 'Lector no encontrado');
   const before = beforeSnap.data() || {};
   const fields = sanitizeLectorFields({ ...before, ...body }, before);
-  await validateDoorAndReader(fields);
+  const { door } = await validateDoorAndReader(fields);
   await assertEstacionExistsIfSet(fields.estacionId);
+  const { assertOfflineCompatibleWithDoor } = require('./accessHardwareCoherence');
+  assertOfflineCompatibleWithDoor(door, {
+    offlineCache: fields.offlineCache,
+    doorName: door?.name || fields.doorId
+  });
   await ref.set({
     ...fields,
     updatedAt: FieldValue.serverTimestamp()
@@ -461,16 +476,13 @@ const resolveAuthUsername = (user) => {
 };
 
 /**
- * Heartbeat del bridge: actualiza ultimaConexion del lector del usuario kiosk.
- * Si forceResync estaba en true, lo consume (pasa a false) y lo reporta en la respuesta.
+ * Resuelve el doc del lector vinculado al usuario kiosk (mismo criterio que heartbeat).
  */
-const touchHeartbeat = async ({
+const resolveLectorDocForKiosk = async ({
   username,
   lectorId = null,
   doorId = null,
-  readerId = null,
-  serialPort = null,
-  inputMode = null
+  readerId = null
 } = {}) => {
   const uid = String(username || '').trim().toLowerCase();
   if (!uid) throw httpError(401, 'No autenticado');
@@ -487,8 +499,7 @@ const touchHeartbeat = async ({
     ref = snap.ref || db.collection(LECTORES).doc(lectorId);
     beforeData = data;
   } else {
-    let query = db.collection(LECTORES).where('usuarioSistemaId', '==', uid).limit(1);
-    const snap = await query.get();
+    const snap = await db.collection(LECTORES).where('usuarioSistemaId', '==', uid).limit(1).get();
     if (snap.empty && doorId && readerId) {
       const byDoor = await db.collection(LECTORES)
         .where('doorId', '==', doorId)
@@ -514,6 +525,82 @@ const touchHeartbeat = async ({
     );
   }
 
+  return { ref, beforeData, uid };
+};
+
+/**
+ * Consume forceResync=true (one-shot) para el poll rápido de la estación (~2 s).
+ * No actualiza ultimaConexion (eso lo hace el heartbeat).
+ */
+const claimForceResync = async ({
+  username,
+  lectorId = null,
+  doorId = null,
+  readerId = null
+} = {}) => {
+  const { ref, beforeData } = await resolveLectorDocForKiosk({
+    username,
+    lectorId,
+    doorId,
+    readerId
+  });
+  const forceResync = Boolean(beforeData.forceResync);
+  if (forceResync) {
+    await ref.set({
+      forceResync: false,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+  return {
+    forceResync,
+    offlineCache: Boolean(beforeData.offlineCache),
+    localFirstMode: Boolean(beforeData.localFirstMode),
+    offlineCacheRefreshMs: beforeData.offlineCacheRefreshMs ?? null,
+    offlineCacheMaxAgeHours: beforeData.offlineCacheMaxAgeHours ?? null,
+    lectorId: ref.id
+  };
+};
+
+/**
+ * Heartbeat del bridge: actualiza ultimaConexion del lector del usuario kiosk.
+ * Si forceResync estaba en true, lo consume (pasa a false) y lo reporta en la respuesta.
+ */
+const sanitizeAllowlistGeneratedAt = (raw) => {
+  if (raw === null || raw === '') return null;
+  if (raw === undefined) return undefined;
+  if (typeof raw?.toDate === 'function') {
+    try {
+      return raw.toDate().toISOString();
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof raw === 'object' && (raw._seconds != null || raw.seconds != null)) {
+    const sec = Number(raw._seconds != null ? raw._seconds : raw.seconds);
+    if (Number.isFinite(sec)) return new Date(sec * 1000).toISOString();
+  }
+  const ms = Date.parse(String(raw));
+  if (!Number.isFinite(ms)) return undefined;
+  return new Date(ms).toISOString();
+};
+
+const touchHeartbeat = async ({
+  username,
+  lectorId = null,
+  doorId = null,
+  readerId = null,
+  serialPort = null,
+  inputMode = null,
+  allowlistGeneratedAt = undefined,
+  allowlistEntryCount = undefined
+} = {}) => {
+  const { ref, beforeData } = await resolveLectorDocForKiosk({
+    username,
+    lectorId,
+    doorId,
+    readerId
+  });
+
   const forceResync = Boolean(beforeData.forceResync);
   const patch = {
     ultimaConexion: FieldValue.serverTimestamp(),
@@ -527,6 +614,24 @@ const touchHeartbeat = async ({
   const mode = String(inputMode || '').trim().toLowerCase();
   if (mode) patch.inputModeDetectado = mode;
 
+  // La mini PC reporta el estado de su allowlist local (si modo offline está activo).
+  if (allowlistGeneratedAt !== undefined) {
+    const normalized = sanitizeAllowlistGeneratedAt(allowlistGeneratedAt);
+    if (normalized !== undefined) {
+      patch.allowlistGeneratedAt = normalized;
+      patch.allowlistReportedAt = FieldValue.serverTimestamp();
+    }
+  }
+  if (allowlistEntryCount !== undefined && allowlistEntryCount !== null && allowlistEntryCount !== '') {
+    const n = Number(allowlistEntryCount);
+    if (Number.isFinite(n) && n >= 0) {
+      patch.allowlistEntryCount = Math.round(n);
+      if (patch.allowlistReportedAt == null) {
+        patch.allowlistReportedAt = FieldValue.serverTimestamp();
+      }
+    }
+  }
+
   await ref.set(patch, { merge: true });
 
   const after = await ref.get();
@@ -537,7 +642,7 @@ const touchHeartbeat = async ({
 };
 
 /**
- * Marca forceResync=true para que el bridge refresque la allowlist en el próximo heartbeat.
+ * Marca forceResync=true para que la estación refresque la allowlist en el próximo poll (~2 s).
  */
 const requestForceResync = async (id) => {
   const lector = await getLectorById(id);
@@ -578,6 +683,7 @@ module.exports = {
   buildConfigForDownload,
   resolveAuthUsername,
   touchHeartbeat,
+  claimForceResync,
   requestForceResync,
   validateDoorAndReader
 };

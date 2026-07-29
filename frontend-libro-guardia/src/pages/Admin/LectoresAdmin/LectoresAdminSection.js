@@ -11,6 +11,7 @@ import {
   Unlock,
   X
 } from 'lucide-react';
+import { checkOfflineWithDoorRelay } from '../../../utils/accessHardwareCoherence';
 import PendingButton from '../../../components/PendingButton';
 import {
   AdminBlock,
@@ -55,7 +56,7 @@ const emptyCreateForm = () => ({
   doorId: '',
   readerId: '',
   direction: 'ingreso',
-  offlineCache: false,
+  offlineCache: true,
   localFirstMode: false,
   offlineCacheRefreshMinutes: 15,
   offlineCacheMaxAgeHours: 24
@@ -94,9 +95,9 @@ function downloadJson(filename, data) {
 function formatUltimaConexion(value) {
   if (!value) return 'Nunca';
   let ms = null;
-  if (typeof value.toMillis === 'function') ms = value.toMillis();
-  else if (value._seconds != null) ms = value._seconds * 1000;
-  else if (value.seconds != null) ms = value.seconds * 1000;
+  if (typeof value?.toMillis === 'function') ms = value.toMillis();
+  else if (value?._seconds != null) ms = value._seconds * 1000;
+  else if (value?.seconds != null) ms = value.seconds * 1000;
   else ms = Date.parse(value);
   if (!Number.isFinite(ms)) return '—';
   try {
@@ -104,6 +105,59 @@ function formatUltimaConexion(value) {
   } catch {
     return '—';
   }
+}
+
+/**
+ * Estado legible de la lista de autorizados en la mini PC (reportado por heartbeat).
+ */
+function describeAllowlistStatus(row, nowMs = Date.now()) {
+  if (!row?.offlineCache) {
+    return {
+      short: 'Offline apagado',
+      detail: 'Sin caché local: si se corta internet, esta estación no podrá autorizar por sí sola.',
+      tone: 'off'
+    };
+  }
+  const generatedAt = row.allowlistGeneratedAt;
+  if (!generatedAt) {
+    return {
+      short: 'Sin lista aún',
+      detail: 'Modo offline activo en Admin, pero la mini PC todavía no reportó una lista. Pedí “Sincronizar ahora”: la PC lo toma en unos segundos y actualiza la fecha acá. Si acabás de tildar offline, reiniciá la estación (02-reiniciar-estacion.cmd como Administrador). La lista es por puerta (quién puede pasar ahora), no una copia 1:1 de “Quién puede pasar”.',
+      tone: 'warn'
+    };
+  }
+  let ms = null;
+  if (typeof generatedAt?.toMillis === 'function') ms = generatedAt.toMillis();
+  else if (generatedAt?._seconds != null) ms = generatedAt._seconds * 1000;
+  else if (generatedAt?.seconds != null) ms = generatedAt.seconds * 1000;
+  else ms = Date.parse(generatedAt);
+  if (!Number.isFinite(ms)) {
+    return {
+      short: 'Lista desconocida',
+      detail: 'La estación reportó un valor de lista inválido.',
+      tone: 'warn'
+    };
+  }
+  const maxHours = Math.max(1, Number(row.offlineCacheMaxAgeHours) || 24);
+  const ageMs = Math.max(0, nowMs - ms);
+  const ageHours = ageMs / (60 * 60 * 1000);
+  const when = formatUltimaConexion(generatedAt);
+  const count = Number.isFinite(Number(row.allowlistEntryCount))
+    ? Number(row.allowlistEntryCount)
+    : null;
+  const countTxt = count != null ? ` · ${count} autorizados` : '';
+  if (ageHours > maxHours) {
+    return {
+      short: `Vencida · ${when}`,
+      detail: `Última lista: ${when}${countTxt}. Tiene más de ${maxHours} h — en un corte de internet la estación denegará hasta poder refrescar.`,
+      tone: 'stale'
+    };
+  }
+  return {
+    short: when + countTxt,
+    detail: `Última lista de autorizados en la mini PC: ${when}${countTxt}. Vigente hasta ~${maxHours} h desde esa fecha (si hay corte de internet).`,
+    tone: 'ok'
+  };
 }
 
 function readersForDoorId(doors, doorId) {
@@ -213,11 +267,32 @@ function EditLectorModal({
   onDoorChange,
   onReaderChange,
   onSave,
+  onForceResync,
+  onIncoherence,
   onClose
 }) {
   if (!draft) return null;
   const readers = readersForDoorId(doors, draft.doorId);
   const offlineOn = Boolean(draft.offlineCache);
+  const allowlistStatus = describeAllowlistStatus(draft);
+  const selectedDoor = doors.find((d) => d.id === draft.doorId);
+
+  const trySetOffline = (nextOffline) => {
+    const issue = checkOfflineWithDoorRelay({
+      offlineCache: nextOffline,
+      doorRelayMode: selectedDoor?.relayMode,
+      doorName: selectedDoor?.name || selectedDoor?.id || draft.doorId,
+      context: 'lector'
+    });
+    if (issue) {
+      onIncoherence?.(issue);
+      return;
+    }
+    onChange({
+      offlineCache: nextOffline,
+      localFirstMode: nextOffline ? draft.localFirstMode : false
+    });
+  };
 
   return (
     <div className="admin-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-lector-title">
@@ -294,19 +369,21 @@ function EditLectorModal({
           </div>
 
           <div className="lector-offline-opts" style={{ marginTop: '1rem' }}>
-            <p className="historial-meta" style={{ marginBottom: '0.5rem' }}>
-              Caché local / respuesta instantánea (default apagado)
+            <p className="historial-meta" style={{ marginBottom: '0.35rem' }}>
+              Respaldo ante cortes de internet
+            </p>
+            <p className="theme-section-desc" style={{ marginBottom: '0.65rem' }}>
+              Configuración correcta: puerta en <strong>En planta</strong> + este
+              <strong> Modo offline</strong> tildado. Así funciona con internet y, si se corta,
+              la mini PC autoriza y abre por la red local. No combina con puerta “A distancia”.
             </p>
             <label className="lector-check">
               <input
                 type="checkbox"
                 checked={offlineOn}
-                onChange={(e) => onChange({
-                  offlineCache: e.target.checked,
-                  localFirstMode: e.target.checked ? draft.localFirstMode : false
-                })}
+                onChange={(e) => trySetOffline(e.target.checked)}
               />
-              <span>Modo offline (caché local)</span>
+              <span>Modo offline (caché local) — recomendado para cortes de red</span>
             </label>
             <label className={`lector-check${offlineOn ? '' : ' lector-check--dim'}`}>
               <input
@@ -317,6 +394,30 @@ function EditLectorModal({
               />
               <span>Modo instantáneo (decide siempre con caché local, más rápido)</span>
             </label>
+            <div
+              className={`lector-allowlist-status lector-allowlist-status--${allowlistStatus.tone}`}
+              role="status"
+              title={allowlistStatus.detail}
+            >
+              <strong>Lista de autorizados en la mini PC:</strong>{' '}
+              {allowlistStatus.short}
+              <div className="theme-section-desc" style={{ marginTop: '0.25rem' }}>
+                {allowlistStatus.detail}
+              </div>
+              {offlineOn && draft.id ? (
+                <div style={{ marginTop: '0.65rem' }}>
+                  <PendingButton
+                    type="button"
+                    className="btn btn-secondary"
+                    actionId={`resync-${draft.id}`}
+                    pendingAction={pendingAction}
+                    onClick={() => onForceResync?.(draft)}
+                  >
+                    <RefreshCw size={16} /> Sincronizar ahora
+                  </PendingButton>
+                </div>
+              ) : null}
+            </div>
             <div className="admin-form-grid" style={{ marginTop: '0.5rem' }}>
               <label>
                 <span className="historial-meta">Refresco de lista (min)</span>
@@ -367,7 +468,7 @@ function EditLectorModal({
 function LectoresAdminSection({ pendingAction, runAction }) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
-  const { confirm } = useConfirm();
+  const { confirm, alert } = useConfirm();
 
   const run = async (actionId, fn) => {
     if (typeof runAction === 'function') {
@@ -442,6 +543,9 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       doorId: row.doorId || '',
       readerId: row.readerId || '',
       direction: row.direction || 'ingreso',
+      allowlistGeneratedAt: row.allowlistGeneratedAt || null,
+      allowlistEntryCount: row.allowlistEntryCount ?? null,
+      allowlistReportedAt: row.allowlistReportedAt || null,
       ...offlineFieldsFromRow(row)
     });
   };
@@ -451,6 +555,17 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   const handleCreateSubmit = async (e) => {
     e.preventDefault();
     if (!canManage) return;
+    const door = doors.find((d) => d.id === createForm.doorId);
+    const issue = checkOfflineWithDoorRelay({
+      offlineCache: createForm.offlineCache,
+      doorRelayMode: door?.relayMode,
+      doorName: door?.name || door?.id || createForm.doorId,
+      context: 'lector'
+    });
+    if (issue) {
+      await alert(issue);
+      return;
+    }
     const { nombre, doorId, readerId, direction } = createForm;
     await run('createLector', async () => {
       try {
@@ -482,6 +597,17 @@ function LectoresAdminSection({ pendingAction, runAction }) {
 
   const handleEditSave = async () => {
     if (!canManage || !editDraft?.id) return;
+    const door = doors.find((d) => d.id === editDraft.doorId);
+    const issue = checkOfflineWithDoorRelay({
+      offlineCache: editDraft.offlineCache,
+      doorRelayMode: door?.relayMode,
+      doorName: door?.name || door?.id || editDraft.doorId,
+      context: 'lector'
+    });
+    if (issue) {
+      await alert(issue);
+      return;
+    }
     const { id, nombre, doorId, readerId, direction } = editDraft;
     await run('updateLector', async () => {
       try {
@@ -500,6 +626,14 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         showSuccess(data.message || 'Lector actualizado. Descargá el JSON si cambiaste modos offline.');
         closeEdit();
       } catch (err) {
+        if (err?.data?.code === 'offline_requires_local_relay'
+          || /En planta|A distancia|Modo offline/i.test(err.message || '')) {
+          await alert({
+            title: 'Configuración incompatible',
+            message: err.message
+          });
+          return;
+        }
         showError(err.message || 'Error al actualizar lector');
       }
     });
@@ -607,6 +741,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   };
 
   const handleForceResync = async (row) => {
+    if (!row?.id) return;
     await run(`resync-${row.id}`, async () => {
       try {
         await apiFetch(`/admin/lectores/${row.id}/force-resync`, {
@@ -616,7 +751,10 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         setLectores((prev) => prev.map((x) => (
           x.id === row.id ? { ...x, forceResync: true } : x
         )));
-        showSuccess('Pedido enviado. La mini PC lo aplica en el próximo heartbeat (hasta ~5 min).');
+        setEditDraft((prev) => (prev && prev.id === row.id
+          ? { ...prev, forceResync: true }
+          : prev));
+        showSuccess('Pedido enviado. La mini PC actualiza la lista en unos segundos.');
       } catch (err) {
         showError(err.message || 'Error al pedir sincronización');
       }
@@ -653,6 +791,8 @@ function LectoresAdminSection({ pendingAction, runAction }) {
           prev ? applyReaderToForm(prev, nextReaderId, prev.doorId) : prev
         ))}
         onSave={handleEditSave}
+        onForceResync={handleForceResync}
+        onIncoherence={(issue) => { alert(issue); }}
         onClose={closeEdit}
       />
 
@@ -715,17 +855,35 @@ function LectoresAdminSection({ pendingAction, runAction }) {
             </label>
           </div>
           <div className="lector-offline-opts" style={{ marginTop: '0.85rem' }}>
+            <p className="theme-section-desc" style={{ marginBottom: '0.5rem' }}>
+              Para online + cortes de red: puerta en <strong>En planta</strong> y
+              {' '}<strong>Modo offline</strong> tildado acá.
+            </p>
             <label className="lector-check">
               <input
                 type="checkbox"
                 checked={Boolean(createForm.offlineCache)}
-                onChange={(e) => setCreateForm((prev) => ({
-                  ...prev,
-                  offlineCache: e.target.checked,
-                  localFirstMode: e.target.checked ? prev.localFirstMode : false
-                }))}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  const door = doors.find((d) => d.id === createForm.doorId);
+                  const issue = checkOfflineWithDoorRelay({
+                    offlineCache: next,
+                    doorRelayMode: door?.relayMode,
+                    doorName: door?.name || door?.id || createForm.doorId,
+                    context: 'lector'
+                  });
+                  if (issue) {
+                    alert(issue);
+                    return;
+                  }
+                  setCreateForm((prev) => ({
+                    ...prev,
+                    offlineCache: next,
+                    localFirstMode: next ? prev.localFirstMode : false
+                  }));
+                }}
               />
-              <span>Modo offline (caché local)</span>
+              <span>Modo offline (caché local) — recomendado</span>
             </label>
             <label className={`lector-check${createForm.offlineCache ? '' : ' lector-check--dim'}`}>
               <input
@@ -784,7 +942,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
 
       <AdminBlock
         title={`Lectores (${lectores.length})`}
-        description="“Sincronizar ahora” marca forceResync en el lector: la mini PC refresca la allowlist offline en el próximo heartbeat (hasta ~5 minutos), no al instante."
+        description="Con modo offline, la mini PC descarga quién puede pasar ahora por esa puerta (DNI únicos con autorización vigente). “Sincronizar ahora” lo refresca en unos segundos. La columna “Lista offline” muestra la última actualización reportada por la estación."
       >
         {loading ? (
           <AdminLoading label="Cargando lectores…" />
@@ -805,12 +963,14 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                 <th>Sentido</th>
                 <th>Conexión</th>
                 <th>Última conexión</th>
+                <th>Lista offline</th>
                 <th>Acciones</th>
               </tr>
             </thead>
             <tbody>
               {lectores.map((row) => {
                 const status = CONNECTION_STATUS_META[row.connectionStatus] || CONNECTION_STATUS_META.offline;
+                const allowlist = describeAllowlistStatus(row);
                 return (
                   <tr key={row.id}>
                     <td>
@@ -834,6 +994,17 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                     </td>
                     <td>{formatUltimaConexion(row.ultimaConexion)}</td>
                     <td>
+                      <span
+                        className={`lector-allowlist-pill lector-allowlist-pill--${allowlist.tone}`}
+                        title={allowlist.detail}
+                      >
+                        {allowlist.short}
+                      </span>
+                      {row.offlineCache ? (
+                        <div className="theme-section-desc">Offline activo{row.localFirstMode ? ' · instantáneo' : ''}</div>
+                      ) : null}
+                    </td>
+                    <td>
                       <div className="admin-row-actions">
                         <button type="button" className="admin-icon-btn" title="Editar" onClick={() => startEdit(row)}>
                           <Pencil size={16} />
@@ -841,7 +1012,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                         <button
                           type="button"
                           className="admin-icon-btn"
-                          title="Sincronizar ahora (próximo heartbeat, hasta ~5 min)"
+                          title="Sincronizar ahora (unos segundos)"
                           onClick={() => handleForceResync(row)}
                         >
                           <RefreshCw size={16} />
@@ -934,6 +1105,29 @@ function LectoresAdminSection({ pendingAction, runAction }) {
           font-size: 0.9rem;
         }
         .lector-check--dim { opacity: 0.55; }
+        .lector-allowlist-status {
+          margin: 0.65rem 0 0.35rem;
+          padding: 0.65rem 0.75rem;
+          border-radius: 0.5rem;
+          border: 1px solid var(--border, #2a2a2a);
+          background: var(--panel-muted, #111);
+          font-size: 0.9rem;
+        }
+        .lector-allowlist-status--ok { border-color: #166534; }
+        .lector-allowlist-status--warn { border-color: #a16207; }
+        .lector-allowlist-status--stale { border-color: #b91c1c; }
+        .lector-allowlist-status--off { opacity: 0.85; }
+        .lector-allowlist-pill {
+          display: inline-block;
+          max-width: 14rem;
+          font-size: 0.82rem;
+          font-weight: 600;
+          line-height: 1.25;
+        }
+        .lector-allowlist-pill--ok { color: #16a34a; }
+        .lector-allowlist-pill--warn { color: #ca8a04; }
+        .lector-allowlist-pill--stale { color: #dc2626; }
+        .lector-allowlist-pill--off { color: #9ca3af; font-weight: 500; }
       `}</style>
     </div>
   );

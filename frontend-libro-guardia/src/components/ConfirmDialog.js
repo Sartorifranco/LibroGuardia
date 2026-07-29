@@ -2,7 +2,8 @@ import React from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 
 /**
- * Modal de confirmación con el lenguaje visual de la app (overlay + card).
+ * Modal de confirmación / alerta con el lenguaje visual de la app.
+ * Si cancelLabel es null/false, es un aviso de un solo botón (Entendido).
  */
 function ConfirmDialog({
   open,
@@ -17,14 +18,16 @@ function ConfirmDialog({
   if (!open) return null;
 
   const isDanger = tone === 'danger';
+  const isAlert = cancelLabel == null || cancelLabel === false;
+  const dismiss = isAlert ? onConfirm : onCancel;
 
   return (
     <div
       className="modal-overlay confirm-dialog-overlay"
       role="presentation"
-      onClick={onCancel}
+      onClick={dismiss}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') onCancel?.();
+        if (e.key === 'Escape') dismiss?.();
       }}
     >
       <div
@@ -38,7 +41,7 @@ function ConfirmDialog({
         <button
           type="button"
           className="close-button"
-          onClick={onCancel}
+          onClick={dismiss}
           aria-label="Cerrar"
         >
           <X size={18} />
@@ -51,14 +54,20 @@ function ConfirmDialog({
         <h3 id="confirm-dialog-title" className="confirm-dialog__title">
           {title}
         </h3>
-        <p id="confirm-dialog-desc" className="confirm-dialog__message">
+        <p
+          id="confirm-dialog-desc"
+          className="confirm-dialog__message"
+          style={{ whiteSpace: 'pre-line' }}
+        >
           {message}
         </p>
 
         <div className="confirm-dialog__actions">
-          <button type="button" className="btn btn-secondary" onClick={onCancel}>
-            {cancelLabel}
-          </button>
+          {!isAlert ? (
+            <button type="button" className="btn btn-secondary" onClick={onCancel}>
+              {cancelLabel}
+            </button>
+          ) : null}
           <button
             type="button"
             className={`btn ${isDanger ? 'confirm-dialog__btn-danger' : 'btn-primary'}`}
