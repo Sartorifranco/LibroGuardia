@@ -1,10 +1,10 @@
-# Arranca el puente SR201 local (5022) para que Firebase pueda abrir por internet
+﻿# Arranca el puente SR201 local (5022) para que Firebase pueda abrir por internet
 # via Cloudflare Tunnel. No configura el tunel: eso se hace una vez en Cloudflare.
 [CmdletBinding()]
 param()
 
 $ErrorActionPreference = 'Stop'
-$ScriptsDir = $PSScriptRoot
+$ScriptsDir = Split-Path -Parent $PSScriptRoot
 
 function Write-Step([string]$msg) {
   Write-Host ""
@@ -17,13 +17,13 @@ if (-not $isAdmin) {
   exit 1
 }
 
-$bridgeJs = Join-Path $ScriptsDir 'sr201-bridge.js'
-$configJson = Join-Path $ScriptsDir 'sr201-bridge.config.json'
+$bridgeJs = Join-Path $ScriptsDir 'programa-apertura-internet.js'
+$configJson = Join-Path $ScriptsDir 'configuracion-apertura-internet.json'
 if (-not (Test-Path $bridgeJs)) { throw "Falta $bridgeJs" }
 if (-not (Test-Path $configJson)) { throw "Falta $configJson" }
 
 Write-Step "Instalando / reiniciando puente SR201 (puerto 5022)"
-& (Join-Path $ScriptsDir 'install-sr201-bridge-autostart.ps1')
+& (Join-Path $ScriptsDir '_interno\instalar-apertura-internet.ps1')
 
 Write-Step "Health local"
 try {
@@ -61,3 +61,4 @@ $cfg = Get-Content $configJson -Raw -Encoding UTF8 | ConvertFrom-Json
 Write-Host ("  bridgeSecret = {0}" -f $cfg.bridgeSecret)
 Write-Host ""
 Read-Host "Enter para salir"
+

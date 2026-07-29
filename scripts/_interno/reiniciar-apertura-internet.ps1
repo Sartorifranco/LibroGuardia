@@ -1,4 +1,4 @@
-# Reinicia el bridge SR201 con la version que incluye /status (estado fisico en tiempo real).
+﻿# Reinicia el bridge SR201 con la version que incluye /status (estado fisico en tiempo real).
 # Ejecutar como Administrador (clic derecho -> Ejecutar con PowerShell como administrador).
 $ErrorActionPreference = "Stop"
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -10,9 +10,9 @@ if (-not $isAdmin) {
   exit 0
 }
 
-$scriptsDir = $PSScriptRoot
-$bridgeJs = Join-Path $scriptsDir "sr201-bridge.js"
-$configJson = Join-Path $scriptsDir "sr201-bridge.config.json"
+$scriptsDir = Split-Path -Parent $PSScriptRoot
+$bridgeJs = Join-Path $scriptsDir "programa-apertura-internet.js"
+$configJson = Join-Path $scriptsDir "configuracion-apertura-internet.json"
 $node = (Get-Command node -ErrorAction Stop).Source
 $taskName = "BacarGuard-SR201-Bridge"
 
@@ -42,7 +42,7 @@ if ($busy) {
 }
 
 Write-Host "Instalando / arrancando servicio..." -ForegroundColor Cyan
-& (Join-Path $scriptsDir "install-sr201-bridge-autostart.ps1")
+& (Join-Path $scriptsDir "_interno\instalar-apertura-internet.ps1")
 Start-Sleep -Seconds 2
 
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:5022/health" -TimeoutSec 5
@@ -59,3 +59,4 @@ Write-Host ""
 Write-Host "Listo. Recarga Admin -> Puertas. El estado fisico deberia actualizarse cada ~1.5 s." -ForegroundColor Green
 Write-Host "Si usas Cloudflare Tunnel, asegurate de que apunte a http://127.0.0.1:5022" -ForegroundColor Cyan
 pause
+

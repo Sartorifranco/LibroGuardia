@@ -313,16 +313,26 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
 };
 
 const loadConfig = () => {
-  const configPath = process.env.DOOR_READER_CONFIG
-    || path.join(__dirname, 'door-reader.config.json');
+  const candidates = [
+    process.env.DOOR_READER_CONFIG,
+    path.join(__dirname, 'configuracion-estacion.json'),
+    path.join(__dirname, 'door-reader.config.json') // nombre viejo (compat)
+  ].filter(Boolean);
 
+  let configPath = candidates[0];
   let fileCfg = {};
-  if (fs.existsSync(configPath)) {
-    fileCfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } else if (!process.env.DOOR_READER_CONFIG) {
-    // sin archivo local: solo env / defaults
-  } else {
-    throw new Error(`No existe el archivo de config: ${configPath}`);
+  let found = false;
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      configPath = candidate;
+      fileCfg = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      found = true;
+      break;
+    }
+  }
+
+  if (!found && process.env.DOOR_READER_CONFIG) {
+    throw new Error(`No existe el archivo de config: ${process.env.DOOR_READER_CONFIG}`);
   }
 
   return normalizeStationConfig(fileCfg, process.env, configPath);

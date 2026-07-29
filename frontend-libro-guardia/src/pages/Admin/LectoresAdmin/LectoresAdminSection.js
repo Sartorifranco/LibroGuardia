@@ -124,7 +124,7 @@ function CredentialsOnceModal({ title, password, config, onClose }) {
         </div>
         <p className="theme-section-desc">
           Esta contraseña se muestra <strong>una sola vez</strong>. Preferí el flujo de código de instalación
-          en la mini PC (<code>instalar-lector.ps1</code>). Si necesitás el JSON a mano, descargalo abajo.
+          en la mini PC (<code>01-instalar-estacion.cmd</code>). Si necesitás el JSON a mano, descargalo abajo.
         </p>
         <label className="historial-meta">Contraseña generada</label>
         <input className="input-field" readOnly value={password || ''} onFocus={(e) => e.target.select()} />
@@ -165,7 +165,7 @@ function PairingCodeModal({ pairing, onClose }) {
         <p className="theme-section-desc">
           En la mini PC / Raspberry corré
           {' '}
-          <code>scripts\\instalar-lector.ps1</code>
+          <code>scripts\\01-instalar-estacion.cmd</code>
           {' '}
           y pegá este código.
           {' '}
@@ -650,7 +650,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
 
       <AdminBlock
         title="Nuevo lector"
-        description="Al crear se genera la cuenta de estación de acceso. Después usá “Generar código de instalación” en la fila y corré instalar-lector.ps1 en la mini PC."
+        description="Al crear se genera la cuenta de estación de acceso. Después usá “Generar código de instalación” en la fila y corré 01-instalar-estacion.cmd en la mini PC."
       >
         <AdminFormCard onSubmit={handleCreateSubmit}>
           <div className="admin-form-grid">

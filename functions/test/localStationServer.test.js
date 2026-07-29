@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const http = require('http');
 const path = require('path');
 
-const bridgePath = path.join(__dirname, '..', '..', 'scripts', 'door-reader-bridge.js');
+const bridgePath = path.join(__dirname, '..', '..', 'scripts', 'programa-estacion.js');
 const {
   normalizeStationConfig,
   createLocalStationServer,

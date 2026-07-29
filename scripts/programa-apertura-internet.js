@@ -20,14 +20,19 @@ const {
 } = require('../functions/sr201');
 
 const loadFileConfig = () => {
-  const configPath = path.join(__dirname, 'sr201-bridge.config.json');
-  try {
-    if (!fs.existsSync(configPath)) return {};
-    return JSON.parse(fs.readFileSync(configPath, 'utf8')) || {};
-  } catch (err) {
-    console.warn('No se pudo leer sr201-bridge.config.json:', err.message);
-    return {};
+  const candidates = [
+    path.join(__dirname, 'configuracion-apertura-internet.json'),
+    path.join(__dirname, 'sr201-bridge.config.json') // nombre viejo (compat)
+  ];
+  for (const configPath of candidates) {
+    try {
+      if (!fs.existsSync(configPath)) continue;
+      return JSON.parse(fs.readFileSync(configPath, 'utf8')) || {};
+    } catch (err) {
+      console.warn(`No se pudo leer ${path.basename(configPath)}:`, err.message);
+    }
   }
+  return {};
 };
 
 const fileCfg = loadFileConfig();

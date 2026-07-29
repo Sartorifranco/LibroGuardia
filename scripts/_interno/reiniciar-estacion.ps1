@@ -1,4 +1,4 @@
-# Reinicia el bridge de esta PC. No abre la pagina :8787.
+﻿# Reinicia el bridge de esta PC. No abre la pagina :8787.
 # Despues: https://mss-guard.web.app -> Admin -> Puertas -> Probar apertura
 [CmdletBinding()]
 param(
@@ -6,8 +6,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptsDir = $PSScriptRoot
-$configPath = Join-Path $ScriptsDir 'door-reader.config.json'
+$ScriptsDir = Split-Path -Parent $PSScriptRoot
+$configPath = Join-Path $ScriptsDir 'configuracion-estacion.json'
+if (-not (Test-Path $configPath)) {
+  $legacy = Join-Path $ScriptsDir 'door-reader.config.json'
+  if (Test-Path $legacy) { $configPath = $legacy }
+}
 
 function Write-Step([string]$msg) {
   Write-Host ""
@@ -30,7 +34,7 @@ function Resolve-Nssm {
 }
 
 if (-not (Test-Path $configPath)) {
-  throw "Falta door-reader.config.json en $ScriptsDir"
+  throw "Falta configuracion-estacion.json en $ScriptsDir"
 }
 
 $cfg = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -43,7 +47,7 @@ $serviceName = if ($doorId) {
   'LibroGuardiaDoorReader'
 }
 
-$bridgePath = Join-Path $ScriptsDir 'door-reader-bridge.js'
+$bridgePath = Join-Path $ScriptsDir 'programa-estacion.js'
 $fileVer = $null
 if (Test-Path $bridgePath) {
   $m = Select-String -Path $bridgePath -Pattern "BRIDGE_VERSION\s*=\s*'([^']+)'" | Select-Object -First 1
@@ -74,7 +78,7 @@ try {
   Write-Host ("  OK - bridge {0} (API {1})" -f $status.bridgeVersion, $status.localStationApiVersion) -ForegroundColor Green
 } catch {
   Write-Host ("  /status no respondio: {0}" -f $_.Exception.Message) -ForegroundColor Red
-  Write-Host "  Mira el log: door-reader-bridge.service.log" -ForegroundColor Yellow
+  Write-Host "  Mira el log: estacion.service.log" -ForegroundColor Yellow
   throw
 }
 
@@ -97,3 +101,4 @@ if ($OpenAdmin) {
 Write-Host "Podes cerrar esta ventana." -ForegroundColor Green
 Write-Host ""
 Read-Host "Enter para salir"
+

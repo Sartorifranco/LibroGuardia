@@ -1,0 +1,3 @@
+﻿Esta carpeta es basurero de scripts viejos (citaciones, deploys locales, etc.).
+NO uses nada de aca para operar la planta.
+La guia actual esta en ..\LEEME.md

@@ -2,13 +2,13 @@
 <#
 .SYNOPSIS
   Empareja un lector LibroGuardia con un codigo de 6 digitos e instala
-  door-reader-bridge.js como servicio Windows (NSSM).
+  programa-estacion.js como servicio Windows (NSSM).
 
 .DESCRIPTION
   Flujo recomendado:
     1. Admin > Lectores > "Generar codigo de instalacion"
-    2. En la mini PC (como Administrador): doble clic en instalar-lector.cmd
-       o:  powershell -ExecutionPolicy Bypass -File .\instalar-lector.ps1
+    2. En la mini PC (como Administrador): doble clic en 01-instalar-estacion.cmd
+       o:  powershell -ExecutionPolicy Bypass -File .\instalar-estacion.ps1
     3. Pega el codigo. Listo: arranca solo con Windows.
 
   NSSM: si no esta en el PATH, el script descarga la build portable 2.24
@@ -24,7 +24,7 @@
   Solo guarda el JSON; no registra el servicio NSSM.
 
 .PARAMETER UseExistingConfig
-  No pide codigo: usa door-reader.config.json ya guardado y solo (re)instala el servicio.
+  No pide codigo: usa configuracion-estacion.json ya guardado y solo (re)instala el servicio.
 #>
 param(
   [string]$Code = '',
@@ -34,9 +34,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptsDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ConfigPath = Join-Path $ScriptsDir 'door-reader.config.json'
-$BridgeJs = Join-Path $ScriptsDir 'door-reader-bridge.js'
+$ScriptsDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$ConfigPath = Join-Path $ScriptsDir 'configuracion-estacion.json'
+$BridgeJs = Join-Path $ScriptsDir 'programa-estacion.js'
 $ToolsDir = Join-Path $ScriptsDir 'tools\nssm'
 $NssmZipUrl = 'https://nssm.cc/release/nssm-2.24.zip'
 $ServiceNameDefault = 'LibroGuardiaDoorReader'
@@ -52,7 +52,7 @@ function Assert-Admin {
   )
   if (-not $isAdmin -and -not $SkipService) {
     Write-Host "Este instalador necesita PowerShell como Administrador para registrar el servicio." -ForegroundColor Red
-    Write-Host "Clic derecho > Ejecutar como administrador, o usa instalar-lector.cmd" -ForegroundColor Yellow
+    Write-Host "Clic derecho > Ejecutar como administrador, o usa 01-instalar-estacion.cmd" -ForegroundColor Yellow
     exit 1
   }
 }
@@ -148,15 +148,15 @@ function Install-DoorReaderService {
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppDirectory', $AppDir))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppParameters', $BridgePath))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppEnvironmentExtra', "DOOR_READER_CONFIG=$ConfigFile"))
-  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStdout', (Join-Path $AppDir 'door-reader-bridge.service.log')))
-  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStderr', (Join-Path $AppDir 'door-reader-bridge.service.log')))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStdout', (Join-Path $AppDir 'estacion.service.log')))
+  [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppStderr', (Join-Path $AppDir 'estacion.service.log')))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppRotateFiles', '1'))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppRestartDelay', '5000'))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'AppExit', 'Default', 'Restart'))
   [void](Invoke-Nssm -NssmPath $NssmPath -Args @('set', $ServiceName, 'Start', 'SERVICE_AUTO_START'))
 
   # Limpiar log viejo para no confundir con errores anteriores (ej. BOM).
-  $logPath = Join-Path $AppDir 'door-reader-bridge.service.log'
+  $logPath = Join-Path $AppDir 'estacion.service.log'
   if (Test-Path $logPath) {
     Remove-Item $logPath -Force -ErrorAction SilentlyContinue
   }
@@ -186,7 +186,7 @@ function Install-DoorReaderService {
   Write-Host ""
   Write-Host "Listo. El lector queda como servicio permanente." -ForegroundColor Green
   Write-Host "  Servicio: $ServiceName"
-  Write-Host "  Log:      $(Join-Path $AppDir 'door-reader-bridge.service.log')"
+  Write-Host "  Log:      $(Join-Path $AppDir 'estacion.service.log')"
   Write-Host "  Comandos utiles:"
   Write-Host "    `"$NssmPath`" status $ServiceName"
   Write-Host "    `"$NssmPath`" restart $ServiceName"
@@ -195,11 +195,11 @@ function Install-DoorReaderService {
   Write-Host "No hace falta volver a abrir PowerShell en esta maquina para el lector." -ForegroundColor Green
 }
 
-Write-Host "=== Instalador lector LibroGuardia ===" -ForegroundColor Cyan
+Write-Host "=== Instalador estacion MSS Guard ===" -ForegroundColor Cyan
 Write-Host "Carpeta: $ScriptsDir"
 
 if (-not (Test-Path $BridgeJs)) {
-  throw "No esta door-reader-bridge.js en $ScriptsDir. Copia la carpeta scripts completa."
+  throw "No esta programa-estacion.js en $ScriptsDir. Copia la carpeta scripts completa."
 }
 
 Assert-Admin
@@ -209,7 +209,12 @@ $configObj = $null
 
 if ($UseExistingConfig) {
   if (-not (Test-Path $ConfigPath)) {
-    throw "No existe $ConfigPath. Corre el instalador con codigo primero (sin -UseExistingConfig)."
+    $legacy = Join-Path $ScriptsDir 'door-reader.config.json'
+    if (Test-Path $legacy) {
+      $ConfigPath = $legacy
+    } else {
+      throw "No existe configuracion-estacion.json. Corre 01-instalar-estacion.cmd con codigo primero."
+    }
   }
   Write-Step "Usando config existente: $ConfigPath"
   $configObj = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
@@ -245,7 +250,7 @@ if ($UseExistingConfig) {
     throw "La API no devolvio config. Respuesta inesperada."
   }
 
-  Write-Step "Guardando door-reader.config.json"
+  Write-Step "Guardando configuracion-estacion.json"
   # PowerShell 5.1 Set-Content -Encoding UTF8 agrega BOM y Node JSON.parse falla.
   $utf8NoBom = New-Object System.Text.UTF8Encoding $false
   $jsonText = ($response.config | ConvertTo-Json -Depth 8) + "`n"
@@ -289,3 +294,4 @@ Install-DoorReaderService `
   -BridgePath $BridgeJs `
   -AppDir $ScriptsDir `
   -ConfigFile $ConfigPath
+

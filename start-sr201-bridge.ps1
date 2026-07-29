@@ -1,12 +1,7 @@
-# Arranca el puente SR201 (usa scripts/sr201-bridge.config.json).
-# Preferí instalar el servicio: .\scripts\install-sr201-bridge-autostart.ps1
-
+# Atajo viejo: preferí scripts\03-arrancar-apertura-por-internet.cmd
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-Set-Location $root
-
-$bridge = Join-Path $root "scripts\sr201-bridge.js"
-if (-not (Test-Path $bridge)) { throw "No encuentro scripts\sr201-bridge.js" }
-
-Write-Host ">> Puente SR201 (config en scripts\sr201-bridge.config.json)" -ForegroundColor Cyan
+$bridge = Join-Path $root "scripts\programa-apertura-internet.js"
+if (-not (Test-Path $bridge)) { throw "No encuentro scripts\programa-apertura-internet.js" }
+Write-Host ">> Apertura por internet (mejor usar 03-arrancar-apertura-por-internet.cmd)" -ForegroundColor Cyan
 node $bridge

@@ -38,7 +38,7 @@
       }
     }
   ],
-  "logFile": "C:\\Logs\\door-reader-bridge.log",
+  "logFile": "C:\\Logs\\estacion-mss-guard.log",
   "reconnectMinMs": 2000,
   "reconnectMaxMs": 60000
 }

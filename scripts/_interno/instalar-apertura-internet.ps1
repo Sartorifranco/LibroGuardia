@@ -4,17 +4,17 @@ if (-not $isAdmin) {
   Write-Host "Run as Administrator." -ForegroundColor Red
   exit 1
 }
-$scriptsDir = $PSScriptRoot
-$bridgeJs = Join-Path $scriptsDir "sr201-bridge.js"
-$configJson = Join-Path $scriptsDir "sr201-bridge.config.json"
+$scriptsDir = Split-Path -Parent $PSScriptRoot
+$bridgeJs = Join-Path $scriptsDir "programa-apertura-internet.js"
+$configJson = Join-Path $scriptsDir "configuracion-apertura-internet.json"
 $node = (Get-Command node -ErrorAction Stop).Source
 $taskName = "BacarGuard-SR201-Bridge"
 if (-not (Test-Path $bridgeJs)) { throw "Missing $bridgeJs" }
 if (-not (Test-Path $configJson)) {
   @{ sr201Host = "192.168.0.38"; sr201Port = 6722; bridgePort = 5022; bridgeHost = "0.0.0.0"; bridgeSecret = "123456" } | ConvertTo-Json | Set-Content -Path $configJson -Encoding UTF8
 }
-$wrapper = Join-Path $scriptsDir "run-sr201-bridge-service.cmd"
-$logFile = Join-Path $scriptsDir "sr201-bridge.service.log"
+$wrapper = Join-Path $scriptsDir "arrancar-apertura-internet-servicio.cmd"
+$logFile = Join-Path $scriptsDir "apertura-internet.service.log"
 @(
   "@echo off",
   ("cd /d `"{0}`"" -f $scriptsDir),
@@ -54,7 +54,7 @@ try {
   } elseif ($health.statusApi -and [int]$health.version -ge 2) {
     Write-Host "WARN: bridge v2 — reiniciá para v3 (OFF async, respuesta kiosk rápida)" -ForegroundColor Yellow
   } else {
-    Write-Host "WARN: health sin statusApi/version 2 — reinicia con restart-sr201-bridge.ps1" -ForegroundColor Yellow
+    Write-Host "WARN: health sin statusApi/version 2 — reinicia con 03-arrancar-apertura-por-internet.cmd" -ForegroundColor Yellow
   }
 } catch {
   Write-Host "Task created but health check failed. Close any manual node bridge CMD if port 5022 is busy." -ForegroundColor Yellow
@@ -62,3 +62,4 @@ try {
 Write-Host ("Installed scheduled task: {0}" -f $taskName) -ForegroundColor Cyan
 Write-Host ("Config: {0}" -f $configJson)
 Write-Host "Uninstall: Unregister-ScheduledTask -TaskName BacarGuard-SR201-Bridge -Confirm:`$false"
+

@@ -26,14 +26,18 @@ npm-debug.log*
 # Auditoría local
 AUDITORIA_UNIVERSAL.txt
 
-# Config local de deploy / bridges (copiar desde *.example.*)
+# Config local de deploy / bridges (copiar desde *.ejemplo.*)
 scripts/config.ps1
 scripts/citaciones-bridge.config.json
 scripts/sr201-bridge.config.json
 scripts/door-reader.config.json
 scripts/door-reader.config.*.json
+scripts/configuracion-estacion.json
+scripts/configuracion-apertura-internet.json
 !scripts/door-reader.config.example.json
-# Caché/cola offline del door-reader-bridge (runtime local)
+!scripts/configuracion-estacion.ejemplo.json
+!scripts/configuracion-apertura-internet.ejemplo.json
+# Caché/cola offline del programa-estacion (runtime local)
 scripts/door-allowlist-*.json
 scripts/offline-queue-*.json
 functions/node_modules/
@@ -46,6 +50,9 @@ functions/migrate-dedupe-dirty-people.dry-run.json
 functions/migrate-dedupe-dirty-people.apply.json
 
 # Local plant configs / vendor tools
+scripts/archivo-viejo/config.ps1
+scripts/archivo-viejo/sr201-bridge.config.json
+scripts/archivo-viejo/citaciones-bridge.config.json
 scripts/_archivo/config.ps1
 scripts/_archivo/sr201-bridge.config.json
 scripts/_archivo/citaciones-bridge.config.json
