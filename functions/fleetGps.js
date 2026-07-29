@@ -554,9 +554,33 @@ const resolveTransitDirection = (vehicle, prev) => {
   return transitions[transitionKey] || null;
 };
 
+/**
+ * Hora del movimiento para el libro:
+ * prioriza la hora del GPS (fixTime/deviceTime de UBIKA).
+ * Si no viene, usa el momento en que el servidor lo detectó.
+ */
+const resolveGpsEventTimeIso = (vehicle = {}, fallbackIso = null) => {
+  const raw = vehicle.fixTime || vehicle.deviceTime || null;
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      // Evitar futuros absurdos (> 2 min) por reloj desfasado del equipo.
+      const maxFutureMs = Date.now() + 2 * 60 * 1000;
+      if (parsed.getTime() <= maxFutureMs) {
+        return parsed.toISOString();
+      }
+    }
+  }
+  return fallbackIso || new Date().toISOString();
+};
+
 const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta = {}) => {
   const details = await resolveGpsVehicleDetails(db, vehicle);
   const detectedAt = new Date().toISOString();
+  const eventTime = resolveGpsEventTimeIso(vehicle, detectedAt);
+  const usedGpsClock = eventTime !== detectedAt
+    || Boolean(vehicle.fixTime || vehicle.deviceTime);
+
   const entryData = {
     type: 'flota',
     movementType,
@@ -564,7 +588,11 @@ const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta =
     flotaDriver: details.driver || 'Sin chofer (GPS)',
     plate: details.plate,
     scheduledTime: null,
-    actualTime: detectedAt,
+    // Hora operativa del libro = hora GPS del cruce (no la del poll cada 5 min).
+    actualTime: eventTime,
+    eventTime,
+    gpsFixTime: vehicle.fixTime || vehicle.deviceTime || null,
+    gpsDetectedAt: detectedAt,
     gpsVehicleLabel: details.vehicleLabel,
     authorized: details.master ? details.master.authorized !== false : true,
     authorizedStatus: details.master
@@ -579,8 +607,7 @@ const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta =
     registeredBy: meta.userId || 'sistema_gps',
     registeredByUsername: meta.username || 'GPS automático',
     timestamp: FieldValue.serverTimestamp(),
-    eventTime: null,
-    notes: `Movimiento GPS UBIKA (${movementType}) — ${vehicle.name}${vehicle.gateName ? ` · ${vehicle.gateName}` : ''}`
+    notes: `Movimiento GPS UBIKA (${movementType}) — ${vehicle.name}${vehicle.gateName ? ` · ${vehicle.gateName}` : ''}${usedGpsClock ? ' · hora GPS' : ' · hora detección'}`
   };
 
   const ref = await db.collection('entries').add(entryData);
@@ -1069,5 +1096,6 @@ module.exports = {
   normalizeFleetGpsConfig,
   usesPolygonGeofence,
   detectApproachingVehicles,
-  resolveTransitDirection
+  resolveTransitDirection,
+  resolveGpsEventTimeIso
 };
