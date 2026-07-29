@@ -14,7 +14,7 @@ import { apiFetch } from '../services/api';
 function FleetGatePanel({
   authToken,
   enabled = true,
-  pollSeconds = 20,
+  pollSeconds = 60,
   compact = false,
   onMovementRegistered
 }) {
@@ -27,7 +27,7 @@ function FleetGatePanel({
   const [error, setError] = useState('');
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [pollMs, setPollMs] = useState(Math.max(pollSeconds, 15) * 1000);
+  const [pollMs, setPollMs] = useState(Math.max(pollSeconds, 30) * 1000);
   const seenEntryIdsRef = useRef(new Set());
   const onMovementRegisteredRef = useRef(onMovementRegistered);
   onMovementRegisteredRef.current = onMovementRegistered;
@@ -49,7 +49,7 @@ function FleetGatePanel({
       setConfig(data.config || null);
 
       const configuredPoll = Number(data.config?.pollIntervalSeconds);
-      if (!Number.isNaN(configuredPoll) && configuredPoll >= 15) {
+      if (!Number.isNaN(configuredPoll) && configuredPoll >= 30) {
         setPollMs(configuredPoll * 1000);
       }
 

@@ -93,9 +93,11 @@ router.get('/api/fleet/drivers', auth, async (_req, res) => {
 
 router.get('/api/guard/fleet-gps/alerts', auth, requirePermission('fleet.gps.read'), async (req, res) => {
   try {
+    // Solo lee la foto guardada por el cron (no multiplica consultas a UBIKA).
     const result = await fetchNearbyFleetAlerts(db, FieldValue, {
       userId: req.user.id,
-      username: req.user.username
+      username: req.user.username,
+      preferCache: true
     });
     res.json(result);
   } catch (err) {
@@ -134,6 +136,8 @@ router.post('/api/admin/fleet-gps/test', auth, requirePermission('access.control
   try {
     const result = await fetchNearbyFleetAlerts(db, FieldValue, {
       force: true,
+      forceUbika: true,
+      preferCache: false,
       includeNearest: true,
       userId: req.user.id,
       username: req.user.username,
@@ -173,7 +177,9 @@ router.get('/api/admin/fleet-gps/live', auth, requirePermission('access.control'
         ? false
         : req.query.requireMotion === 'true'
           ? true
-          : undefined
+          : undefined,
+      // Por defecto usa la foto del cron. ?refresh=1 fuerza UBIKA (solo admin).
+      forceRefresh: req.query.refresh === '1' || req.query.refresh === 'true'
     });
     res.json(result);
   } catch (err) {

@@ -44,7 +44,8 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
     requireMotion: true,
     autoRegisterMovements: true,
     movementCooldownSeconds: 300,
-    pollIntervalSeconds: 20,
+    pollIntervalSeconds: 60,
+    cloudSyncIntervalMinutes: 5,
     approachAlertEnabled: false,
     approachRadiusMeters: 400,
     approachRequireMotion: true,
@@ -120,7 +121,8 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
           requireMotion: configToSave.requireMotion !== false,
           autoRegisterMovements: configToSave.autoRegisterMovements !== false,
           movementCooldownSeconds: Number(configToSave.movementCooldownSeconds) || 300,
-          pollIntervalSeconds: Number(configToSave.pollIntervalSeconds) || 20,
+          pollIntervalSeconds: Number(configToSave.pollIntervalSeconds) || 60,
+          cloudSyncIntervalMinutes: Number(configToSave.cloudSyncIntervalMinutes) || 5,
           approachAlertEnabled: configToSave.approachAlertEnabled === true,
           approachRadiusMeters: Number(configToSave.approachRadiusMeters) || 400,
           approachRequireMotion: configToSave.approachRequireMotion !== false
@@ -374,15 +376,34 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
               />
             </label>
             <label className="access-gps-admin__field">
-              <span>Consulta cada (seg)</span>
+              <span>Actualizar pantalla cada (seg)</span>
               <input
                 type="number"
-                min="15"
-                max="120"
+                min="30"
+                max="300"
                 value={fleetGpsConfig.pollIntervalSeconds}
                 onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, pollIntervalSeconds: Number(e.target.value) }))}
                 className="input-field"
               />
+              <small>Solo refresca lo que ya está guardado. No consulta UBIKA.</small>
+            </label>
+            <label className="access-gps-admin__field">
+              <span>Consulta UBIKA cada (min)</span>
+              <input
+                type="number"
+                min="2"
+                max="30"
+                value={fleetGpsConfig.cloudSyncIntervalMinutes ?? 5}
+                onChange={(e) => setFleetGpsConfig((prev) => ({
+                  ...prev,
+                  cloudSyncIntervalMinutes: Number(e.target.value)
+                }))}
+                className="input-field"
+              />
+              <small>
+                Es el costo real. Cada 5 min alcanza para registrar el portón.
+                El servidor ya corre cada 5 min; este valor marca cuánto tiempo vale la foto guardada.
+              </small>
             </label>
             <label className="access-gps-admin__field">
               <span>URL API UBIKA</span>

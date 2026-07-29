@@ -126,7 +126,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
     requireMotion: previewConfig?.requireMotion !== false,
     approachRadiusMeters: Number(previewConfig?.approachRadiusMeters) || 400,
     approachAlertEnabled: previewConfig?.approachAlertEnabled === true,
-    pollIntervalSeconds: Math.max(15, Number(previewConfig?.pollIntervalSeconds) || 20)
+    pollIntervalSeconds: Math.max(30, Number(previewConfig?.pollIntervalSeconds) || 60)
   }), [previewConfig]);
 
   const hasCoords = !Number.isNaN(queryConfig.guardiaLat) && !Number.isNaN(queryConfig.guardiaLng);

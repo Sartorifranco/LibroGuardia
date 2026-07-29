@@ -22,7 +22,13 @@ const DEFAULT_FLEET_GPS = {
   requireMotion: true,
   autoRegisterMovements: true,
   movementCooldownSeconds: 300,
-  pollIntervalSeconds: 20,
+  /** Cada cuántos segundos refresca la pantalla del guardia/mapa (lee caché, no UBIKA). */
+  pollIntervalSeconds: 60,
+  /**
+   * Cada cuántos minutos el servidor consulta UBIKA y registra ingresos/egresos.
+   * Es el costo principal: bajarlo reduce factura; 5 min alcanza para portón.
+   */
+  cloudSyncIntervalMinutes: 5,
   /** Alerta visual al guardia cuando un móvil se acerca a planta. */
   approachAlertEnabled: false,
   approachRadiusMeters: 400,
@@ -33,6 +39,9 @@ const DEFAULT_FLEET_GPS = {
 
 const API_KEY_MASK = '********';
 const TRACKS_COLLECTION = 'fleetGpsTracks';
+const SNAPSHOT_DOC = 'fleetGpsSnapshot';
+/** Solo reescribir track si se movió más de esto (metros) o cambió de zona. */
+const TRACK_MOVE_THRESHOLD_M = 25;
 const {
   sanitizeGatePolygons,
   persistGatePolygons,
@@ -256,7 +265,12 @@ const sanitizeFleetGpsUpdates = (body = {}) => {
   if (cooldown != null && cooldown >= 60) updates.movementCooldownSeconds = cooldown;
 
   const poll = parseOptionalNumber(body.pollIntervalSeconds);
-  if (poll != null && poll >= 15) updates.pollIntervalSeconds = poll;
+  if (poll != null && poll >= 30) updates.pollIntervalSeconds = poll;
+
+  const cloudSync = parseOptionalNumber(body.cloudSyncIntervalMinutes);
+  if (cloudSync != null && cloudSync >= 2 && cloudSync <= 30) {
+    updates.cloudSyncIntervalMinutes = Math.round(cloudSync);
+  }
 
   return updates;
 };
@@ -574,7 +588,6 @@ const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta =
 };
 
 const processTransit = async (db, FieldValue, vehicles, config, options = {}) => {
-  const gateRadius = resolveGateRadius(config);
   const cooldown = Number(config.movementCooldownSeconds) || DEFAULT_FLEET_GPS.movementCooldownSeconds;
   const autoRegister = config.autoRegisterMovements !== false && !options.skipAutoRegister;
   const tracks = await loadTracks(db, vehicles.map((v) => v.deviceId));
@@ -642,7 +655,18 @@ const processTransit = async (db, FieldValue, vehicles, config, options = {}) =>
       trackUpdate.pendingDirection = null;
     }
 
-    trackUpdates.push({ trackKey, trackUpdate });
+    // Costo: no reescribir todos los tracks en cada poll; solo cambios relevantes.
+    const movedFar = prev?.lat != null
+      && prev?.lng != null
+      && vehicle.lat != null
+      && vehicle.lng != null
+      && distanceMeters(prev.lat, prev.lng, vehicle.lat, vehicle.lng) >= TRACK_MOVE_THRESHOLD_M;
+    const zoneChanged = !prev || prev.zone !== vehicle.zone;
+    const pendingChanged = (prev?.pendingDirection || null) !== (trackUpdate.pendingDirection || null);
+    const movementLogged = Boolean(trackUpdate.lastMovementAt);
+    if (!prev || zoneChanged || pendingChanged || movementLogged || movedFar || direction) {
+      trackUpdates.push({ trackKey, trackUpdate });
+    }
   }
 
   for (let i = 0; i < trackUpdates.length; i += 400) {
@@ -656,9 +680,80 @@ const processTransit = async (db, FieldValue, vehicles, config, options = {}) =>
   return { transit, registered };
 };
 
+const resolveCloudSyncIntervalMs = (config = {}) => {
+  const minutes = Number(config.cloudSyncIntervalMinutes);
+  const safe = Number.isFinite(minutes) && minutes >= 2
+    ? Math.min(30, Math.round(minutes))
+    : DEFAULT_FLEET_GPS.cloudSyncIntervalMinutes;
+  return safe * 60 * 1000;
+};
+
+const readFleetGpsSnapshot = async (db) => {
+  const snap = await db.collection('settings').doc(SNAPSHOT_DOC).get();
+  if (!snap.exists) return null;
+  return snap.data() || null;
+};
+
+const isSnapshotFresh = (snapshot, config) => {
+  if (!snapshot?.syncedAt) return false;
+  const syncedMs = new Date(snapshot.syncedAt).getTime();
+  if (Number.isNaN(syncedMs)) return false;
+  return (Date.now() - syncedMs) < resolveCloudSyncIntervalMs(config);
+};
+
+const buildAlertsPayloadFromSnapshot = (snapshot, config) => {
+  const gateRadius = resolveGateRadius(config);
+  const plantRadius = resolvePlantRadius(config);
+  return {
+    alerts: snapshot.transit || [],
+    transit: snapshot.transit || [],
+    approaching: snapshot.approaching || [],
+    registered: snapshot.registered || [],
+    atGateStopped: snapshot.atGateStopped || [],
+    inPlant: snapshot.inPlant || [],
+    nearest: snapshot.nearest || [],
+    config: publicFleetGpsConfig({
+      ...config,
+      lastSyncAt: snapshot.syncedAt || config.lastSyncAt,
+      lastError: null
+    }),
+    vehicleCount: snapshot.vehicleCount || 0,
+    gateRadiusMeters: snapshot.gateRadiusMeters || gateRadius,
+    plantRadiusMeters: snapshot.plantRadiusMeters || plantRadius,
+    approachRadiusMeters: Number(config.approachRadiusMeters) || 400,
+    message: snapshot.message || 'Datos GPS en caché',
+    fromCache: true,
+    syncedAt: snapshot.syncedAt || null
+  };
+};
+
+const persistFleetGpsSnapshot = async (db, FieldValue, payload) => {
+  const vehicles = Array.isArray(payload.vehicles) ? payload.vehicles : [];
+  await db.collection('settings').doc(SNAPSHOT_DOC).set({
+    syncedAt: payload.syncedAt,
+    message: payload.message || '',
+    vehicleCount: payload.vehicleCount || vehicles.length,
+    transit: payload.transit || [],
+    approaching: payload.approaching || [],
+    registered: payload.registered || [],
+    atGateStopped: payload.atGateStopped || [],
+    inPlant: payload.inPlant || [],
+    nearest: payload.nearest || [],
+    vehicles,
+    summary: payload.summary || null,
+    gateRadiusMeters: payload.gateRadiusMeters || null,
+    plantRadiusMeters: payload.plantRadiusMeters || null,
+    guardiaLat: payload.guardiaLat ?? null,
+    guardiaLng: payload.guardiaLng ?? null,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+};
+
 const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
   const config = await getFleetGpsConfig(db);
   const force = Boolean(options.force);
+  const forceUbika = Boolean(options.forceUbika) || force;
+  const preferCache = options.preferCache !== false && !forceUbika;
 
   if (!config.enabled && !force) {
     return {
@@ -668,7 +763,8 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
       inPlant: [],
       registered: [],
       config: publicFleetGpsConfig(config),
-      message: 'GPS de flota deshabilitado'
+      message: 'GPS de flota deshabilitado',
+      fromCache: false
     };
   }
 
@@ -681,7 +777,8 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
       registered: [],
       config: publicFleetGpsConfig(config),
       message: 'Configure el token de API UBIKA',
-      error: 'Configure el token de API UBIKA'
+      error: 'Configure el token de API UBIKA',
+      fromCache: false
     };
   }
 
@@ -694,7 +791,31 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
       registered: [],
       config: publicFleetGpsConfig(config),
       message: 'Configure las coordenadas de la guardia',
-      error: 'Configure las coordenadas de la guardia'
+      error: 'Configure las coordenadas de la guardia',
+      fromCache: false
+    };
+  }
+
+  if (preferCache) {
+    const snapshot = await readFleetGpsSnapshot(db);
+    if (snapshot?.syncedAt) {
+      const payload = buildAlertsPayloadFromSnapshot(snapshot, config);
+      if (!isSnapshotFresh(snapshot, config)) {
+        payload.message = `${payload.message} · última sync (próxima automática en minutos)`;
+        payload.stale = true;
+      }
+      return payload;
+    }
+    return {
+      alerts: [],
+      transit: [],
+      nearest: [],
+      inPlant: [],
+      registered: [],
+      config: publicFleetGpsConfig(config),
+      message: 'Aún no hay sync GPS. El servidor actualiza solo cada pocos minutos.',
+      fromCache: true,
+      stale: true
     };
   }
 
@@ -723,7 +844,15 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
       ? `${transit.length} móvil(es) en tránsito por el portón${approachSuffix}`
       : `Sin tránsito en portón (${inPlantParked.length} estacionados en planta, ${vehicles.length} en flota)${approachSuffix}`;
 
-    return {
+    const summary = {
+      moving: vehicles.filter((v) => v.moving).length,
+      stopped: vehicles.filter((v) => !v.moving).length,
+      atGate: vehicles.filter((v) => v.zone === 'gate').length,
+      inPlant: vehicles.filter((v) => v.zone === 'plant').length,
+      outside: vehicles.filter((v) => v.zone === 'outside').length
+    };
+
+    const payload = {
       alerts: transit,
       transit,
       approaching,
@@ -731,18 +860,37 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
       atGateStopped,
       inPlant: inPlantParked.slice(0, 20),
       nearest,
+      vehicles,
+      summary,
       config: publicFleetGpsConfig({ ...config, lastSyncAt: syncedAt, lastError: null }),
       vehicleCount: vehicles.length,
       gateRadiusMeters: gateRadius,
       plantRadiusMeters: plantRadius,
       approachRadiusMeters: Number(config.approachRadiusMeters) || 400,
-      message
+      guardiaLat: config.guardiaLat,
+      guardiaLng: config.guardiaLng,
+      message,
+      syncedAt,
+      fromCache: false
     };
+
+    await persistFleetGpsSnapshot(db, FieldValue, payload);
+    return payload;
   } catch (err) {
     await db.collection('settings').doc('fleetGps').set({
       lastError: err.message,
       lastSyncAt: FieldValue.serverTimestamp()
     }, { merge: true });
+
+    // Si UBIKA falla, devolver última foto si hay (mejor que panel vacío).
+    const snapshot = await readFleetGpsSnapshot(db);
+    if (snapshot?.syncedAt) {
+      return {
+        ...buildAlertsPayloadFromSnapshot(snapshot, config),
+        message: `Usando última sync (${err.message})`,
+        error: err.message
+      };
+    }
 
     return {
       alerts: [],
@@ -752,7 +900,8 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
       registered: [],
       config: publicFleetGpsConfig(config),
       message: err.message,
-      error: err.message
+      error: err.message,
+      fromCache: false
     };
   }
 };
@@ -771,6 +920,7 @@ const fetchFleetLiveSnapshot = async (db, options = {}) => {
     minSpeedKnots: options.minSpeedKnots ?? config.minSpeedKnots,
     requireMotion: options.requireMotion ?? config.requireMotion
   };
+  const forceRefresh = Boolean(options.forceRefresh);
 
   if (!resolveApiKey(mergedConfig)) {
     return {
@@ -784,7 +934,8 @@ const fetchFleetLiveSnapshot = async (db, options = {}) => {
       guardiaLng: mergedConfig.guardiaLng,
       vehicleCount: 0,
       summary: { moving: 0, stopped: 0, atGate: 0, inPlant: 0, outside: 0 },
-      syncedAt: null
+      syncedAt: null,
+      fromCache: false
     };
   }
 
@@ -802,14 +953,53 @@ const fetchFleetLiveSnapshot = async (db, options = {}) => {
       guardiaLng: mergedConfig.guardiaLng,
       vehicleCount: 0,
       summary: { moving: 0, stopped: 0, atGate: 0, inPlant: 0, outside: 0 },
-      syncedAt: null
+      syncedAt: null,
+      fromCache: false
     };
+  }
+
+  if (!forceRefresh) {
+    const snapshot = await readFleetGpsSnapshot(db);
+    if (snapshot && Array.isArray(snapshot.vehicles)) {
+      const vehicles = withDistanceAndZone(snapshot.vehicles, mergedConfig);
+      const fresh = isSnapshotFresh(snapshot, mergedConfig);
+      return {
+        vehicles,
+        config: publicFleetGpsConfig(mergedConfig),
+        gateRadiusMeters: resolveGateRadius(mergedConfig),
+        plantRadiusMeters: resolvePlantRadius(mergedConfig),
+        guardiaLat,
+        guardiaLng,
+        vehicleCount: vehicles.length,
+        syncedAt: snapshot.syncedAt,
+        message: fresh
+          ? `${vehicles.length} móvil(es) en mapa`
+          : `${vehicles.length} móvil(es) · última sync (se actualiza sola cada pocos minutos)`,
+        fromCache: true,
+        stale: !fresh,
+        summary: snapshot.summary || {
+          moving: vehicles.filter((v) => v.moving).length,
+          stopped: vehicles.filter((v) => !v.moving).length,
+          atGate: vehicles.filter((v) => v.zone === 'gate').length,
+          inPlant: vehicles.filter((v) => v.zone === 'plant').length,
+          outside: vehicles.filter((v) => v.zone === 'outside').length
+        }
+      };
+    }
   }
 
   try {
     const vehicles = withDistanceAndZone(await fetchUbikaFleet(mergedConfig), mergedConfig);
     const gateRadius = resolveGateRadius(mergedConfig);
     const plantRadius = resolvePlantRadius(mergedConfig);
+    const syncedAt = new Date().toISOString();
+    const summary = {
+      moving: vehicles.filter((v) => v.moving).length,
+      stopped: vehicles.filter((v) => !v.moving).length,
+      atGate: vehicles.filter((v) => v.zone === 'gate').length,
+      inPlant: vehicles.filter((v) => v.zone === 'plant').length,
+      outside: vehicles.filter((v) => v.zone === 'outside').length
+    };
 
     return {
       vehicles,
@@ -819,17 +1009,29 @@ const fetchFleetLiveSnapshot = async (db, options = {}) => {
       guardiaLat,
       guardiaLng,
       vehicleCount: vehicles.length,
-      syncedAt: new Date().toISOString(),
+      syncedAt,
       message: `${vehicles.length} móvil(es) en mapa`,
-      summary: {
-        moving: vehicles.filter((v) => v.moving).length,
-        stopped: vehicles.filter((v) => !v.moving).length,
-        atGate: vehicles.filter((v) => v.zone === 'gate').length,
-        inPlant: vehicles.filter((v) => v.zone === 'plant').length,
-        outside: vehicles.filter((v) => v.zone === 'outside').length
-      }
+      fromCache: false,
+      summary
     };
   } catch (err) {
+    const snapshot = await readFleetGpsSnapshot(db);
+    if (snapshot?.vehicles?.length) {
+      return {
+        vehicles: withDistanceAndZone(snapshot.vehicles, mergedConfig),
+        error: err.message,
+        message: `Usando última sync (${err.message})`,
+        config: publicFleetGpsConfig(mergedConfig),
+        gateRadiusMeters: resolveGateRadius(mergedConfig),
+        plantRadiusMeters: resolvePlantRadius(mergedConfig),
+        guardiaLat,
+        guardiaLng,
+        vehicleCount: snapshot.vehicleCount || snapshot.vehicles.length,
+        summary: snapshot.summary || { moving: 0, stopped: 0, atGate: 0, inPlant: 0, outside: 0 },
+        syncedAt: snapshot.syncedAt || null,
+        fromCache: true
+      };
+    }
     return {
       vehicles: [],
       error: err.message,
@@ -841,7 +1043,8 @@ const fetchFleetLiveSnapshot = async (db, options = {}) => {
       guardiaLng,
       vehicleCount: 0,
       summary: { moving: 0, stopped: 0, atGate: 0, inPlant: 0, outside: 0 },
-      syncedAt: null
+      syncedAt: null,
+      fromCache: false
     };
   }
 };
