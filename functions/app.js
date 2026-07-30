@@ -47,6 +47,7 @@ app.use(require('./routes/fleetGps'));
 app.use(require('./routes/attendance'));
 app.use(require('./routes/entries'));
 app.use(require('./routes/peopleDoors'));
+app.use(require('./routes/biostar'));
 app.use(require('./routes/system'));
 
 app.use((req, res, next) => {

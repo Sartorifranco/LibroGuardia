@@ -18,11 +18,13 @@ No hace falta otra mini PC para probar.
 | **01b-reinstalar-servicio-estacion.cmd** | Ya instalaste alguna vez y solo querés volver a registrar el servicio (sin pedir código de nuevo). |
 | **02-reiniciar-estacion.cmd** | Después de actualizar el programa o si “no abre” / “no lee”. Reinicia el servicio y te manda a Admin. |
 | **03-arrancar-apertura-por-internet.cmd** | Solo si las puertas abren **a distancia** (desde internet) con túnel Cloudflare. Si abrís **en planta**, no lo necesitás. |
+| **04-arrancar-puente-biostar.cmd** | Bacar con BioStar 2: importa usuarios y eventos a MSS. Dejá la ventana abierta en el servidor BioStar (`192.168.0.9`). |
 
 Orden tipico en una PC nueva:
 1. `01-instalar-estacion.cmd`
 2. Probar en https://mss-guard.web.app → Admin → Puertas → Probar apertura
 3. (Opcional) `03-...` solo si usás apertura a distancia
+4. (Opcional BioEntry/BioStar) `04-arrancar-puente-biostar.cmd` en el servidor BioStar
 
 ---
 
@@ -32,6 +34,7 @@ Orden tipico en una PC nueva:
 |---------|----------|
 | **programa-estacion.js** | Cerebro de la estación: lee el lector, habla con MSS Guard y puede abrir la puerta en la red local. Corre como servicio de Windows. |
 | **programa-apertura-internet.js** | Puente viejo pero útil: deja que MSS abra la placa por internet (puerto 5022 + túnel). |
+| **programa-biostar.js** | Puente BioStar 2 → MSS: usuarios (ID biométrico) + eventos de acceso al historial. Renueva sesión solo si caduca. |
 
 ---
 
@@ -43,6 +46,8 @@ Orden tipico en una PC nueva:
 | **configuracion-estacion.ejemplo.json** | Modelo para copiar si arrancás de cero. |
 | **configuracion-apertura-internet.json** | IP de la placa y secreto del puente a internet. |
 | **configuracion-apertura-internet.ejemplo.json** | Modelo del puente a internet. |
+| **configuracion-biostar.json** | URL/login BioStar + usuario MSS + `defaultDoorId`. **No se sube** (secretos). |
+| **configuracion-biostar.ejemplo.json** | Modelo del puente BioStar. |
 
 Si todavía tenés `door-reader.config.json` o `sr201-bridge.config.json`, el programa los sigue leyendo por compatibilidad. Preferí los nombres nuevos.
 
@@ -79,6 +84,19 @@ Si todavía tenés `door-reader.config.json` o `sr201-bridge.config.json`, el pr
    Usá también: `03`.
 
 En Admin → Equipos de acceso → Puertas elegís el modo de cada puerta.
+
+---
+
+## BioStar 2 / BioEntry Plus (Bacar)
+
+El lector sigue abriendo con su relé. BioStar manda; MSS ve autorizados y eventos.
+
+1. En el servidor BioStar (`http://192.168.0.9:5001`), copiá `configuracion-biostar.ejemplo.json` → `configuracion-biostar.json`.
+2. Completá `biostarPassword`, usuario/clave MSS (con permiso de puertas o nómina) y `defaultDoorId` (ej. `puerta-p1`).
+3. Doble clic en **04-arrancar-puente-biostar.cmd** (dejá la ventana abierta).
+4. En MSS: personas con `biometricExternalId` = `user_id` de BioStar; ingresos con origen `biostar`.
+
+Swagger Local API: `http://127.0.0.1:5001/swagger/index.html` (HTTP :5001). La sesión `bs-session-id` caduca; el puente re-loguea solo.
 
 ---
 

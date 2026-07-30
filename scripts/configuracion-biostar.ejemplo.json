@@ -1,0 +1,17 @@
+{
+  "biostarBaseUrl": "http://192.168.0.9:5001",
+  "biostarLoginId": "admin",
+  "biostarPassword": "CAMBIAR",
+  "mssApiBaseUrl": "https://mss-guard.web.app/api",
+  "mssUsername": "usuario.mss.con.permiso",
+  "mssPassword": "CAMBIAR",
+  "userGroupId": "1",
+  "defaultDoorId": "puerta-p1",
+  "doorMap": {
+    "1": "puerta-p1"
+  },
+  "successEventCodes": ["4867", "4102"],
+  "pollUsersMs": 900000,
+  "pollEventsMs": 30000,
+  "eventsLookbackHours": 24
+}

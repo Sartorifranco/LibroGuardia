@@ -34,9 +34,12 @@ scripts/door-reader.config.json
 scripts/door-reader.config.*.json
 scripts/configuracion-estacion.json
 scripts/configuracion-apertura-internet.json
+scripts/configuracion-biostar.json
+scripts/biostar-state.json
 !scripts/door-reader.config.example.json
 !scripts/configuracion-estacion.ejemplo.json
 !scripts/configuracion-apertura-internet.ejemplo.json
+!scripts/configuracion-biostar.ejemplo.json
 # Caché/cola offline del programa-estacion (runtime local)
 scripts/door-allowlist-*.json
 scripts/offline-queue-*.json
