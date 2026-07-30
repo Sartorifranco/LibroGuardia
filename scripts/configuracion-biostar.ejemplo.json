@@ -6,9 +6,9 @@
   "mssUsername": "usuario.mss.con.permiso",
   "mssPassword": "CAMBIAR",
   "userGroupId": "1",
-  "defaultDoorId": "puerta-p1",
+  "defaultDoorId": "puerta-p2",
   "doorMap": {
-    "1": "puerta-p1"
+    "2": "puerta-p2"
   },
   "successEventCodes": ["4867", "4102"],
   "pollUsersMs": 900000,

@@ -3745,6 +3745,57 @@ html.dark .doors-plant-bar__body {
   color: var(--text, #111);
 }
 
+.doors-system-id {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.2));
+}
+
+.doors-system-id__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.doors-system-id__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.doors-system-id__value {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text, #fff);
+  word-break: break-all;
+}
+
+.doors-system-id__hint {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.doors-system-id__copy {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .doors-system-id {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 /* Acceso a puertas por persona (Admin ? Acceso personal) */
 .people-access-layout {
   display: grid;

@@ -18,13 +18,15 @@ No hace falta otra mini PC para probar.
 | **01b-reinstalar-servicio-estacion.cmd** | Ya instalaste alguna vez y solo querés volver a registrar el servicio (sin pedir código de nuevo). |
 | **02-reiniciar-estacion.cmd** | Después de actualizar el programa o si “no abre” / “no lee”. Reinicia el servicio y te manda a Admin. |
 | **03-arrancar-apertura-por-internet.cmd** | Solo si las puertas abren **a distancia** (desde internet) con túnel Cloudflare. Si abrís **en planta**, no lo necesitás. |
-| **04-arrancar-puente-biostar.cmd** | Bacar con BioStar 2: importa usuarios y eventos a MSS. Dejá la ventana abierta en el servidor BioStar (`192.168.0.9`). |
+| **04-arrancar-puente-biostar.cmd** | Prueba manual del puente BioStar (ventana abierta). Solo para probar. |
+| **05-instalar-servicio-biostar.cmd** | **Producción:** deja el puente BioStar permanente (arranca al encender la PC). Ejecutar como Admin. |
+| **05b-reiniciar-servicio-biostar.cmd** | Reinicia el servicio BioStar (después de cambiar `configuracion-biostar.json` o actualizar el `.js`). |
 
 Orden tipico en una PC nueva:
 1. `01-instalar-estacion.cmd`
 2. Probar en https://mss-guard.web.app → Admin → Puertas → Probar apertura
 3. (Opcional) `03-...` solo si usás apertura a distancia
-4. (Opcional BioEntry/BioStar) `04-arrancar-puente-biostar.cmd` en el servidor BioStar
+4. (Opcional BioEntry/BioStar) `05-instalar-servicio-biostar.cmd` en el servidor BioStar (permanente)
 
 ---
 
@@ -92,9 +94,14 @@ En Admin → Equipos de acceso → Puertas elegís el modo de cada puerta.
 El lector sigue abriendo con su relé. BioStar manda; MSS ve autorizados y eventos.
 
 1. En el servidor BioStar (`http://192.168.0.9:5001`), copiá `configuracion-biostar.ejemplo.json` → `configuracion-biostar.json`.
-2. Completá `biostarPassword`, usuario/clave MSS (con permiso de puertas o nómina) y `defaultDoorId` (ej. `puerta-p1`).
-3. Doble clic en **04-arrancar-puente-biostar.cmd** (dejá la ventana abierta).
-4. En MSS: personas con `biometricExternalId` = `user_id` de BioStar; ingresos con origen `biostar`.
+2. Completá `biostarPassword`, usuario/clave MSS (con permiso de puertas o nómina) y `defaultDoorId` (ej. `puerta-p2`).
+3. **Producción:** doble clic en **05-instalar-servicio-biostar.cmd** (como Administrador).  
+   Eso registra la tarea `MSSGuard-BioStar-Bridge`: arranca al encender la PC y se recupera si se cae.  
+   No hace falta dejar una consola abierta. Log: `biostar.service.log`.
+4. (Opcional) **04-arrancar-puente-biostar.cmd** solo para una prueba manual con ventana.
+5. En MSS: personas con `biometricExternalId` = `user_id` de BioStar; ingresos con origen `biostar`.
+
+Si cambiás la config o actualizás `programa-biostar.js`, corré **05b-reiniciar-servicio-biostar.cmd**.
 
 Swagger Local API: `http://127.0.0.1:5001/swagger/index.html` (HTTP :5001). La sesión `bs-session-id` caduca; el puente re-loguea solo.
 

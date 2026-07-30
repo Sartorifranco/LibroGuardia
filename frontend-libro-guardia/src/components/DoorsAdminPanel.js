@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, DoorOpen, Info, PlusCircle, Save, Trash2, X } from 'lucide-react';
+import { ChevronLeft, Copy, DoorOpen, Info, PlusCircle, Save, Trash2, X } from 'lucide-react';
 import PendingButton from './PendingButton';
 import DoorPeoplePanel from './DoorPeoplePanel';
 import { apiFetch } from '../services/api';
@@ -806,7 +806,9 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
               <div className="doors-detail-section__head">
                 <h5>1. Identidad</h5>
                 <SectionTip>
-                  El nombre es lo que ve el guardia. El código (P1, P2…) identifica la puerta en el sistema.
+                  El nombre es lo que ve el guardia. El código corto (P1, P2…) es para humanos.
+                  El <strong>ID de sistema</strong> (ej. puerta-p2) es el que usan el puente BioStar,
+                  lectores y la API. No se edita a mano: sale del código.
                 </SectionTip>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -828,6 +830,32 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                     placeholder="P1"
                   />
                 </label>
+              </div>
+              <div className="doors-system-id" role="group" aria-label="ID de sistema de la puerta">
+                <div className="doors-system-id__text">
+                  <span className="doors-system-id__label">ID de sistema</span>
+                  <code className="doors-system-id__value">{draft.id || '—'}</code>
+                  <span className="doors-system-id__hint">
+                    Usalo en configuracion-biostar.json como defaultDoorId
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary-small doors-system-id__copy"
+                  disabled={!draft.id}
+                  title="Copiar ID de sistema"
+                  onClick={async () => {
+                    if (!draft.id) return;
+                    try {
+                      await navigator.clipboard.writeText(String(draft.id));
+                      onSuccess?.(`ID copiado: ${draft.id}`);
+                    } catch {
+                      onError?.('No se pudo copiar el ID');
+                    }
+                  }}
+                >
+                  <Copy size={14} /> Copiar ID
+                </button>
               </div>
               <div className="doors-option-grid">
                 <Toggle

@@ -36,6 +36,8 @@ scripts/configuracion-estacion.json
 scripts/configuracion-apertura-internet.json
 scripts/configuracion-biostar.json
 scripts/biostar-state.json
+scripts/biostar.service.log
+scripts/arrancar-biostar-servicio.cmd
 !scripts/door-reader.config.example.json
 !scripts/configuracion-estacion.ejemplo.json
 !scripts/configuracion-apertura-internet.ejemplo.json
