@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Cake } from 'lucide-react';
-import { apiFetch } from '../../services/api';
+import { apiFetch } from '../services/api';
 
 /**
  * Aviso sutil de cumpleaños en el home del guardia.
