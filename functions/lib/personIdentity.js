@@ -102,13 +102,17 @@ const scorePersonNameMatch = (left = '', right = '') => {
   return Number(Math.max(0, Math.min(1, score)).toFixed(3));
 };
 
-/** DNI que parece fecha YYYYMMDD (ej. 20260716). */
+/** DNI que parece fecha YYYYMMDD reciente (ej. 20260716), no DNI real 20xxxxxxx. */
 const looksLikeDateDni = (dni = '') => {
   const d = String(dni || '').replace(/\D/g, '');
   if (!/^(19|20)\d{6}$/.test(d)) return false;
+  const year = Number(d.slice(0, 4));
   const month = Number(d.slice(4, 6));
   const day = Number(d.slice(6, 8));
-  return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  // DNI argentinos reales empiezan con 20… (gente ~1960s); solo sospechar fechas “de carga”
+  const currentYear = new Date().getFullYear();
+  return year >= 2015 && year <= currentYear + 1;
 };
 
 const looksLikeSuspiciousDni = (dni = '') => {

@@ -121,6 +121,11 @@ const buildLiveAlertsFromDocs = ({
           name: ev.name || null,
           idNumber: ev.idNumber || null,
           company: ev.company || null,
+          area: ev.area || null,
+          puesto: ev.puesto || null,
+          cuil: ev.cuil || null,
+          sex: ev.sex || null,
+          birthDate: ev.birthDate || null,
           legajo: ev.legajo || null,
           personId: ev.personId || null,
           authorizationLabel: ev.authorizationLabel || ev.authorizationType || null,
@@ -313,11 +318,18 @@ const getLiveAlerts = async ({
           alert.meta.photoUrl = person.photoDataUrl;
           alert.meta.hasPhoto = true;
         }
-        if (person && !alert.meta.company) {
-          alert.meta.company = person.company || person.empresa || person.centroCosto || null;
-        }
-        if (person && !alert.meta.legajo) {
-          alert.meta.legajo = person.legajoNormalized || person.legajo || null;
+        if (person) {
+          if (!alert.meta.company) {
+            alert.meta.company = person.company || person.empresa || person.centroCosto || null;
+          }
+          if (!alert.meta.legajo) {
+            alert.meta.legajo = person.legajoNormalized || person.legajo || null;
+          }
+          if (!alert.meta.area) alert.meta.area = person.area || null;
+          if (!alert.meta.puesto) alert.meta.puesto = person.puesto || person.role || null;
+          if (!alert.meta.cuil) alert.meta.cuil = person.cuil || null;
+          if (!alert.meta.sex) alert.meta.sex = person.sex || null;
+          if (!alert.meta.birthDate) alert.meta.birthDate = person.birthDate || null;
         }
       } catch {
         // silencioso

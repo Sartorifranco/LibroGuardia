@@ -17,21 +17,53 @@ test('parseShift devuelve invalido para Sin turno', () => {
   assert.equal(shift.valid, false);
 });
 
-test('parseNominaRow mapea fila de nómina', () => {
+test('parseNominaRow mapea Legajos Online (Apellido/Nombre/Área)', () => {
   const parsed = parseNominaRow({
-    Usuario: 'ACEVEDO Miguel Angel Fernando',
-    DNI: 30461597,
-    Legajo: 2530,
-    Rol: 'Colaborador',
-    'C. Costo': 'BACAR SA - Tesorería',
-    Turno: 'Lu,Ma,Mi,Ju,Vi 07:30 a 16:00',
-    'Con citacion': 'NO',
-    'Tipo de autorizacion': 'PERMANENTE dentro del turno'
+    Legajo: 26,
+    Apellido: 'SOSA',
+    Nombre: 'Franco Ariel',
+    DNI: 23796878,
+    CUIL: '20-23796878-7',
+    Email: 'francoasosa@hotmail.com',
+    Teléfono: 3517070581,
+    Áreas: 'Transporte',
+    Puestos: 'Chofer',
+    'Centros de Costo': 'BACAR SA - Transporte',
+    'Fecha Nac.': '17-07-1974',
+    Sexo: 'Masculino',
+    Estado: 'Activo'
   });
   assert.equal(parsed.valid, true);
-  assert.equal(parsed.idNumberNormalized, '30461597');
-  assert.equal(parsed.authorizationPolicy, 'permanent_shift');
+  assert.equal(parsed.name, 'SOSA Franco Ariel');
+  assert.equal(parsed.idNumberNormalized, '23796878');
+  assert.equal(parsed.area, 'Transporte');
+  assert.equal(parsed.puesto, 'Chofer');
+  assert.equal(parsed.sex, 'Masculino');
+  assert.equal(parsed.birthDate, '1974-07-17');
+  assert.equal(parsed.requiresCitacion, true);
+  assert.equal(parsed.authorizationPolicy, 'citacion_shift');
+  assert.deepEqual(parsed.shiftSchedule.daysOfWeek, ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa', 'Do']);
+  assert.equal(parsed.shiftSchedule.timeWindow.from, '08:00');
+  assert.equal(parsed.shiftSchedule.timeWindow.to, '17:00');
+});
+
+test('parseNominaRow Sistemas queda permanente en turno sin citación', () => {
+  const parsed = parseNominaRow({
+    Legajo: 100,
+    Apellido: 'GUE',
+    Nombre: 'Marcos',
+    DNI: 30111222,
+    Áreas: 'Sistemas',
+    Puestos: 'Sistemas',
+    'Centros de Costo': 'BACAR SA - Sistemas',
+    'Fecha Nac.': '01-01-1990',
+    Sexo: 'Masculino',
+    Estado: 'Activo'
+  });
+  assert.equal(parsed.valid, true);
   assert.equal(parsed.requiresCitacion, false);
+  assert.equal(parsed.authorizationPolicy, 'permanent_shift');
+  assert.equal(parsed.createPermanent, true);
 });
 
 test('parseAuthPolicy rechaza filas corruptas sin tipo reconocible', () => {

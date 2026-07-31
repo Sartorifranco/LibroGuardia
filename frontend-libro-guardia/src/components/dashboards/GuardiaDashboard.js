@@ -13,6 +13,7 @@ import DashboardShell from './DashboardShell';
 import FleetGatePanel from '../FleetGatePanel';
 import AttendanceMissingPanel from '../AttendanceMissingPanel';
 import CitadosPanel from '../CitadosPanel';
+import BirthdayHint from '../BirthdayHint';
 import { getDashboardStats } from '../../utils/dashboardStats';
 
 function GuardiaDashboard({
@@ -38,6 +39,7 @@ function GuardiaDashboard({
       subtitle="Portón blindados, acceso principal a planta y control de personal"
       panels={(
         <>
+          <BirthdayHint authToken={authToken} />
           {showFleetGps && (
             <FleetGatePanel
               authToken={authToken}

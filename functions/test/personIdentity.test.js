@@ -25,6 +25,8 @@ describe('personIdentity', () => {
     assert.equal(looksLikeDateDni('20260716'), true);
     assert.equal(looksLikeSuspiciousDni('20260716'), true);
     assert.equal(looksLikeDateDni('38646611'), false);
+    // DNI real argentino 20xxxxxxx no es “fecha de carga”
+    assert.equal(looksLikeDateDni('20300227'), false);
   });
 });
 

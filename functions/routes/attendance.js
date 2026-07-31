@@ -3,6 +3,7 @@ const { db, FieldValue, Timestamp } = require('../firestore');
 const {
   importNominaRows,
   listNominaPersonal,
+  listNominaBirthdays,
   saveNominaEmployee,
   deactivateNominaEmployee
 } = require('../nominaImport');
@@ -85,19 +86,40 @@ router.delete('/api/admin/nomina/:id', auth, requirePermission('master.nomina.wr
   }
 });
 
+/** Cumpleaños de hoy (home guardia — sutil). */
+router.get('/api/nomina/birthdays-today', auth, async (_req, res) => {
+  try {
+    const birthdays = await listNominaBirthdays({ withinDays: 0 });
+    res.json({
+      ok: true,
+      birthdays,
+      count: birthdays.length,
+      date: new Date().toISOString().slice(0, 10)
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Error al listar cumpleaños', error: err.message });
+  }
+});
+
 router.post('/api/admin/nomina/upload', auth, requirePermission('master.nomina.write'), async (req, res) => {
   try {
-    const { data } = req.body;
+    const { data, replace } = req.body || {};
     if (!Array.isArray(data) || data.length === 0) {
       return res.status(400).json({ message: 'Se espera un array no vacío de filas de nómina' });
     }
-    const result = await importNominaRows(data, { importedBy: req.user.id });
+    const result = await importNominaRows(data, {
+      importedBy: req.user.id,
+      replace: replace === true
+    });
     let message = `Nómina importada: ${result.imported} empleados (${result.created} nuevos, ${result.updated} actualizados)`;
+    if (result.replace && result.deactivated > 0) {
+      message += `. ${result.deactivated} de la nómina anterior dados de baja`;
+    }
     if (result.skipped > 0) {
       message += `. ${result.skipped} filas omitidas`;
     }
     if (result.imported === 0 && result.total > 0) {
-      message += '. Revise la columna "Tipo de autorización" del Excel o vuelva a exportar la planilla';
+      message += '. Revisá el Excel (DNI/legajo/nombre)';
     }
     res.status(200).json({
       message,

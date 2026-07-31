@@ -28,7 +28,15 @@ const buildPersonPayload = ({
   company,
   destination,
   tipo = 'empleado',
-  origen = 'import'
+  origen = 'import',
+  puesto,
+  area,
+  centroCosto,
+  email,
+  phone,
+  cuil,
+  birthDate,
+  sex
 }) => {
   const legajoNormalized = String(legajo || '').trim();
   const dniNormalized = normalizeIdNumber(idNumber);
@@ -51,7 +59,14 @@ const buildPersonPayload = ({
     empresa: company || null,
     company: company || '',
     destination: destination || '',
-    centroCosto: null,
+    centroCosto: centroCosto || company || null,
+    area: area || '',
+    puesto: puesto || '',
+    email: email || '',
+    phone: phone || '',
+    cuil: cuil || '',
+    birthDate: birthDate || null,
+    sex: sex || '',
     origen,
     active: true,
     updatedAt: FieldValue.serverTimestamp()

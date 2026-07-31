@@ -1,5 +1,5 @@
 import React from 'react';
-import { Camera, ShieldCheck, UserRound, X } from 'lucide-react';
+import { Camera, ShieldCheck, UserRound, X, Cake } from 'lucide-react';
 
 /**
  * Modal grande para que el guardia corrobore identidad en ingreso principal.
@@ -12,8 +12,19 @@ function IdentityVerificationModal({ alert, onDismiss }) {
   const idNumber = meta.idNumber || '';
   const doorName = meta.doorName || '';
   const company = meta.company || '';
+  const area = meta.area || '';
+  const puesto = meta.puesto || '';
+  const cuil = meta.cuil || '';
+  const sex = meta.sex || '';
   const authLabel = meta.authorizationLabel || meta.authorizationType || '';
   const legajo = meta.legajo || '';
+  const birthDate = meta.birthDate || '';
+  const isBirthdayToday = (() => {
+    if (!birthDate || !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) return false;
+    const now = new Date();
+    const [, m, d] = birthDate.split('-').map(Number);
+    return now.getMonth() + 1 === m && now.getDate() === d;
+  })();
 
   return (
     <div className="identity-verify-overlay" role="dialog" aria-modal="true" aria-labelledby="identity-verify-title">
@@ -22,6 +33,11 @@ function IdentityVerificationModal({ alert, onDismiss }) {
           <div>
             <p className="identity-verify-modal__eyebrow">Ingreso principal · verificar identidad</p>
             <h2 id="identity-verify-title">{name}</h2>
+            {isBirthdayToday ? (
+              <p className="identity-verify-modal__bday">
+                <Cake size={14} aria-hidden /> Cumpleaños hoy
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -50,15 +66,39 @@ function IdentityVerificationModal({ alert, onDismiss }) {
               <dt>DNI</dt>
               <dd>{idNumber || '—'}</dd>
             </div>
+            {cuil ? (
+              <div>
+                <dt>CUIL</dt>
+                <dd>{cuil}</dd>
+              </div>
+            ) : null}
+            {sex ? (
+              <div>
+                <dt>Sexo</dt>
+                <dd>{sex}</dd>
+              </div>
+            ) : null}
             {legajo ? (
               <div>
                 <dt>Legajo</dt>
                 <dd>{legajo}</dd>
               </div>
             ) : null}
-            {company ? (
+            {puesto ? (
               <div>
-                <dt>Empresa / área</dt>
+                <dt>Puesto</dt>
+                <dd>{puesto}</dd>
+              </div>
+            ) : null}
+            {area ? (
+              <div>
+                <dt>Área</dt>
+                <dd>{area}</dd>
+              </div>
+            ) : null}
+            {company && company !== area ? (
+              <div>
+                <dt>Centro de costo</dt>
                 <dd>{company}</dd>
               </div>
             ) : null}

@@ -46,8 +46,14 @@ const emptyForm = () => ({
   idNumber: '',
   legajo: '',
   role: '',
+  area: '',
   centroCosto: '',
-  turnoRaw: '',
+  email: '',
+  phone: '',
+  cuil: '',
+  birthDate: '',
+  sex: '',
+  turnoRaw: 'Lu,Ma,Mi,Ju,Vi,Sa,Do 08:00 a 17:00',
   requiresCitacion: false,
   authorizationPolicy: 'permanent_shift',
   active: true
@@ -89,6 +95,7 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
 
   const [loading, setLoading] = useState(true);
   const [selectedNominaFile, setSelectedNominaFile] = useState(null);
+  const [replaceOnImport, setReplaceOnImport] = useState(true);
   const [nominaData, setNominaData] = useState([]);
   const [query, setQuery] = useState('');
   const [showInactive, setShowInactive] = useState(false);
@@ -175,11 +182,17 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
       name: emp.name || '',
       idNumber: emp.idNumberNormalized || emp.idNumber || '',
       legajo: emp.legajoNormalized || emp.legajo || '',
-      role: emp.role || '',
+      role: emp.puesto || emp.role || '',
+      area: emp.area || '',
       centroCosto: emp.centroCosto || '',
-      turnoRaw: emp.turnoRaw || '',
+      email: emp.email || '',
+      phone: emp.phone || '',
+      cuil: emp.cuil || '',
+      birthDate: emp.birthDate || '',
+      sex: emp.sex || '',
+      turnoRaw: emp.turnoRaw || 'Lu,Ma,Mi,Ju,Vi,Sa,Do 08:00 a 17:00',
       requiresCitacion: emp.requiresCitacion === true,
-      authorizationPolicy: emp.authorizationPolicy || 'permanent',
+      authorizationPolicy: emp.authorizationPolicy || 'permanent_shift',
       active: emp.active !== false
     });
     setFormOpen(true);
@@ -195,7 +208,14 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
           idNumber: form.idNumber.trim(),
           legajo: form.legajo.trim(),
           role: form.role.trim(),
+          puesto: form.role.trim(),
+          area: form.area.trim(),
           centroCosto: form.centroCosto.trim(),
+          email: form.email.trim(),
+          phone: form.phone.trim(),
+          cuil: form.cuil.trim(),
+          birthDate: form.birthDate.trim(),
+          sex: form.sex.trim(),
           turnoRaw: form.turnoRaw.trim(),
           requiresCitacion: form.requiresCitacion,
           authorizationPolicy: form.authorizationPolicy,
@@ -249,19 +269,33 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
   };
 
   const parseNominaWorksheet = (worksheet) => {
-    const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-    const headerIndex = matrix.findIndex((row) => (
-      row.some((cell) => String(cell).toLowerCase().includes('dni'))
-      && row.some((cell) => String(cell).toLowerCase().includes('usuario'))
-    ));
+    const matrix = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: false });
+    const headerIndex = matrix.findIndex((row) => {
+      const cells = row.map((cell) => String(cell || '').toLowerCase());
+      const hasDni = cells.some((c) => c.includes('dni'));
+      const hasClassic = cells.some((c) => c.includes('usuario'));
+      const hasLegajos = cells.some((c) => c.includes('apellido'))
+        && cells.some((c) => c === 'nombre' || c.includes('nombre'));
+      return hasDni && (hasClassic || hasLegajos);
+    });
     if (headerIndex < 0) {
-      throw new Error('No se encontraron encabezados Usuario/DNI en la planilla');
+      throw new Error('No se encontraron encabezados (Usuario/DNI o Apellido/Nombre/DNI) en la planilla');
     }
     const headers = matrix[headerIndex].map((header) => String(header || '').trim());
+    const rowMeta = worksheet['!rows'] || [];
+    // Excel 1-based: title rows + headerIndex (0-based in matrix) → data starts at headerIndex+2
+    const excelHeaderRow = headerIndex + 1; // 1-based if matrix[0] is Excel row 1
+
     return matrix
       .slice(headerIndex + 1)
-      .filter((row) => row.some((cell) => String(cell ?? '').trim()))
-      .map((row) => {
+      .map((row, offset) => {
+        const excelRowNumber = excelHeaderRow + 1 + offset; // 1-based
+        const meta = rowMeta[excelRowNumber - 1];
+        const hidden = meta && meta.hidden === true;
+        return { row, hidden, excelRowNumber };
+      })
+      .filter(({ row, hidden }) => !hidden && row.some((cell) => String(cell ?? '').trim()))
+      .map(({ row }) => {
         const item = {};
         headers.forEach((header, index) => {
           if (header) item[header] = row[index];
@@ -274,6 +308,14 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
     if (!selectedNominaFile) {
       setError('Seleccione el archivo de nómina.');
       return;
+    }
+    if (replaceOnImport) {
+      const ok = await confirm({
+        title: 'Reemplazar nómina',
+        message: 'Se importarán solo las filas visibles del Excel y se dará de baja la nómina anterior que no esté en el archivo. No se toca BioStar (huellas). ¿Continuar?',
+        confirmLabel: 'Reemplazar e importar'
+      });
+      if (!ok) return;
     }
     await run('upload-nomina', async () => {
       const buffer = await selectedNominaFile.arrayBuffer();
@@ -289,10 +331,14 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
           });
           return cleaned;
         });
+        if (!parsedData.length) {
+          setError('No hay filas visibles para importar (¿filtro de Excel vacío?)');
+          return;
+        }
         const result = await apiFetch('/admin/nomina/upload', {
           method: 'POST',
           token: authToken,
-          body: { data: parsedData }
+          body: { data: parsedData, replace: replaceOnImport }
         });
         if ((result.imported ?? 0) === 0 && (result.total ?? 0) > 0) {
           const sample = (result.errors || []).slice(0, 3).map((e) => `${e.name}: ${e.reason}`).join(' · ');
@@ -346,7 +392,7 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
 
       <AdminBlock
         title="Importar / exportar nómina"
-        description="Excel con Usuario, DNI, Legajo, Rol, C. Costo, Turno, Con citacion, Tipo de autorización. La exportación usa el listado filtrado actual (o los activos si no hay filtro)."
+        description="Soporta Legajos Online (Apellido, Nombre, DNI, CUIL, Áreas, Puestos…) y el formato clásico. Solo importa filas visibles del Excel. Con “Reemplazar” da de baja la nómina vieja; no toca BioStar."
       >
         <div className="nomina-admin__import">
           <label className="nomina-admin__field">
@@ -357,6 +403,14 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
               onChange={handleFileChange}
               className="input-field"
             />
+          </label>
+          <label className="nomina-admin__check" style={{ alignSelf: 'end', marginBottom: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={replaceOnImport}
+              onChange={(e) => setReplaceOnImport(e.target.checked)}
+            />
+            Reemplazar nómina anterior (recomendado)
           </label>
           <div className="nomina-admin__import-actions">
             <PendingButton
@@ -434,11 +488,13 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
                 <th>Nombre</th>
                 <th>DNI</th>
                 <th>Legajo</th>
-                <th>Rol</th>
-                <th>C. costo</th>
+                <th>Puesto</th>
+                <th>Área</th>
+                <th>Sexo</th>
+                <th>Email</th>
+                <th>Tel.</th>
                 <th>Turno</th>
                 <th>Citación</th>
-                <th>Autorización</th>
                 <th className="nomina-admin__th-actions">Acciones</th>
               </tr>
             </thead>
@@ -448,16 +504,19 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
                   <td>
                     <div className="nomina-admin__name-cell">
                       <span>{emp.name}</span>
+                      {emp.cuil ? <span className="historial-meta">CUIL {emp.cuil}</span> : null}
                       {emp.active === false && <span className="nomina-admin__chip">Inactivo</span>}
                     </div>
                   </td>
                   <td>{emp.idNumberNormalized || emp.idNumber || '—'}</td>
                   <td>{emp.legajoNormalized || emp.legajo || '—'}</td>
-                  <td>{emp.role || '—'}</td>
-                  <td>{emp.centroCosto || '—'}</td>
+                  <td>{emp.puesto || emp.role || '—'}</td>
+                  <td>{emp.area || '—'}</td>
+                  <td>{emp.sex || '—'}</td>
+                  <td>{emp.email || '—'}</td>
+                  <td>{emp.phone || '—'}</td>
                   <td className="nomina-admin__turno">{emp.turnoRaw || '—'}</td>
                   <td>{emp.requiresCitacion ? 'Sí' : 'No'}</td>
-                  <td>{policyLabel(emp.authorizationPolicy)}</td>
                   <td>
                     <div className="nomina-admin__actions">
                       <button
@@ -543,20 +602,78 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
               </div>
               <div className="nomina-admin__form-row">
                 <label className="nomina-admin__field">
-                  <span>Rol</span>
+                  <span>Puesto</span>
                   <input
                     className="input-field"
                     value={form.role}
                     onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}
-                    placeholder="Colaborador, Supervisor…"
+                    placeholder="Chofer, Recontador…"
                   />
                 </label>
+                <label className="nomina-admin__field">
+                  <span>Área</span>
+                  <input
+                    className="input-field"
+                    value={form.area}
+                    onChange={(e) => setForm((f) => ({ ...f, area: e.target.value }))}
+                    placeholder="Transporte, Tesorería…"
+                  />
+                </label>
+              </div>
+              <div className="nomina-admin__form-row">
                 <label className="nomina-admin__field">
                   <span>Centro de costo</span>
                   <input
                     className="input-field"
                     value={form.centroCosto}
                     onChange={(e) => setForm((f) => ({ ...f, centroCosto: e.target.value }))}
+                  />
+                </label>
+                <label className="nomina-admin__field">
+                  <span>CUIL</span>
+                  <input
+                    className="input-field"
+                    value={form.cuil}
+                    onChange={(e) => setForm((f) => ({ ...f, cuil: e.target.value }))}
+                  />
+                </label>
+              </div>
+              <div className="nomina-admin__form-row">
+                <label className="nomina-admin__field">
+                  <span>Email</span>
+                  <input
+                    className="input-field"
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                  />
+                </label>
+                <label className="nomina-admin__field">
+                  <span>Teléfono</span>
+                  <input
+                    className="input-field"
+                    value={form.phone}
+                    onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+                  />
+                </label>
+              </div>
+              <div className="nomina-admin__form-row">
+                <label className="nomina-admin__field">
+                  <span>Fecha nac. (AAAA-MM-DD)</span>
+                  <input
+                    className="input-field"
+                    value={form.birthDate}
+                    onChange={(e) => setForm((f) => ({ ...f, birthDate: e.target.value }))}
+                    placeholder="1970-09-29"
+                  />
+                </label>
+                <label className="nomina-admin__field">
+                  <span>Sexo</span>
+                  <input
+                    className="input-field"
+                    value={form.sex}
+                    onChange={(e) => setForm((f) => ({ ...f, sex: e.target.value }))}
+                    placeholder="Masculino / Femenino"
                   />
                 </label>
               </div>
@@ -567,7 +684,7 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
                     className="input-field"
                     value={form.turnoRaw}
                     onChange={(e) => setForm((f) => ({ ...f, turnoRaw: e.target.value }))}
-                    placeholder="Lu,Ma,Mi,Ju,Vi 07:30 a 16:00"
+                    placeholder="Lu,Ma,Mi,Ju,Vi,Sa,Do 08:00 a 17:00"
                   />
                   <small className={`nomina-admin__turno-hint${parseTurnoPreview(form.turnoRaw).valid ? ' is-ok' : ''}`}>
                     {(() => {
