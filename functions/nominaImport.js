@@ -39,6 +39,17 @@ const buildMasterPayload = (personId, parsed, { active = true } = {}) => ({
   updatedAt: FieldValue.serverTimestamp()
 });
 
+const trimNominaRowPayload = (row = {}) => {
+  const cleaned = { ...row };
+  Object.entries(cleaned).forEach(([key, value]) => {
+    const normalizedKey = String(key || '').toLowerCase();
+    if (normalizedKey.includes('tipo') && normalizedKey.includes('autoriz') && String(value).length > 120) {
+      cleaned[key] = String(value).slice(0, 120);
+    }
+  });
+  return cleaned;
+};
+
 const upsertPersonalMaster = async (personId, parsed) => {
   let existing = null;
 
@@ -152,7 +163,6 @@ const applyParsedToPersonAndAuth = async (parsed) => {
     authorizationPolicy: parsed.authorizationPolicy
   }, { origen: 'nomina', tipo: 'empleado', skipPersonalMasterSync: true });
 
-  // Enriquecer ficha people con campos HR (sin pisar biometría)
   const enrich = {
     puesto: parsed.puesto || parsed.role || '',
     area: parsed.area || '',
@@ -167,7 +177,6 @@ const applyParsedToPersonAndAuth = async (parsed) => {
     updatedAt: FieldValue.serverTimestamp()
   };
   if (parsed.active === false) {
-    // No desactivar si tiene huella BioStar
     const snap = await db.collection('people').doc(person.id).get();
     const data = snap.data() || {};
     if (!data.biometricExternalId && data.source !== 'biostar') {
@@ -175,7 +184,6 @@ const applyParsedToPersonAndAuth = async (parsed) => {
     }
   }
   await db.collection('people').doc(person.id).set(enrich, { merge: true });
-
   await syncNominaAuthorization(person, parsed);
   return person;
 };
@@ -243,10 +251,6 @@ const deactivateNominaEmployee = async (id) => {
   return { id, active: false, name: data.name || '' };
 };
 
-/**
- * Desactiva nómina vieja que no vino en el import.
- * NO toca people con biometricExternalId / source biostar.
- */
 const deactivateMissingNomina = async (keepKeys = { legajos: new Set(), dnis: new Set() }) => {
   const snap = await db.collection('personalMaster')
     .where('source', '==', 'nomina')
@@ -307,17 +311,162 @@ const deactivateMissingNomina = async (keepKeys = { legajos: new Set(), dnis: ne
   return { deactivated, peopleDeactivated };
 };
 
-const trimNominaRowPayload = (row = {}) => {
-  const cleaned = { ...row };
-  Object.entries(cleaned).forEach(([key, value]) => {
-    const normalizedKey = String(key || '').toLowerCase();
-    if (normalizedKey.includes('tipo') && normalizedKey.includes('autoriz') && String(value).length > 120) {
-      cleaned[key] = String(value).slice(0, 120);
-    }
+const upsertPersonalMasterCached = async (personId, parsed, caches) => {
+  let existing = null;
+  if (parsed.legajoNormalized && caches.masterByLegajo.has(parsed.legajoNormalized)) {
+    existing = caches.masterByLegajo.get(parsed.legajoNormalized);
+  } else if (parsed.idNumberNormalized && caches.masterByDni.has(parsed.idNumberNormalized)) {
+    existing = caches.masterByDni.get(parsed.idNumberNormalized);
+  } else if (parsed.name && caches.masterByName.has(parsed.name.toLowerCase())) {
+    existing = caches.masterByName.get(parsed.name.toLowerCase());
+  }
+
+  const payload = buildMasterPayload(personId, parsed);
+
+  if (existing) {
+    await existing.ref.set(payload, { merge: true });
+    const row = { id: existing.id, ref: existing.ref, data: { ...existing.data, ...payload } };
+    if (parsed.legajoNormalized) caches.masterByLegajo.set(parsed.legajoNormalized, row);
+    if (parsed.idNumberNormalized) caches.masterByDni.set(parsed.idNumberNormalized, row);
+    caches.masterByName.set(parsed.name.toLowerCase(), row);
+    return { id: existing.id, created: false, ...payload };
+  }
+
+  const ref = await db.collection('personalMaster').add({
+    ...payload,
+    createdAt: FieldValue.serverTimestamp()
   });
-  return cleaned;
+  const row = { id: ref.id, ref, data: payload };
+  if (parsed.legajoNormalized) caches.masterByLegajo.set(parsed.legajoNormalized, row);
+  if (parsed.idNumberNormalized) caches.masterByDni.set(parsed.idNumberNormalized, row);
+  caches.masterByName.set(parsed.name.toLowerCase(), row);
+  return { id: ref.id, created: true, ...payload };
 };
 
+const resolvePersonCached = async (parsed, caches) => {
+  let hit = null;
+  if (parsed.legajoNormalized && caches.peopleByLegajo.has(parsed.legajoNormalized)) {
+    hit = caches.peopleByLegajo.get(parsed.legajoNormalized);
+  } else if (parsed.idNumberNormalized && caches.peopleByDni.has(parsed.idNumberNormalized)) {
+    hit = caches.peopleByDni.get(parsed.idNumberNormalized);
+  }
+
+  const enrich = {
+    nombre: parsed.name,
+    name: parsed.name,
+    nameLower: parsed.name.toLowerCase(),
+    nameKey: buildNameTokens(parsed.name),
+    nameTokens: buildNameTokens(parsed.name),
+    dni: parsed.idNumberNormalized || null,
+    dniNormalized: parsed.idNumberNormalized || null,
+    idNumber: parsed.idNumberNormalized || '',
+    idNumberNormalized: parsed.idNumberNormalized || '',
+    legajo: parsed.legajoNormalized || null,
+    legajoNormalized: parsed.legajoNormalized || null,
+    company: parsed.centroCosto || parsed.area || '',
+    destination: parsed.centroCosto || parsed.area || '',
+    centroCosto: parsed.centroCosto || '',
+    area: parsed.area || '',
+    puesto: parsed.puesto || parsed.role || '',
+    email: parsed.email || '',
+    phone: parsed.phone || '',
+    cuil: parsed.cuil || '',
+    birthDate: parsed.birthDate || null,
+    sex: parsed.sex || '',
+    category: 'empleado',
+    tipo: 'empleado',
+    origen: 'nomina',
+    updatedAt: FieldValue.serverTimestamp()
+  };
+
+  if (hit) {
+    const existing = hit.data || {};
+    if (parsed.active === false
+      && !existing.biometricExternalId
+      && existing.source !== 'biostar'
+      && existing.biometricBrand !== 'suprema') {
+      enrich.active = false;
+    }
+    if (existing.origen && existing.origen !== 'nomina') enrich.origen = existing.origen;
+    if (existing.source) enrich.source = existing.source;
+    await hit.ref.set(enrich, { merge: true });
+    const person = { id: hit.id, ...existing, ...enrich };
+    if (parsed.legajoNormalized) {
+      caches.peopleByLegajo.set(parsed.legajoNormalized, { id: hit.id, ref: hit.ref, data: person });
+    }
+    if (parsed.idNumberNormalized) {
+      caches.peopleByDni.set(parsed.idNumberNormalized, { id: hit.id, ref: hit.ref, data: person });
+    }
+    return person;
+  }
+
+  const ref = await db.collection('people').add({
+    ...enrich,
+    active: parsed.active !== false,
+    createdAt: FieldValue.serverTimestamp()
+  });
+  const person = { id: ref.id, ...enrich, active: parsed.active !== false };
+  if (parsed.legajoNormalized) {
+    caches.peopleByLegajo.set(parsed.legajoNormalized, { id: ref.id, ref, data: person });
+  }
+  if (parsed.idNumberNormalized) {
+    caches.peopleByDni.set(parsed.idNumberNormalized, { id: ref.id, ref, data: person });
+  }
+  return person;
+};
+
+const loadImportCaches = async () => {
+  const [masterSnap, peopleSnap] = await Promise.all([
+    db.collection('personalMaster').where('source', '==', 'nomina').get(),
+    db.collection('people').limit(4000).get()
+  ]);
+
+  const masterByLegajo = new Map();
+  const masterByDni = new Map();
+  const masterByName = new Map();
+  masterSnap.docs.forEach((doc) => {
+    const data = doc.data() || {};
+    const row = { id: doc.id, ref: doc.ref, data };
+    const legajo = String(data.legajoNormalized || data.legajo || '').trim();
+    const dni = String(data.idNumberNormalized || data.idNumber || '').trim();
+    const name = String(data.nameLower || data.name || '').toLowerCase().trim();
+    if (legajo) masterByLegajo.set(legajo, row);
+    if (dni) masterByDni.set(dni, row);
+    if (name) masterByName.set(name, row);
+  });
+
+  const peopleByLegajo = new Map();
+  const peopleByDni = new Map();
+  peopleSnap.docs.forEach((doc) => {
+    const data = doc.data() || {};
+    if (data.active === false && data.mergedIntoId) return;
+    const row = { id: doc.id, ref: doc.ref, data };
+    const legajo = String(data.legajoNormalized || data.legajo || '').trim();
+    const dni = String(data.dniNormalized || data.idNumberNormalized || data.idNumber || '').trim();
+    if (legajo) peopleByLegajo.set(legajo, row);
+    if (dni) peopleByDni.set(dni, row);
+  });
+
+  return { masterByLegajo, masterByDni, masterByName, peopleByLegajo, peopleByDni };
+};
+
+const mapPool = async (items, concurrency, worker) => {
+  const results = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length || 1) }, async () => {
+    while (next < items.length) {
+      const idx = next;
+      next += 1;
+      results[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+};
+
+/**
+ * Import rápido: 1 lectura de caches + escrituras en paralelo (evita 502 por timeout Hosting 60s).
+ */
 const importNominaRows = async (rows = [], meta = {}) => {
   const replace = meta.replace === true;
   const stats = {
@@ -340,36 +489,60 @@ const importNominaRows = async (rows = [], meta = {}) => {
     status: 'processing'
   });
 
-  const keepLegajos = new Set();
-  const keepDnis = new Set();
+  const keepLegajos = new Set(
+    (Array.isArray(meta.keepLegajos) ? meta.keepLegajos : []).map(String).filter(Boolean)
+  );
+  const keepDnis = new Set(
+    (Array.isArray(meta.keepDnis) ? meta.keepDnis : []).map(String).filter(Boolean)
+  );
 
-  for (let index = 0; index < rows.length; index += 1) {
-    const parsed = parseNominaRow(trimNominaRowPayload(rows[index]));
+  const caches = await loadImportCaches();
+
+  const outcomes = await mapPool(rows, 10, async (row, index) => {
+    const parsed = parseNominaRow(trimNominaRowPayload(row));
     if (!parsed.valid) {
-      stats.skipped += 1;
-      if (parsed.name || parsed.reason !== 'nombre_vacio') {
-        stats.errors.push({ row: index + 1, reason: parsed.reason, name: parsed.name || '—' });
-      }
-      continue;
+      return {
+        ok: false,
+        skipped: true,
+        error: (parsed.name || parsed.reason !== 'nombre_vacio')
+          ? { row: index + 1, reason: parsed.reason, name: parsed.name || '—' }
+          : null
+      };
     }
-
     try {
-      const person = await applyParsedToPersonAndAuth(parsed);
-      const master = await upsertPersonalMaster(person.id, parsed);
-
-      if (parsed.legajoNormalized) keepLegajos.add(parsed.legajoNormalized);
-      if (parsed.idNumberNormalized) keepDnis.add(parsed.idNumberNormalized);
-
-      stats.imported += 1;
-      if (master.created) stats.created += 1;
-      else stats.updated += 1;
+      const person = await resolvePersonCached(parsed, caches);
+      const master = await upsertPersonalMasterCached(person.id, parsed, caches);
+      await syncNominaAuthorization(person, parsed);
+      return {
+        ok: true,
+        created: master.created,
+        legajo: parsed.legajoNormalized || '',
+        dni: parsed.idNumberNormalized || ''
+      };
     } catch (err) {
-      stats.skipped += 1;
-      stats.errors.push({ row: index + 1, reason: err.message, name: parsed.name });
+      return {
+        ok: false,
+        skipped: true,
+        error: { row: index + 1, reason: err.message, name: parsed.name }
+      };
     }
-  }
+  });
 
-  if (replace && stats.imported > 0) {
+  outcomes.forEach((out) => {
+    if (!out) return;
+    if (out.ok) {
+      stats.imported += 1;
+      if (out.created) stats.created += 1;
+      else stats.updated += 1;
+      if (out.legajo) keepLegajos.add(out.legajo);
+      if (out.dni) keepDnis.add(out.dni);
+    } else if (out.skipped) {
+      stats.skipped += 1;
+      if (out.error) stats.errors.push(out.error);
+    }
+  });
+
+  if (replace && (stats.imported > 0 || keepLegajos.size > 0 || keepDnis.size > 0)) {
     const wiped = await deactivateMissingNomina({
       legajos: keepLegajos,
       dnis: keepDnis
@@ -396,7 +569,6 @@ const listNominaPersonal = async () => {
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 };
 
-/** Cumpleaños de hoy / próximos N días (solo activos de nómina). */
 const listNominaBirthdays = async ({ withinDays = 0 } = {}) => {
   const days = Math.max(0, Math.min(14, Number(withinDays) || 0));
   const all = await listNominaPersonal();
@@ -422,7 +594,6 @@ const listNominaBirthdays = async ({ withinDays = 0 } = {}) => {
     const todayMid = new Date(y, m - 1, d);
     let delta = Math.round((cand - todayMid) / 86400000);
     if (delta < 0 && days > 0) {
-      // cumpleaños ya pasó este año → próximo año solo si withinDays cruza año
       cand = new Date(y + 1, bm - 1, bdDay);
       delta = Math.round((cand - todayMid) / 86400000);
     }

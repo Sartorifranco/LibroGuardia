@@ -109,7 +109,9 @@ router.post('/api/admin/nomina/upload', auth, requirePermission('master.nomina.w
     }
     const result = await importNominaRows(data, {
       importedBy: req.user.id,
-      replace: replace === true
+      replace: replace === true,
+      keepLegajos: Array.isArray(req.body?.keepLegajos) ? req.body.keepLegajos : [],
+      keepDnis: Array.isArray(req.body?.keepDnis) ? req.body.keepDnis : []
     });
     let message = `Nómina importada: ${result.imported} empleados (${result.created} nuevos, ${result.updated} actualizados)`;
     if (result.replace && result.deactivated > 0) {

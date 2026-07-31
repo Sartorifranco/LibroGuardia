@@ -335,16 +335,58 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
           setError('No hay filas visibles para importar (¿filtro de Excel vacío?)');
           return;
         }
-        const result = await apiFetch('/admin/nomina/upload', {
-          method: 'POST',
-          token: authToken,
-          body: { data: parsedData, replace: replaceOnImport }
+
+        // Hosting → Functions corta a ~60s: subir en lotes.
+        const CHUNK = 40;
+        const chunks = [];
+        for (let i = 0; i < parsedData.length; i += CHUNK) {
+          chunks.push(parsedData.slice(i, i + CHUNK));
+        }
+
+        const allLegajos = [];
+        const allDnis = [];
+        parsedData.forEach((row) => {
+          const legajo = String(row.Legajo ?? row.legajo ?? '').trim();
+          const dni = String(row.DNI ?? row.dni ?? row.Documento ?? '').replace(/\D/g, '');
+          if (legajo) allLegajos.push(legajo);
+          if (dni) allDnis.push(dni);
         });
-        if ((result.imported ?? 0) === 0 && (result.total ?? 0) > 0) {
-          const sample = (result.errors || []).slice(0, 3).map((e) => `${e.name}: ${e.reason}`).join(' · ');
-          setError(result.message || `Ningún empleado importado${sample ? ` (${sample})` : ''}`);
+
+        let imported = 0;
+        let created = 0;
+        let updated = 0;
+        let deactivated = 0;
+        let skipped = 0;
+        const errors = [];
+
+        for (let i = 0; i < chunks.length; i += 1) {
+          const isLast = i === chunks.length - 1;
+          const result = await apiFetch('/admin/nomina/upload', {
+            method: 'POST',
+            token: authToken,
+            body: {
+              data: chunks[i],
+              replace: replaceOnImport && isLast,
+              keepLegajos: replaceOnImport && isLast ? allLegajos : [],
+              keepDnis: replaceOnImport && isLast ? allDnis : []
+            }
+          });
+          imported += result.imported || 0;
+          created += result.created || 0;
+          updated += result.updated || 0;
+          deactivated += result.deactivated || 0;
+          skipped += result.skipped || 0;
+          if (Array.isArray(result.errors)) errors.push(...result.errors);
+        }
+
+        if (imported === 0 && parsedData.length > 0) {
+          const sample = errors.slice(0, 3).map((e) => `${e.name}: ${e.reason}`).join(' · ');
+          setError(`Ningún empleado importado${sample ? ` (${sample})` : ''}`);
         } else {
-          showSuccess(result.message || 'Nómina importada');
+          let msg = `Nómina importada: ${imported} empleados (${created} nuevos, ${updated} actualizados)`;
+          if (deactivated > 0) msg += `. ${deactivated} de la nómina anterior dados de baja`;
+          if (skipped > 0) msg += `. ${skipped} filas omitidas`;
+          showSuccess(msg);
         }
         setSelectedNominaFile(null);
         await refreshList();
