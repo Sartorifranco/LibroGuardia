@@ -10,7 +10,7 @@ const normalizePersonName = (value = '') =>
 const buildNameTokens = (value = '') =>
   normalizePersonName(value)
     .split(/\s+/)
-    .filter((token) => token.length > 1)
+    .filter((token) => token.length >= 1 && /[a-z0-9]/.test(token))
     .sort()
     .join(' ');
 

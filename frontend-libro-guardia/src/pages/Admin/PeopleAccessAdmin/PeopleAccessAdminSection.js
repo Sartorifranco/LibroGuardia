@@ -218,12 +218,31 @@ function PeopleAccessAdminSection() {
     }
   };
 
+  const runRepair = async (path, body, confirmMsg) => {
+    if (!window.confirm(confirmMsg)) return;
+    setMerging(true);
+    try {
+      const data = await apiFetch(path, { method: 'POST', token: authToken, body });
+      showSuccess(data.message || 'Listo');
+      await loadPeople();
+      await loadAlerts();
+    } catch (err) {
+      showError(err.message || 'No se pudo aplicar la corrección');
+    } finally {
+      setMerging(false);
+    }
+  };
+
   if (!canManage) {
     return <p className="text-sm text-gray-500">No tenés permiso para gestionar Personas.</p>;
   }
 
   const alertCount = alerts?.counts
-    ? (alerts.counts.duplicates || 0) + (alerts.counts.incomplete || 0) + (alerts.counts.biostarSuggestions || 0)
+    ? (alerts.counts.duplicates || 0)
+      + (alerts.counts.incomplete || 0)
+      + (alerts.counts.biostarSuggestions || 0)
+      + (alerts.counts.biostarDoorIssues || 0)
+      + (alerts.counts.suspiciousDnis || 0)
     : null;
 
   return (
@@ -259,23 +278,133 @@ function PeopleAccessAdminSection() {
               </div>
             ) : (
               <>
+                <div className="people-hub-alert-card people-hub-alert-card--actions">
+                  <h5>Acciones rápidas de limpieza</h5>
+                  <p className="historial-meta">
+                    Usá esto para corregir errores típicos de import (BioStar + nómina) sin editar
+                    ficha por ficha.
+                  </p>
+                  <div className="people-hub-alert-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={merging || !(alerts.counts?.biostarDoorIssues > 0)}
+                      onClick={() => runRepair(
+                        '/admin/people/repair-biostar-doors',
+                        { mode: 'single', doorId: alerts.defaultDoorId || undefined },
+                        `¿Dejar a los huérfanos BioStar (sin DNI/legajo) SOLO con la puerta ${alerts.defaultDoorId || 'por defecto'}?\n\nPersonal de limpieza u otros solo en huella dejarán de figurar en todas las puertas.`
+                      )}
+                    >
+                      BioStar sin nómina → 1 sola puerta
+                      {alerts.counts?.biostarDoorIssues ? ` (${alerts.counts.biostarDoorIssues})` : ''}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={merging || !(alerts.counts?.biostarDoorIssues > 0)}
+                      onClick={() => runRepair(
+                        '/admin/people/repair-biostar-doors',
+                        { mode: 'clear' },
+                        '¿Quitar TODAS las puertas a huérfanos BioStar (sin DNI/legajo)?\nQuedarán sin acceso hasta que los unifiques con un empleado o les asignes puertas a mano.'
+                      )}
+                    >
+                      BioStar sin nómina → sin puertas
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={merging || !(alerts.counts?.suspiciousDnis > 0)}
+                      onClick={() => runRepair(
+                        '/admin/people/clear-suspicious-dnis',
+                        {},
+                        '¿Limpiar DNI que parecen fechas o están compartidos por 3+ personas?\nNo borra las fichas: deja el DNI vacío para corregirlo.'
+                      )}
+                    >
+                      Limpiar DNI basura / compartidos
+                      {alerts.counts?.suspiciousDnis ? ` (${alerts.counts.suspiciousDnis})` : ''}
+                    </button>
+                  </div>
+                </div>
+
                 <p className="historial-meta">
-                  {alerts.counts.duplicates} grupos duplicados · {alerts.counts.incomplete} incompletos ·{' '}
-                  {alerts.counts.biostarSuggestions} sugerencias BioStar
+                  {alerts.counts.duplicates} grupos duplicados · {alerts.counts.suspiciousDnis || 0} DNI sospechosos ·{' '}
+                  {alerts.counts.incomplete} incompletos · {alerts.counts.biostarSuggestions} sugerencias BioStar ·{' '}
+                  {alerts.counts.biostarDoorIssues || 0} BioStar con demasiadas puertas
                 </p>
 
                 <section>
-                  <h4>Duplicados</h4>
-                  {(alerts.duplicates || []).length === 0 ? (
-                    <p className="historial-meta">No se detectaron duplicados fuertes.</p>
+                  <h4>DNI sospechosos o compartidos</h4>
+                  <p className="historial-meta">
+                    Muchos “mismo DNI” vienen de cargas malas (ej. fecha <code>20260716</code> usada como documento).
+                    No son personas distintas con el mismo DNI real.
+                  </p>
+                  {(alerts.suspiciousDnis || []).length === 0 ? (
+                    <p className="historial-meta">No hay DNI marcados como sospechosos.</p>
                   ) : (
-                    (alerts.duplicates || []).map((group) => (
+                    (alerts.suspiciousDnis || []).map((group) => (
+                      <div key={`susp-${group.key}`} className="people-hub-alert-card">
+                        <h5>
+                          <AlertTriangle size={14} aria-hidden /> {group.message || group.key}
+                        </h5>
+                        <ul>
+                          {(group.people || []).map((p) => (
+                            <li key={p.id}>
+                              <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(p)}>
+                                {p.name || '—'} · DNI {p.idNumber || '—'}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))
+                  )}
+                </section>
+
+                <section>
+                  <h4>Unir BioStar ↔ empleado (recomendado)</h4>
+                  <p className="historial-meta">
+                    Ej.: “Franco S” (huella) con “SARTORI Franco” (nómina). Conservá la ficha con DNI/legajo.
+                  </p>
+                  {(alerts.biostarSuggestions || []).length === 0 ? (
+                    <p className="historial-meta">Sin sugerencias fuertes por nombre.</p>
+                  ) : (
+                    (alerts.biostarSuggestions || []).map((s) => (
+                      <div key={`${s.orphan.id}-${s.candidate.id}`} className="people-hub-alert-card">
+                        <h5>Coincidencia {Math.round((s.score || 0) * 100)}%</h5>
+                        <p>{s.message || `${s.orphan.name} → ${s.candidate.name}`}</p>
+                        <div className="people-hub-alert-actions">
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            disabled={merging}
+                            onClick={() => handleMerge(s.candidate.id, s.orphan.id)}
+                          >
+                            Unir en empleado (con DNI)
+                          </button>
+                          <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(s.orphan)}>
+                            Ver BioStar
+                          </button>
+                          <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(s.candidate)}>
+                            Ver empleado
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </section>
+
+                <section>
+                  <h4>Otros duplicados</h4>
+                  {(alerts.duplicates || []).filter((g) => !(g.suspicious || g.looksLikeDate)).length === 0 ? (
+                    <p className="historial-meta">No hay otros grupos.</p>
+                  ) : (
+                    (alerts.duplicates || []).filter((g) => !(g.suspicious || g.looksLikeDate)).map((group) => (
                       <div key={`${group.reason}-${group.key}`} className="people-hub-alert-card">
                         <h5>
                           <AlertTriangle size={14} aria-hidden />{' '}
-                          {group.reason === 'dni' ? 'Mismo DNI' : group.reason === 'biometric' ? 'Mismo ID biométrico' : 'Mismo nombre sin DNI'}
-                          {' · '}{group.key}
-                          {group.strength === 'weak' ? ' (sugerencia)' : ''}
+                          {group.message
+                            || (group.reason === 'dni' ? 'Mismo DNI' : group.reason === 'biometric' ? 'Mismo ID biométrico' : 'Mismo nombre sin DNI')}
+                          {group.strength === 'weak' ? ' (revisar: puede ser falso positivo)' : ''}
                         </h5>
                         <ul>
                           {(group.people || []).map((p) => (
@@ -286,7 +415,7 @@ function PeopleAccessAdminSection() {
                             </li>
                           ))}
                         </ul>
-                        {(group.people || []).length >= 2 ? (
+                        {(group.people || []).length >= 2 && group.strength === 'high' ? (
                           <div className="people-hub-alert-actions">
                             <button
                               type="button"
@@ -298,34 +427,6 @@ function PeopleAccessAdminSection() {
                             </button>
                           </div>
                         ) : null}
-                      </div>
-                    ))
-                  )}
-                </section>
-
-                <section>
-                  <h4>Sugerencias BioStar ↔ empleado</h4>
-                  {(alerts.biostarSuggestions || []).length === 0 ? (
-                    <p className="historial-meta">Sin sugerencias por nombre.</p>
-                  ) : (
-                    (alerts.biostarSuggestions || []).map((s) => (
-                      <div key={`${s.orphan.id}-${s.candidate.id}`} className="people-hub-alert-card">
-                        <h5>Score {s.score}</h5>
-                        <p>
-                          BioStar: <strong>{s.orphan.name}</strong> (bio {s.orphan.biometricExternalId || '—'})
-                          {' → '}
-                          Empleado: <strong>{s.candidate.name}</strong> (DNI {s.candidate.idNumber || '—'})
-                        </p>
-                        <div className="people-hub-alert-actions">
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={merging}
-                            onClick={() => handleMerge(s.candidate.id, s.orphan.id)}
-                          >
-                            Unir en empleado
-                          </button>
-                        </div>
                       </div>
                     ))
                   )}

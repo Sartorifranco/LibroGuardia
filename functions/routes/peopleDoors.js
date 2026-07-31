@@ -17,6 +17,11 @@ const {
 } = require('../lib/peopleProfileUpdate');
 const { loadAllPeople, analyzePeopleAlerts } = require('../lib/peopleAlerts');
 const { mergePeople } = require('../lib/peopleMerge');
+const {
+  repairBiostarOrphanDoors,
+  clearSuspiciousSharedDnis
+} = require('../lib/peopleRepair');
+const { getDoorsConfig } = require('../lib/doorsConfig');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -71,8 +76,15 @@ router.get(
   async (_req, res) => {
     try {
       const people = await loadAllPeople(2000);
-      const alerts = analyzePeopleAlerts(people);
-      res.json({ ok: true, ...alerts });
+      const doorsCfg = await getDoorsConfig().catch(() => ({ doors: [] }));
+      const activeDoorCount = (doorsCfg.doors || []).filter((d) => d.active !== false).length;
+      const alerts = analyzePeopleAlerts(people, { activeDoorCount });
+      res.json({
+        ok: true,
+        ...alerts,
+        defaultDoorId: doorsCfg.defaultDoorId || null,
+        activeDoorCount
+      });
     } catch (err) {
       res.status(500).json({ message: err.message || 'Error al analizar personas' });
     }
@@ -139,6 +151,62 @@ router.post(
     } catch (err) {
       res.status(err.status || 500).json({
         message: err.message || 'Error al unificar personas',
+        code: err.code
+      });
+    }
+  }
+);
+
+/**
+ * Corrige puertas de huérfanos BioStar (sin DNI/legajo).
+ * Body: { mode: 'single'|'clear', doorId?: string }
+ * single = solo esa puerta (defaultDoorId si no mandan); clear = ninguna.
+ */
+router.post(
+  '/api/admin/people/repair-biostar-doors',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const result = await repairBiostarOrphanDoors({
+        mode: req.body?.mode === 'clear' ? 'clear' : 'single',
+        doorId: req.body?.doorId || null
+      });
+      res.json({
+        ok: true,
+        message: result.mode === 'clear'
+          ? `Puertas quitadas a ${result.updated} fichas BioStar sin nómina`
+          : `Dejadas en una sola puerta (${result.doorId}) para ${result.updated} fichas BioStar sin nómina`,
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al reparar puertas BioStar',
+        code: err.code
+      });
+    }
+  }
+);
+
+/**
+ * Limpia DNI sospechosos (fechas / compartidos por 3+).
+ * Deja el campo vacío para corregir a mano o re-importar.
+ */
+router.post(
+  '/api/admin/people/clear-suspicious-dnis',
+  auth,
+  canPeopleManage,
+  async (_req, res) => {
+    try {
+      const result = await clearSuspiciousSharedDnis();
+      res.json({
+        ok: true,
+        message: `Se limpiaron ${result.updated} DNI sospechosos o masivamente compartidos`,
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al limpiar DNI',
         code: err.code
       });
     }

@@ -4,6 +4,12 @@
 
 const { db } = require('../firestore');
 const { buildNameTokens } = require('./nameUtils');
+const {
+  buildNameKeyWithInitials,
+  scorePersonNameMatch,
+  looksLikeSuspiciousDni,
+  looksLikeDateDni
+} = require('./personIdentity');
 const { normalizeAllowedDoorIds } = require('./doorAccess');
 const { personToAdminJSON } = require('./peopleProfileUpdate');
 
@@ -26,13 +32,20 @@ const normalizeCategory = (value, person = {}) => {
 const toRow = (doc) => {
   const data = doc.data() || {};
   const base = personToAdminJSON(doc);
+  const name = base.name || '';
   return {
     ...base,
     category: normalizeCategory(data.category, data),
     source: data.source || data.origen || '',
-    nameKey: data.nameKey || buildNameTokens(base.name) || '',
+    nameKey: data.nameKey || buildNameKeyWithInitials(name) || buildNameTokens(name) || '',
+    nameKeyFull: buildNameKeyWithInitials(name),
     biostarUserId: data.biostarUserId || '',
-    allowedDoorIds: normalizeAllowedDoorIds(data.allowedDoorIds)
+    allowedDoorIds: normalizeAllowedDoorIds(data.allowedDoorIds),
+    hasLegajo: Boolean(String(base.legajo || '').trim()),
+    isBiostarOrphan: (data.source === 'biostar' || data.biometricBrand === 'suprema')
+      && Boolean(String(base.biometricExternalId || '').trim())
+      && !String(base.idNumber || '').trim()
+      && !String(base.legajo || '').trim()
   };
 };
 
@@ -49,19 +62,20 @@ const looksLikePlaceholderName = (name = '') => {
   return false;
 };
 
-const nameSimilarity = (a, b) => {
-  const ta = new Set(String(a || '').split(/\s+/).filter((t) => t.length > 1));
-  const tb = new Set(String(b || '').split(/\s+/).filter((t) => t.length > 1));
-  if (!ta.size || !tb.size) return 0;
-  let inter = 0;
-  ta.forEach((t) => { if (tb.has(t)) inter += 1; });
-  return inter / Math.max(ta.size, tb.size);
-};
+const isBiostarOrphanRow = (p) => Boolean(p.isBiostarOrphan)
+  || (
+    p.active !== false
+    && (p.source === 'biostar' || p.biometricBrand === 'suprema')
+    && String(p.biometricExternalId || '').trim()
+    && !String(p.idNumber || '').trim()
+    && !String(p.legajo || '').trim()
+  );
 
 /**
  * Agrupa duplicados fuertes y lista incompletos + sugerencias BioStar.
  */
-const analyzePeopleAlerts = (people = []) => {
+const analyzePeopleAlerts = (people = [], options = {}) => {
+  const activeDoorCount = Number(options.activeDoorCount) || 0;
   const byDni = new Map();
   const byBio = new Map();
   const byNameKey = new Map();
@@ -77,40 +91,59 @@ const analyzePeopleAlerts = (people = []) => {
       if (!byBio.has(bio)) byBio.set(bio, []);
       byBio.get(bio).push(p);
     }
-    const nk = String(p.nameKey || '').trim();
-    if (nk && !dni && p.active !== false) {
+    const nk = String(p.nameKeyFull || p.nameKey || '').trim();
+    // Solo agrupar por nombre si hay al menos 2 tokens (evita colapsar "marcos")
+    const tokenCount = nk ? nk.split(/\s+/).length : 0;
+    if (nk && tokenCount >= 2 && !dni && p.active !== false) {
       if (!byNameKey.has(nk)) byNameKey.set(nk, []);
       byNameKey.get(nk).push(p);
     }
   });
 
   const duplicates = [];
+  const suspiciousDnis = [];
+
   byDni.forEach((group, key) => {
-    if (group.length > 1) {
-      duplicates.push({
-        reason: 'dni',
-        key,
-        strength: 'high',
-        people: group
-      });
-    }
+    if (group.length <= 1) return;
+    const suspicious = looksLikeSuspiciousDni(key) || group.length >= 3;
+    const entry = {
+      reason: 'dni',
+      key,
+      strength: suspicious ? 'high' : 'high',
+      suspicious: looksLikeSuspiciousDni(key),
+      looksLikeDate: looksLikeDateDni(key),
+      message: looksLikeDateDni(key)
+        ? `El DNI ${key} parece una fecha (AAAA/MM/DD), no un documento real.`
+        : looksLikeSuspiciousDni(key)
+          ? `DNI ${key} es un valor sospechoso / de prueba.`
+          : group.length >= 3
+            ? `El DNI ${key} está en ${group.length} fichas activas (muy raro: revisar carga).`
+            : `Mismo DNI en ${group.length} fichas.`,
+      people: group
+    };
+    duplicates.push(entry);
+    if (suspicious) suspiciousDnis.push(entry);
   });
+
   byBio.forEach((group, key) => {
     if (group.length > 1) {
       duplicates.push({
         reason: 'biometric',
         key,
         strength: 'high',
+        message: `Mismo ID biométrico ${key} en ${group.length} fichas.`,
         people: group
       });
     }
   });
+
   byNameKey.forEach((group, key) => {
     if (group.length > 1) {
       duplicates.push({
         reason: 'name_no_dni',
         key,
         strength: 'weak',
+        message: `Mismo nombre clave “${key}” sin DNI (${group.length} fichas).`,
         people: group
       });
     }
@@ -121,7 +154,6 @@ const analyzePeopleAlerts = (people = []) => {
     const noDni = !String(p.idNumber || '').trim();
     const badName = looksLikePlaceholderName(p.name);
     const noDoors = !p.allowedDoorIds?.length;
-    const noBio = !String(p.biometricExternalId || '').trim();
     return noDni || badName || (noDoors && p.source === 'biostar') || (p.source === 'biostar' && noDni);
   }).map((p) => ({
     ...p,
@@ -129,30 +161,29 @@ const analyzePeopleAlerts = (people = []) => {
       !String(p.idNumber || '').trim() ? 'sin_dni' : null,
       looksLikePlaceholderName(p.name) ? 'nombre_incompleto' : null,
       !p.allowedDoorIds?.length ? 'sin_puertas' : null,
-      p.source === 'biostar' && !String(p.idNumber || '').trim() ? 'huerfano_biostar' : null
+      isBiostarOrphanRow(p) ? 'huerfano_biostar' : null,
+      looksLikeSuspiciousDni(p.idNumber) ? 'dni_sospechoso' : null
     ].filter(Boolean)
   }));
 
-  const biostarOrphans = people.filter((p) =>
-    p.active !== false
-    && (p.source === 'biostar' || p.biometricBrand === 'suprema')
-    && String(p.biometricExternalId || '').trim()
-    && !String(p.idNumber || '').trim()
-  );
+  const biostarOrphans = people.filter((p) => p.active !== false && isBiostarOrphanRow(p));
 
-  const withDni = people.filter((p) =>
-    p.active !== false && String(p.idNumber || '').trim() && !looksLikePlaceholderName(p.name)
+  const withIdentity = people.filter((p) =>
+    p.active !== false
+    && (String(p.idNumber || '').trim() || String(p.legajo || '').trim())
+    && !looksLikePlaceholderName(p.name)
+    && !looksLikeSuspiciousDni(p.idNumber)
   );
 
   const suggestions = [];
   biostarOrphans.forEach((orphan) => {
     let best = null;
     let bestScore = 0;
-    withDni.forEach((cand) => {
+    withIdentity.forEach((cand) => {
       if (cand.id === orphan.id) return;
-      if (String(cand.biometricExternalId || '').trim()) return;
-      const score = nameSimilarity(orphan.nameKey || orphan.name, cand.nameKey || cand.name);
-      if (score >= 0.6 && score > bestScore) {
+      // Preferir candidatos sin bio, o con bio distinto
+      const score = scorePersonNameMatch(orphan.name, cand.name);
+      if (score >= 0.72 && score > bestScore) {
         bestScore = score;
         best = cand;
       }
@@ -162,22 +193,42 @@ const analyzePeopleAlerts = (people = []) => {
         orphan,
         candidate: best,
         score: Number(bestScore.toFixed(2)),
-        reason: 'name_similarity'
+        reason: 'name_similarity',
+        message: `“${orphan.name}” (BioStar) parece la misma persona que “${best.name}” (DNI ${best.idNumber || '—'}).`
       });
     }
   });
-
   suggestions.sort((a, b) => b.score - a.score);
+
+  const biostarWithManyDoors = people.filter((p) => {
+    if (p.active === false) return false;
+    if (!isBiostarOrphanRow(p) && p.source !== 'biostar') return false;
+    const doors = p.allowedDoorIds || [];
+    if (activeDoorCount > 0) return doors.length >= Math.min(2, activeDoorCount);
+    return doors.length >= 2;
+  });
+
+  const allDoorsPeople = activeDoorCount > 1
+    ? people.filter((p) =>
+      p.active !== false
+      && (p.allowedDoorIds || []).length >= activeDoorCount)
+    : [];
 
   return {
     duplicates,
+    suspiciousDnis,
     incomplete,
     biostarSuggestions: suggestions.slice(0, 100),
+    biostarDoorIssues: biostarWithManyDoors,
+    allDoorsPeople,
     counts: {
       people: people.length,
       duplicates: duplicates.length,
+      suspiciousDnis: suspiciousDnis.length,
       incomplete: incomplete.length,
-      biostarSuggestions: Math.min(100, suggestions.length)
+      biostarSuggestions: Math.min(100, suggestions.length),
+      biostarDoorIssues: biostarWithManyDoors.length,
+      allDoorsPeople: allDoorsPeople.length
     }
   };
 };
@@ -188,5 +239,6 @@ module.exports = {
   loadAllPeople,
   analyzePeopleAlerts,
   looksLikePlaceholderName,
-  nameSimilarity
+  isBiostarOrphanRow,
+  scorePersonNameMatch
 };

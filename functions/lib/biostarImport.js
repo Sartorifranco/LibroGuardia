@@ -6,6 +6,7 @@ const { db, FieldValue, Timestamp } = require('../firestore');
 const { normalizeDni, getArgentinaDateParts } = require('./normalize');
 const { normalizeIdNumber } = require('../dniParser');
 const { buildNameTokens } = require('./nameUtils');
+const { buildNameKeyWithInitials } = require('./personIdentity');
 const { findPersonByDni } = require('../people');
 const {
   extractBiostarDniCandidates,
@@ -138,7 +139,7 @@ const importBiostarUsers = async (users = [], options = {}) => {
         });
       }
       if (!existing.nameKey && name) {
-        patch.nameKey = buildNameTokens(name);
+        patch.nameKey = buildNameKeyWithInitials(name) || buildNameTokens(name);
         patch.nameTokens = patch.nameKey;
       }
       await db.collection('people').doc(existing.id).set(patch, { merge: true });
@@ -157,8 +158,8 @@ const importBiostarUsers = async (users = [], options = {}) => {
     const doc = {
       name,
       nombre: name,
-      nameKey: buildNameTokens(name),
-      nameTokens: buildNameTokens(name),
+      nameKey: buildNameKeyWithInitials(name) || buildNameTokens(name),
+      nameTokens: buildNameKeyWithInitials(name) || buildNameTokens(name),
       biometricExternalId: userId,
       biometricBrand: 'suprema',
       biostarUserId: userId,

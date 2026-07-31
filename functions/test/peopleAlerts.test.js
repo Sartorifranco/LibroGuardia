@@ -9,7 +9,6 @@ describe('peopleAlerts', () => {
         id: 'a',
         name: 'Ana',
         idNumber: '30111222',
-        nameKey: 'ana',
         active: true,
         allowedDoorIds: ['puerta-p1'],
         biometricExternalId: ''
@@ -18,7 +17,6 @@ describe('peopleAlerts', () => {
         id: 'b',
         name: 'Ana Dup',
         idNumber: '30111222',
-        nameKey: 'ana dup',
         active: true,
         allowedDoorIds: [],
         biometricExternalId: ''
@@ -27,7 +25,6 @@ describe('peopleAlerts', () => {
         id: 'c',
         name: 'BioStar 9',
         idNumber: '',
-        nameKey: 'biostar',
         active: true,
         source: 'biostar',
         biometricExternalId: '9',
@@ -40,25 +37,24 @@ describe('peopleAlerts', () => {
     assert.ok(alerts.incomplete.some((p) => p.id === 'c'));
   });
 
-  it('sugiere match BioStar por nombre', () => {
+  it('sugiere match BioStar por nombre invertido / inicial', async () => {
     const people = [
       {
         id: 'emp',
         name: 'Sartori Franco',
-        idNumber: '38646611',
-        nameKey: 'franco sartori',
+        idNumber: '30111222',
+        legajo: '1',
         active: true,
         allowedDoorIds: ['puerta-p1'],
         biometricExternalId: ''
       },
       {
         id: 'bio',
-        name: 'SARTORI Franco',
+        name: 'Franco S',
         idNumber: '',
-        nameKey: 'franco sartori',
         active: true,
         source: 'biostar',
-        biometricExternalId: '55',
+        biometricExternalId: '9',
         biometricBrand: 'suprema',
         allowedDoorIds: ['puerta-p2']
       }

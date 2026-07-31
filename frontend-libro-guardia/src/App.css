@@ -4041,9 +4041,12 @@ html.dark .doors-plant-bar__body {
   background: var(--surface-2, rgba(0, 0, 0, 0.15));
 }
 
-.people-hub-alert-card h5 {
-  margin: 0 0 0.5rem;
-  font-size: 0.9rem;
+.people-hub-alert-card--actions {
+  border-color: rgba(185, 28, 28, 0.45);
+}
+
+.people-hub-alert-card code {
+  font-size: 0.85em;
 }
 
 .people-hub-alert-actions {
