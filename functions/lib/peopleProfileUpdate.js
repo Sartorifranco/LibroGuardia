@@ -49,6 +49,8 @@ const personToAdminJSON = (doc) => {
     biometricBrand: data.biometricBrand || '',
     biostarUserId: data.biostarUserId || '',
     source: data.source || data.origen || '',
+    origen: data.origen || '',
+    mergedIntoId: data.mergedIntoId || null,
     category: resolveCategory(data),
     nameKey: data.nameKey || '',
     allowedDoorIds: normalizeAllowedDoorIds(data.allowedDoorIds)

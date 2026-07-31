@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Sparkles, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, Sparkles, AlertTriangle, Eraser } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
 
 const GROUP_META = {
@@ -69,10 +69,158 @@ function SuggestionCard({ item, applyingId, onAccept, onAcceptAlt }) {
   );
 }
 
+function RetainSourcesPanel({ authToken, onDone, onError, onSuccess, confirm }) {
+  const [plan, setPlan] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await apiFetch('/admin/people/retain-sources-plan', {
+        token: authToken,
+        allowForbidden: true
+      });
+      setPlan(data.plan || null);
+      setProgress(null);
+    } catch (err) {
+      onError?.(err.message || 'No se pudo calcular qué conservar');
+    } finally {
+      setLoading(false);
+    }
+  }, [authToken, onError]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const runWipe = async () => {
+    const n = plan?.summary?.deactivate || 0;
+    if (n < 1) {
+      onSuccess?.('No hay fichas de más para dar de baja');
+      return;
+    }
+    const ok = await confirm?.({
+      title: 'Conservar solo Nómina + BioStar',
+      message: `Se darán de baja ${n} fichas que no son de la nómina ni de BioStar. No se borran (queda el historial), pero dejan de aparecer en Personas y no abren puertas. ¿Continuar?`,
+      confirmLabel: 'Dar de baja el resto'
+    });
+    if (!ok) return;
+
+    setRunning(true);
+    let cursor = null;
+    let totalDeactivated = 0;
+    try {
+      let done = false;
+      let guard = 0;
+      while (!done && guard < 500) {
+        guard += 1;
+        const step = await apiFetch('/admin/people/retain-sources-step', {
+          method: 'POST',
+          token: authToken,
+          body: { cursor, batchSize: 40 }
+        });
+        totalDeactivated += step.deactivated || 0;
+        cursor = step.cursor || cursor;
+        done = Boolean(step.done);
+        setProgress({ deactivated: totalDeactivated, done });
+      }
+      onSuccess?.(`Listo: ${totalDeactivated} fichas dadas de baja. Quedan nómina + BioStar.`);
+      await load();
+      onDone?.();
+    } catch (err) {
+      onError?.(err.message || 'Falló la limpieza masiva');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (loading && !plan) {
+    return (
+      <section className="people-cleanup__retain" role="status">
+        <span>Calculando fichas a conservar…</span>
+      </section>
+    );
+  }
+
+  const s = plan?.summary || {};
+  const samples = plan?.sampleDeactivate || [];
+
+  return (
+    <section className="people-cleanup__retain" aria-label="Conservar nómina y BioStar">
+      <header className="people-cleanup__retain-head">
+        <Eraser size={20} aria-hidden />
+        <div>
+          <h4>Conservar solo Nómina + BioStar</h4>
+          <p>
+            Deja activas las fichas de la nómina importada y las de BioStar (huella).
+            El resto se da de baja (no se borra el historial).
+          </p>
+        </div>
+      </header>
+      <ul className="people-cleanup__retain-stats">
+        <li>
+          <strong>{s.keep || 0}</strong>
+          {' '}
+          se conservan (
+          {s.keepNomina || 0}
+          {' '}
+          nómina ·
+          {' '}
+          {s.keepBiostar || 0}
+          {' '}
+          BioStar)
+        </li>
+        <li>
+          <strong>{s.deactivate || 0}</strong>
+          {' '}
+          a dar de baja
+        </li>
+        <li>
+          <strong>{s.alreadyOut || 0}</strong>
+          {' '}
+          ya inactivas / fusionadas
+        </li>
+      </ul>
+      {samples.length > 0 ? (
+        <p className="historial-meta">
+          Ejemplos a baja:
+          {' '}
+          {samples.slice(0, 8).map((x) => x.name).join(', ')}
+          {samples.length > 8 ? '…' : ''}
+        </p>
+      ) : null}
+      {progress ? (
+        <p className="historial-meta" role="status">
+          Progreso:
+          {' '}
+          {progress.deactivated}
+          {' '}
+          bajas…
+        </p>
+      ) : null}
+      <div className="people-hub-alert-actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={running || (s.deactivate || 0) < 1}
+          onClick={runWipe}
+        >
+          {running ? 'Dando de baja…' : `Dar de baja ${s.deactivate || 0} fichas`}
+        </button>
+        <button type="button" className="btn btn-secondary" disabled={running} onClick={load}>
+          Recalcular
+        </button>
+      </div>
+    </section>
+  );
+}
+
 /**
- * Asistente de limpieza: una sugerencia = un botón Aceptar.
+ * Asistente de limpieza: retención de fuentes + sugerencias puntuales.
  */
-function PeopleCleanupWizard({ authToken, onDone, onError, onSuccess }) {
+function PeopleCleanupWizard({ authToken, onDone, onError, onSuccess, confirm }) {
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [applyingId, setApplyingId] = useState(null);
@@ -116,7 +264,6 @@ function PeopleCleanupWizard({ authToken, onDone, onError, onSuccess }) {
         return;
       }
 
-      // Quitar de inmediato de la UI (el puente BioStar no debe reaparecerla).
       setPlan((prev) => {
         if (!prev?.groups) return prev;
         const strip = (list = []) => list.filter((s) => s.id !== item.id);
@@ -138,7 +285,6 @@ function PeopleCleanupWizard({ authToken, onDone, onError, onSuccess }) {
       });
       onSuccess?.(data.message || 'Sugerencia aplicada');
       setLastMsg(data.message || 'OK');
-      // Recalcular en servidor (fuente de verdad)
       const fresh = await apiFetch('/admin/people/cleanup-plan', {
         token: authToken,
         allowForbidden: true
@@ -161,15 +307,7 @@ function PeopleCleanupWizard({ authToken, onDone, onError, onSuccess }) {
     });
   };
 
-  if (loading || !plan) {
-    return (
-      <div className="admin-empty admin-empty--loading" role="status">
-        <span>Armando sugerencias de limpieza…</span>
-      </div>
-    );
-  }
-
-  const groups = plan.groups || {};
+  const groups = plan?.groups || {};
   const counts = {
     uniones: groups.uniones?.length || 0,
     dni: groups.dni?.length || 0,
@@ -181,92 +319,85 @@ function PeopleCleanupWizard({ authToken, onDone, onError, onSuccess }) {
 
   return (
     <div className="people-cleanup">
+      <RetainSourcesPanel
+        authToken={authToken}
+        onDone={onDone}
+        onError={onError}
+        onSuccess={onSuccess}
+        confirm={confirm}
+      />
+
       <header className="people-cleanup__hero">
         <Sparkles size={22} aria-hidden />
         <div>
-          <h4>Asistente de limpieza</h4>
+          <h4>Asistente de uniones / DNI / puertas</h4>
           <p>
-            Cada tarjeta es una sugerencia. Aceptá solo las que consideres correctas
+            Cada tarjeta es una sugerencia puntual. Aceptá solo las que consideres correctas
             ({total} pendientes).
           </p>
         </div>
       </header>
 
-      <div className="people-cleanup__steps" role="tablist">
-        {Object.keys(GROUP_META).map((key) => (
-          <button
-            key={key}
-            type="button"
-            className={`people-hub-tab${tab === key ? ' is-active' : ''}`}
-            onClick={() => setTab(key)}
-          >
-            {GROUP_META[key].label} ({counts[key]})
-          </button>
-        ))}
-        <button type="button" className="btn btn-secondary-small" disabled={Boolean(applyingId)} onClick={loadPlan}>
-          Recalcular
-        </button>
-      </div>
-
-      {lastMsg ? (
-        <p className="people-cleanup__ok" role="status">
-          <CheckCircle2 size={16} aria-hidden /> {lastMsg}
-        </p>
-      ) : null}
-
-      <p className="historial-meta">{GROUP_META[tab]?.hint}</p>
-
-      {list.length === 0 ? (
-        <p className="historial-meta">No hay sugerencias en esta categoría.</p>
-      ) : (
-        <div className="people-cleanup__panel">
-          {list.map((item) => (
-            <SuggestionCard
-              key={item.id}
-              item={item}
-              applyingId={applyingId}
-              onAccept={acceptOne}
-              onAcceptAlt={item.altDoors?.length ? acceptAltDoors : null}
-            />
-          ))}
+      {loading && !plan ? (
+        <div className="admin-empty admin-empty--loading" role="status">
+          <span>Armando sugerencias de limpieza…</span>
         </div>
-      )}
-
-      {(plan.remainingBiostarOrphans || []).length > 0 && tab === 'uniones' ? (
-        <section>
-          <h4>Huérfanos BioStar sin match ({plan.remainingBiostarOrphans.length})</h4>
-          <p className="historial-meta">
-            Quedan sin pareja clara por nombre. Completá DNI a mano o unilos desde la ficha.
-          </p>
-          <div className="people-cleanup__table-wrap">
-            <table className="people-access-table">
-              <thead>
-                <tr>
-                  <th>Nombre</th>
-                  <th>ID biométrico</th>
-                  <th>Puertas</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(plan.remainingBiostarOrphans || []).slice(0, 40).map((p) => (
-                  <tr key={p.id}>
-                    <td>{p.name}</td>
-                    <td>{p.biometricExternalId || '—'}</td>
-                    <td>{(p.doors || []).join(', ') || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      ) : (
+        <>
+          <div className="people-cleanup__steps" role="tablist">
+            {Object.keys(GROUP_META).map((key) => (
+              <button
+                key={key}
+                type="button"
+                className={`people-hub-tab${tab === key ? ' is-active' : ''}`}
+                onClick={() => setTab(key)}
+              >
+                {GROUP_META[key].label}
+                {' '}
+                (
+                {counts[key]}
+                )
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn btn-secondary-small"
+              disabled={Boolean(applyingId)}
+              onClick={loadPlan}
+            >
+              Recalcular
+            </button>
           </div>
-        </section>
-      ) : null}
 
-      {plan.summary?.allDoorsPeople > 0 && tab === 'puertas' ? (
-        <p className="historial-meta">
-          Hay {plan.summary.allDoorsPeople} personas con acceso a las {plan.activeDoorCount} puertas activas.
-          Aceptá ficha por ficha, o usá “Solo {plan.defaultDoorId}” si corresponde al lector BioStar.
-        </p>
-      ) : null}
+          {lastMsg ? (
+            <p className="people-cleanup__ok" role="status">
+              <CheckCircle2 size={16} aria-hidden />
+              {' '}
+              {lastMsg}
+            </p>
+          ) : null}
+
+          <p className="historial-meta">{GROUP_META[tab]?.hint}</p>
+
+          {list.length === 0 ? (
+            <div className="admin-empty">
+              <p>Nada pendiente en esta categoría.</p>
+            </div>
+          ) : (
+            <div className="people-cleanup__list">
+              {list.map((item) => (
+                <SuggestionCard
+                  key={item.id}
+                  item={item}
+                  applyingId={applyingId}
+                  onAccept={acceptOne}
+                  onAcceptAlt={item.altDoors?.length ? acceptAltDoors : null}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

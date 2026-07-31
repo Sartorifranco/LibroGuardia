@@ -27,6 +27,10 @@ const {
   applyCleanupPlan,
   applyCleanupActions
 } = require('../lib/peopleCleanup');
+const {
+  buildRetainSourcesPlan,
+  applyRetainSourcesStep
+} = require('../lib/peopleRetainSources');
 const { getDoorsConfig } = require('../lib/doorsConfig');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 
@@ -46,7 +50,7 @@ const findPeopleByField = async (field, value) => {
   return snap.docs;
 };
 
-/** Buscar personas (people) por nombre, DNI o legajo. Incluye inactivas (admin). */
+/** Buscar personas. Por defecto solo activas sin merge (ocultá basura desactivada). */
 router.get(
   '/api/admin/people',
   auth,
@@ -54,8 +58,12 @@ router.get(
   async (req, res) => {
     try {
       const q = String(req.query.q || '').trim().toLowerCase();
-      const snap = await db.collection('people').limit(800).get();
+      const includeInactive = req.query.includeInactive === '1' || req.query.includeInactive === 'true';
+      const snap = await db.collection('people').limit(1500).get();
       let people = snap.docs.map(personToJSON);
+      if (!includeInactive) {
+        people = people.filter((p) => p.active !== false && !p.mergedIntoId);
+      }
       if (q) {
         const digits = q.replace(/\D/g, '');
         people = people.filter((p) =>
@@ -63,11 +71,16 @@ router.get(
           || String(p.legajo || '').toLowerCase().includes(q)
           || (digits && String(p.idNumber).includes(digits))
           || (digits && String(p.legajo || '').includes(digits))
+          || String(p.biometricExternalId || '').toLowerCase().includes(q)
           || p.id.toLowerCase().includes(q)
         );
       }
       people.sort((a, b) => a.name.localeCompare(b.name, 'es'));
-      res.json({ people: q ? people.slice(0, 80) : people });
+      res.json({
+        people: q ? people.slice(0, 80) : people,
+        includeInactive,
+        truncated: snap.size >= 1500
+      });
     } catch (err) {
       res.status(500).json({ message: 'Error al buscar personas', error: err.message });
     }
@@ -230,6 +243,44 @@ router.get(
       res.json({ ok: true, plan });
     } catch (err) {
       res.status(500).json({ message: err.message || 'Error al armar plan de limpieza' });
+    }
+  }
+);
+
+/** Preview: conservar solo nómina + BioStar (no escribe). */
+router.get(
+  '/api/admin/people/retain-sources-plan',
+  auth,
+  canPeopleManage,
+  async (_req, res) => {
+    try {
+      const plan = await buildRetainSourcesPlan();
+      res.json({ ok: true, plan });
+    } catch (err) {
+      res.status(500).json({ message: err.message || 'Error al armar plan de retención' });
+    }
+  }
+);
+
+/**
+ * Desactiva un lote de fichas que no son nómina ni BioStar.
+ * Body: { cursor?, batchSize? }
+ */
+router.post(
+  '/api/admin/people/retain-sources-step',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const cursor = req.body?.cursor ? String(req.body.cursor) : null;
+      const batchSize = Number(req.body?.batchSize) || 40;
+      const result = await applyRetainSourcesStep({ cursor, batchSize });
+      const message = result.done
+        ? `Listo: se dieron de baja ${result.deactivated} en este paso (recorrido terminado)`
+        : `Baja parcial: ${result.deactivated} fichas (continúa…)`;
+      res.json({ ok: true, message, ...result });
+    } catch (err) {
+      res.status(500).json({ message: err.message || 'Error al aplicar retención de fuentes' });
     }
   }
 );

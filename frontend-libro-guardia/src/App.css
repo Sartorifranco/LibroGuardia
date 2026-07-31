@@ -4067,6 +4067,41 @@ html.dark .doors-plant-bar__body {
   gap: 1rem;
 }
 
+.people-cleanup__retain {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(200, 80, 60, 0.35);
+  background: rgba(120, 40, 30, 0.12);
+}
+
+.people-cleanup__retain-head {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.people-cleanup__retain-head h4 {
+  margin: 0 0 0.25rem;
+}
+
+.people-cleanup__retain-head p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.people-cleanup__retain-stats {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 .people-cleanup__hero {
   display: flex;
   gap: 0.75rem;

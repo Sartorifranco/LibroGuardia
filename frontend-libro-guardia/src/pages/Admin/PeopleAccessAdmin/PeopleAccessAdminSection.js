@@ -4,6 +4,7 @@ import DoorAccessEditor from '../../../components/DoorAccessEditor';
 import PersonPhotoField from '../../../components/PersonPhotoField';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
+import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
 import { hasPermission } from '../../../utils/permissions';
 
@@ -53,6 +54,7 @@ const emptyDraft = () => ({
 function PeopleAccessAdminSection() {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
+  const { confirm } = useConfirm();
   const [people, setPeople] = useState([]);
   const [activeDoorCount, setActiveDoorCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -279,6 +281,7 @@ function PeopleAccessAdminSection() {
             onDone={loadPeople}
             onError={showError}
             onSuccess={showSuccess}
+            confirm={confirm}
           />
         ) : hubTab === 'alertas' ? (
           <div className="people-hub-alerts">
