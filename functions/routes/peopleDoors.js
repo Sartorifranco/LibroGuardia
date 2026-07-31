@@ -21,6 +21,7 @@ const {
   repairBiostarOrphanDoors,
   clearSuspiciousSharedDnis
 } = require('../lib/peopleRepair');
+const { buildCleanupPlan, applyCleanupPlan } = require('../lib/peopleCleanup');
 const { getDoorsConfig } = require('../lib/doorsConfig');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 
@@ -207,6 +208,53 @@ router.post(
     } catch (err) {
       res.status(err.status || 500).json({
         message: err.message || 'Error al limpiar DNI',
+        code: err.code
+      });
+    }
+  }
+);
+
+/** Vista previa del asistente de limpieza (no escribe). */
+router.get(
+  '/api/admin/people/cleanup-plan',
+  auth,
+  canPeopleManage,
+  async (_req, res) => {
+    try {
+      const plan = await buildCleanupPlan();
+      res.json({ ok: true, plan });
+    } catch (err) {
+      res.status(500).json({ message: err.message || 'Error al armar plan de limpieza' });
+    }
+  }
+);
+
+/**
+ * Aplica limpieza segura (+ merges opcionales de revisión).
+ * Body: { clearSuspiciousDnis?, repairBiostarDoors?, applyAutoMerges?, extraMerges?, biostarDoorMode? }
+ */
+router.post(
+  '/api/admin/people/cleanup-apply',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const result = await applyCleanupPlan({
+        clearSuspiciousDnis: body.clearSuspiciousDnis !== false,
+        repairBiostarDoors: body.repairBiostarDoors !== false,
+        applyAutoMerges: body.applyAutoMerges !== false,
+        extraMerges: Array.isArray(body.extraMerges) ? body.extraMerges : [],
+        biostarDoorMode: body.biostarDoorMode === 'clear' ? 'clear' : 'single'
+      });
+      res.json({
+        ok: true,
+        message: `Limpieza aplicada: ${result.report.merged} uniones, ${result.report.repairedDoors} puertas, ${result.report.clearedDnis} DNI`,
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al aplicar limpieza',
         code: err.code
       });
     }

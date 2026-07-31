@@ -32,7 +32,10 @@ const pickPrefer = (keepVal, mergeVal) => {
 /**
  * Une mergeId dentro de keepId. Desactiva mergeId.
  */
-const mergePeople = async (keepId, mergeId, { ignoredSuggestion = false } = {}) => {
+const mergePeople = async (keepId, mergeId, {
+  ignoredSuggestion = false,
+  doorsPolicy = 'union'
+} = {}) => {
   const keep = String(keepId || '').trim();
   const merge = String(mergeId || '').trim();
   if (!keep || !merge) throw httpError(400, 'keepId y mergeId son obligatorios');
@@ -46,6 +49,16 @@ const mergePeople = async (keepId, mergeId, { ignoredSuggestion = false } = {}) 
 
   const keepData = keepSnap.data() || {};
   const mergeData = mergeSnap.data() || {};
+
+  const keepDoors = normalizeAllowedDoorIds(keepData.allowedDoorIds);
+  const mergeDoors = normalizeAllowedDoorIds(mergeData.allowedDoorIds);
+  let nextDoors = keepDoors;
+  if (doorsPolicy === 'union') {
+    nextDoors = unionDoors(keepDoors, mergeDoors);
+  } else if (doorsPolicy === 'prefer_keep') {
+    // Conserva puertas del canónico; si no tenía ninguna, usa las del merge.
+    nextDoors = keepDoors.length ? keepDoors : mergeDoors;
+  }
 
   const patch = {
     name: pickPrefer(keepData.name || keepData.nombre, mergeData.name || mergeData.nombre),
@@ -63,10 +76,10 @@ const mergePeople = async (keepId, mergeId, { ignoredSuggestion = false } = {}) 
     photoDataUrl: pickPrefer(keepData.photoDataUrl, mergeData.photoDataUrl) || null,
     notas: pickPrefer(keepData.notas, mergeData.notas) || '',
     company: pickPrefer(keepData.company, mergeData.company) || '',
-    allowedDoorIds: unionDoors(keepData.allowedDoorIds, mergeData.allowedDoorIds),
+    allowedDoorIds: nextDoors,
     category: normalizeCategory(
       pickPrefer(keepData.category, mergeData.category),
-      { ...mergeData, ...keepData }
+      { ...mergeData, ...keepData, dniNormalized: pickPrefer(keepData.dniNormalized, mergeData.dniNormalized) }
     ),
     active: keepData.active !== false,
     mergedFromIds: FieldValue.arrayUnion(merge),

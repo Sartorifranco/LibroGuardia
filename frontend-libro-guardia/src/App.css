@@ -4045,6 +4045,89 @@ html.dark .doors-plant-bar__body {
   border-color: rgba(185, 28, 28, 0.45);
 }
 
+.people-hub-alert-card h5 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.people-hub-alert-card code {
+  font-size: 0.85em;
+}
+
+.people-hub-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.people-cleanup {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.people-cleanup__hero {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border, #333);
+  background: var(--surface-2, rgba(0, 0, 0, 0.15));
+}
+
+.people-cleanup__hero h4 {
+  margin: 0 0 0.25rem;
+}
+
+.people-cleanup__hero p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.people-cleanup__steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.people-cleanup__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.people-cleanup__list {
+  margin: 0.5rem 0 0.75rem;
+  padding-left: 1.1rem;
+  font-size: 0.875rem;
+}
+
+.people-cleanup__table-wrap {
+  overflow: auto;
+  max-height: 320px;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+}
+
+.people-cleanup__ok {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.875rem;
+  color: #16a34a;
+}
+
+.people-cleanup__review-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  cursor: pointer;
+}
+
 .people-hub-alert-card code {
   font-size: 0.85em;
 }

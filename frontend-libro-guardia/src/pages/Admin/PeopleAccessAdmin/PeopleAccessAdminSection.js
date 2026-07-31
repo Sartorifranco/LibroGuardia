@@ -7,7 +7,10 @@ import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
 import { hasPermission } from '../../../utils/permissions';
 
+import PeopleCleanupWizard from './PeopleCleanupWizard';
+
 const CATEGORY_TABS = [
+  { id: 'limpieza', label: 'Limpieza' },
   { id: 'todos', label: 'Todas' },
   { id: 'empleado', label: 'Empleados' },
   { id: 'tercero', label: 'Terceros' },
@@ -54,7 +57,7 @@ function PeopleAccessAdminSection() {
   const [activeDoorCount, setActiveDoorCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
-  const [hubTab, setHubTab] = useState('todos');
+  const [hubTab, setHubTab] = useState('limpieza');
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [saving, setSaving] = useState(false);
@@ -107,7 +110,7 @@ function PeopleAccessAdminSection() {
 
   const filtered = useMemo(() => {
     let list = people;
-    if (hubTab !== 'todos' && hubTab !== 'alertas') {
+    if (hubTab !== 'todos' && hubTab !== 'alertas' && hubTab !== 'limpieza') {
       list = list.filter((p) => (p.category || 'sin_clasificar') === hubTab);
     }
     const q = filter.trim().toLowerCase();
@@ -270,7 +273,14 @@ function PeopleAccessAdminSection() {
           ))}
         </div>
 
-        {hubTab === 'alertas' ? (
+        {hubTab === 'limpieza' ? (
+          <PeopleCleanupWizard
+            authToken={authToken}
+            onDone={loadPeople}
+            onError={showError}
+            onSuccess={showSuccess}
+          />
+        ) : hubTab === 'alertas' ? (
           <div className="people-hub-alerts">
             {alertsLoading || !alerts ? (
               <div className="admin-empty admin-empty--loading" role="status">
