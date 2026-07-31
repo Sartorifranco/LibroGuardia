@@ -13,8 +13,8 @@ function DoorAccessEditor({
   disabled = false,
   highlight = false,
   forceRestricted = false,
-  label = '¿Por qué puertas puede ingresar?',
-  hint = 'Sin puertas marcadas = no puede ingresar por ninguna. El egreso no se restringe por puerta.'
+  label = 'Puertas permitidas',
+  hint = 'Lista explícita: solo las puertas marcadas. Vacío = ninguna puerta. No hay acceso global a todas las puertas.'
 }) {
   const [doors, setDoors] = useState([]);
   const [selected, setSelected] = useState(
@@ -48,14 +48,27 @@ function DoorAccessEditor({
   };
 
   const doorOptions = useMemo(
-    () => doors.map((d) => ({ id: d.id, label: d.name || d.id })),
+    () => doors.map((d) => ({
+      id: d.id,
+      label: d.name || d.id,
+      code: d.doorCode || (String(d.id || '').replace(/^puerta-/i, '').toUpperCase())
+    })),
     [doors]
   );
+
+  const allSelected = doorOptions.length > 0 && selected.length >= doorOptions.length
+    && doorOptions.every((d) => selected.includes(d.id));
 
   return (
     <div className={`door-access-editor${highlight ? ' door-access-editor--highlight' : ''}`}>
       <p className="door-access-editor__label">{label}</p>
       {hint ? <p className="door-access-editor__hint">{hint}</p> : null}
+      {allSelected ? (
+        <p className="door-access-editor__warn" role="status">
+          Esta persona tiene <strong>todas</strong> las puertas activas. Revisá si es intencional
+          (no es el valor por defecto del sistema).
+        </p>
+      ) : null}
       <div className="door-access-editor__doors">
         {doorOptions.length === 0 && (
           <span className="historial-meta">No hay puertas configuradas</span>
@@ -68,10 +81,13 @@ function DoorAccessEditor({
               disabled={disabled}
               onChange={() => toggleDoor(door.id)}
             />
-            {door.label}
-            {forceRestricted && selected.includes(door.id) && (
-              <span className="historial-meta"> · #{selected.indexOf(door.id) + 1}</span>
-            )}
+            <span className="door-access-editor__door-text">
+              <strong>{door.label}</strong>
+              <span className="historial-meta"> · {door.id}</span>
+              {forceRestricted && selected.includes(door.id) && (
+                <span className="historial-meta"> · #{selected.indexOf(door.id) + 1}</span>
+              )}
+            </span>
           </label>
         ))}
       </div>

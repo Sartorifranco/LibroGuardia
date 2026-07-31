@@ -64,7 +64,7 @@ export const ADMIN_SECTION_SEGMENTS = {
   // Centro único de hardware (Fase A). URLs viejas redirigen acá.
   equiposAcceso: 'equipos-acceso',
   doors: 'equipos-acceso',
-  peopleAccess: 'people-access',
+  peopleAccess: 'personas',
   access: 'access',
   citaciones: 'citaciones',
   nomina: 'nomina',
@@ -91,7 +91,9 @@ export const ADMIN_SEGMENT_TO_SECTION = Object.entries(ADMIN_SECTION_SEGMENTS).r
   // URLs legadas siguen abriendo el centro único
   doors: 'equiposAcceso',
   lectores: 'equiposAcceso',
-  estaciones: 'equiposAcceso'
+  estaciones: 'equiposAcceso',
+  'people-access': 'peopleAccess',
+  personas: 'peopleAccess'
 });
 
 export const guardiaPath = (tabId = 'inicio') => {

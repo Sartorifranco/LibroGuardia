@@ -13,6 +13,8 @@ import {
   toLocalYmd
 } from '../../utils/historialFilters';
 import {
+  DOOR_ENTRY_ORIGIN_FILTERS,
+  filterDoorAccessEntries,
   formatDoorAccessPhrase,
   getHistorialSection,
   HISTORIAL_SECTIONS
@@ -45,14 +47,38 @@ function HistorialPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [doorNamesById, setDoorNamesById] = useState({});
+  const [doorFilterId, setDoorFilterId] = useState('all');
+  const [originFilter, setOriginFilter] = useState('all');
   const requestIdRef = useRef(0);
 
   const section = useMemo(() => getHistorialSection(sectionId), [sectionId]);
+
+  const doorTabs = useMemo(() => {
+    const ids = Object.keys(doorNamesById || {}).sort((a, b) =>
+      String(doorNamesById[a] || a).localeCompare(String(doorNamesById[b] || b), 'es')
+    );
+    return [{ id: 'all', label: 'Todas las puertas' }, ...ids.map((id) => ({
+      id,
+      label: doorNamesById[id] || id
+    }))];
+  }, [doorNamesById]);
+
+  const visibleEntries = useMemo(() => {
+    if (sectionId !== 'accesos') return entries;
+    return filterDoorAccessEntries(entries, { doorId: doorFilterId, origin: originFilter });
+  }, [entries, sectionId, doorFilterId, originFilter]);
 
   const { startDate, endDate } = useMemo(
     () => resolveHistorialDateRange(datePreset, customStartDate, customEndDate),
     [datePreset, customStartDate, customEndDate]
   );
+
+  useEffect(() => {
+    if (sectionId !== 'accesos') {
+      setDoorFilterId('all');
+      setOriginFilter('all');
+    }
+  }, [sectionId]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm.trim()), 350);
@@ -166,9 +192,13 @@ function HistorialPage() {
   };
 
   const generateReportData = (sourceEntries) => {
+    const rowsForExport = sectionId === 'accesos'
+      ? filterDoorAccessEntries(sourceEntries, { doorId: doorFilterId, origin: originFilter })
+      : sourceEntries;
+
     if (sectionId === 'accesos') {
       const headers = ['Persona', 'Movimiento', 'Puerta', 'Fecha', 'Hora registro', 'Hora evento', 'Usuario', 'Origen'];
-      const data = sourceEntries.map((entry) => {
+      const data = rowsForExport.map((entry) => {
         const date = new Date(entry.timestamp);
         const { name, verb, door } = formatDoorAccessPhrase(entry, doorNamesById);
         return [
@@ -198,7 +228,7 @@ function HistorialPage() {
       headers = [...baseHeaders, 'Descripción'];
     }
 
-    const data = sourceEntries.map((entry) => {
+    const data = rowsForExport.map((entry) => {
       const date = new Date(entry.timestamp);
       const commonDetails = [
         date.toLocaleDateString(),
@@ -218,7 +248,19 @@ function HistorialPage() {
 
   const filterLabel = () => {
     const presetLabel = HISTORIAL_DATE_PRESETS.find((p) => p.id === datePreset)?.label || datePreset;
-    return `Sección: ${section.label} · Fechas (${presetLabel}): ${startDate || '—'} a ${endDate || '—'}${debouncedSearch ? ` · Buscar: "${debouncedSearch}"` : ''}`;
+    const doorLabel = sectionId === 'accesos'
+      ? (doorTabs.find((d) => d.id === doorFilterId)?.label || doorFilterId)
+      : null;
+    const originLabel = sectionId === 'accesos'
+      ? (DOOR_ENTRY_ORIGIN_FILTERS.find((o) => o.id === originFilter)?.label || originFilter)
+      : null;
+    return [
+      `Sección: ${section.label}`,
+      doorLabel ? `Puerta: ${doorLabel}` : null,
+      originLabel ? `Origen: ${originLabel}` : null,
+      `Fechas (${presetLabel}): ${startDate || '—'} a ${endDate || '—'}`,
+      debouncedSearch ? `Buscar: "${debouncedSearch}"` : null
+    ].filter(Boolean).join(' · ');
   };
 
   const runExport = async (kind) => {
@@ -231,7 +273,11 @@ function HistorialPage() {
         showError('No hay datos para exportar con estos filtros.');
         return;
       }
-      const fileBase = `historial_${section.exportName || sectionId}`;
+      const doorSlug = sectionId === 'accesos' && doorFilterId !== 'all'
+        ? `_${String(doorFilterId).replace(/[^\w-]+/g, '_')}`
+        : '';
+      const originSlug = sectionId === 'accesos' && originFilter !== 'all' ? `_${originFilter}` : '';
+      const fileBase = `historial_${section.exportName || sectionId}${doorSlug}${originSlug}`;
 
       if (kind === 'csv') {
         const csvContent = [
@@ -320,6 +366,37 @@ function HistorialPage() {
         ))}
       </div>
 
+      {sectionId === 'accesos' && (
+        <>
+          <div className="historial-sections historial-door-tabs" role="tablist" aria-label="Filtro por puerta">
+            {doorTabs.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                role="tab"
+                aria-selected={doorFilterId === d.id}
+                className={`historial-section-tab${doorFilterId === d.id ? ' is-active' : ''}`}
+                onClick={() => setDoorFilterId(d.id)}
+              >
+                {d.label}
+              </button>
+            ))}
+          </div>
+          <div className="historial-presets" role="group" aria-label="Origen del acceso">
+            {DOOR_ENTRY_ORIGIN_FILTERS.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={`historial-preset-btn${originFilter === o.id ? ' is-active' : ''}`}
+                onClick={() => setOriginFilter(o.id)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {!canView && canExport && (
         <div className="historial-export-only-note" role="status">
           No tenés permiso para ver el detalle de los registros, pero podés exportar el reporte.
@@ -396,7 +473,9 @@ function HistorialPage() {
       {canView && (
         <>
           <p className="historial-meta">
-            {loading ? 'Cargando…' : `${entries.length} registro(s) en “${section.label}”`}
+            {loading
+              ? 'Cargando…'
+              : `${visibleEntries.length} registro(s) en “${section.label}”${sectionId === 'accesos' && entries.length !== visibleEntries.length ? ` (de ${entries.length} cargados)` : ''}`}
             {hasMore ? ' · hay más en este rango' : ''}
             {' · '}
             {filterLabel()}
@@ -406,7 +485,7 @@ function HistorialPage() {
             <p className="text-gray-500 text-center py-8 flex items-center justify-center gap-2">
               <Loader2 size={18} className="animate-spin" /> Cargando historial…
             </p>
-          ) : entries.length === 0 ? (
+          ) : visibleEntries.length === 0 ? (
             <p className="text-gray-500 text-center py-8">No hay registros en esta sección para los filtros elegidos.</p>
           ) : sectionId === 'accesos' ? (
             <>
@@ -423,7 +502,7 @@ function HistorialPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {entries.map((entry) => {
+                    {visibleEntries.map((entry) => {
                       const date = new Date(entry.timestamp);
                       const { name, verb, door } = formatDoorAccessPhrase(entry, doorNamesById);
                       const rowKey = entry.id || `${entry.timestamp}-${name}`;
@@ -471,7 +550,7 @@ function HistorialPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
-                    {entries.map((entry) => {
+                    {visibleEntries.map((entry) => {
                       const date = new Date(entry.timestamp);
                       const { typeDisplay, specificDetails } = getEntryTableDisplay(entry);
                       const rowKey = entry.id || entry._id || `${entry.timestamp}-${typeDisplay}`;

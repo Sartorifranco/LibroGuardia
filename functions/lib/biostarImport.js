@@ -4,6 +4,14 @@
 
 const { db, FieldValue, Timestamp } = require('../firestore');
 const { normalizeDni, getArgentinaDateParts } = require('./normalize');
+const { normalizeIdNumber } = require('../dniParser');
+const { buildNameTokens } = require('./nameUtils');
+const { findPersonByDni } = require('../people');
+const {
+  extractBiostarDniCandidates,
+  biostarDisplayName
+} = require('./biostarMatch');
+const { normalizeCategory } = require('./peopleAlerts');
 
 const httpError = (status, message, code) => {
   const err = new Error(message);
@@ -24,9 +32,34 @@ const findPersonByBiometricId = async (biometricExternalId) => {
   return { id: doc.id, ...(doc.data() || {}) };
 };
 
+const findPersonByDniAny = async (dniNormalized) => {
+  const dni = normalizeIdNumber(dniNormalized);
+  if (!dni) return null;
+  // Prefer active
+  const active = await findPersonByDni(dni);
+  if (active) return { id: active.id, ...active.data() };
+  const snap = await db.collection('people')
+    .where('dniNormalized', '==', dni)
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return { id: doc.id, ...(doc.data() || {}) };
+};
+
+const resolveDoorGrant = (existingDoors, defaultDoorId, { forceDoor = false } = {}) => {
+  const doors = Array.isArray(existingDoors) ? [...existingDoors] : [];
+  const door = String(defaultDoorId || '').trim();
+  if (!door) return doors;
+  if (forceDoor || doors.length === 0) {
+    if (!doors.includes(door)) doors.push(door);
+  }
+  return doors;
+};
+
 /**
  * Upsert personas desde filas BioStar UserCollection.
- * biometricExternalId = user_id de BioStar.
+ * Match: biometricExternalId, luego DNI detectado; si no, huérfano sin_clasificar.
  */
 const importBiostarUsers = async (users = [], options = {}) => {
   if (!Array.isArray(users)) throw httpError(400, 'users debe ser un array');
@@ -36,7 +69,9 @@ const importBiostarUsers = async (users = [], options = {}) => {
   const results = [];
   let created = 0;
   let updated = 0;
+  let linkedByDni = 0;
   let skipped = 0;
+  const suggestions = [];
 
   for (const raw of users) {
     const userId = String(raw?.user_id || raw?.userId || '').trim();
@@ -45,52 +80,127 @@ const importBiostarUsers = async (users = [], options = {}) => {
       results.push({ status: 'skipped', message: 'sin user_id' });
       continue;
     }
-    const name = String(raw?.name || raw?.user_id || '').trim() || `BioStar ${userId}`;
+    const name = biostarDisplayName(raw, userId);
     const disabled = String(raw?.disabled) === 'true' || raw?.disabled === true;
-    const existing = await findPersonByBiometricId(userId);
+    const dniCandidates = extractBiostarDniCandidates(raw);
+    const primaryDni = dniCandidates[0]?.dni || null;
+
+    let existing = await findPersonByBiometricId(userId);
+    let matchedBy = existing ? 'biometric' : null;
+
+    if (!existing && primaryDni) {
+      existing = await findPersonByDniAny(primaryDni);
+      if (existing) {
+        matchedBy = 'dni';
+        linkedByDni += 1;
+      }
+    }
 
     if (existing) {
+      const hadDoors = Array.isArray(existing.allowedDoorIds) && existing.allowedDoorIds.length > 0;
+      const isOrphanStyle = existing.source === 'biostar' && !existing.dniNormalized;
       const patch = {
-        name,
-        nombre: name,
+        name: existing.dniNormalized || existing.idNumber
+          ? (existing.name || existing.nombre || name)
+          : name,
+        nombre: existing.dniNormalized || existing.idNumber
+          ? (existing.nombre || existing.name || name)
+          : name,
+        biometricExternalId: userId,
         biometricBrand: 'suprema',
         biostarUserId: userId,
         active: !disabled,
         updatedAt: FieldValue.serverTimestamp(),
-        source: 'biostar'
+        source: existing.source === 'biostar' && !existing.dniNormalized
+          ? 'biostar'
+          : (existing.source || 'biostar_link'),
+        category: normalizeCategory(existing.category, {
+          ...existing,
+          source: existing.source,
+          dniNormalized: existing.dniNormalized || primaryDni
+        })
       };
-      if (defaultDoorId) {
-        const doors = Array.isArray(existing.allowedDoorIds) ? [...existing.allowedDoorIds] : [];
-        if (!doors.includes(defaultDoorId)) {
-          doors.push(defaultDoorId);
-          patch.allowedDoorIds = doors;
-        }
+      if (primaryDni && !existing.dniNormalized) {
+        patch.dni = primaryDni;
+        patch.dniNormalized = primaryDni;
+        patch.idNumber = primaryDni;
+        patch.idNumberNormalized = primaryDni;
+        patch.category = normalizeCategory(existing.category, {
+          ...existing,
+          dniNormalized: primaryDni,
+          tipo: 'empleado'
+        });
+      }
+      // Solo agregar defaultDoor si no tenía puertas (o es huérfano BioStar)
+      if (defaultDoorId && (!hadDoors || isOrphanStyle)) {
+        patch.allowedDoorIds = resolveDoorGrant(existing.allowedDoorIds, defaultDoorId, {
+          forceDoor: isOrphanStyle && !hadDoors
+        });
+      }
+      if (!existing.nameKey && name) {
+        patch.nameKey = buildNameTokens(name);
+        patch.nameTokens = patch.nameKey;
       }
       await db.collection('people').doc(existing.id).set(patch, { merge: true });
       updated += 1;
-      results.push({ status: 'updated', personId: existing.id, biometricExternalId: userId });
+      results.push({
+        status: 'updated',
+        personId: existing.id,
+        biometricExternalId: userId,
+        matchedBy
+      });
       continue;
     }
 
+    // Sin match: crear huérfano
     const ref = db.collection('people').doc();
     const doc = {
       name,
       nombre: name,
+      nameKey: buildNameTokens(name),
+      nameTokens: buildNameTokens(name),
       biometricExternalId: userId,
       biometricBrand: 'suprema',
       biostarUserId: userId,
       active: !disabled,
       allowedDoorIds: defaultDoorId ? [defaultDoorId] : [],
       source: 'biostar',
+      category: primaryDni ? 'empleado' : 'sin_clasificar',
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     };
+    if (primaryDni) {
+      doc.dni = primaryDni;
+      doc.dniNormalized = primaryDni;
+      doc.idNumber = primaryDni;
+      doc.idNumberNormalized = primaryDni;
+    } else {
+      suggestions.push({
+        personId: ref.id,
+        biometricExternalId: userId,
+        name,
+        reason: 'no_dni_match'
+      });
+    }
     await ref.set(doc);
     created += 1;
-    results.push({ status: 'created', personId: ref.id, biometricExternalId: userId });
+    results.push({
+      status: 'created',
+      personId: ref.id,
+      biometricExternalId: userId,
+      category: doc.category
+    });
   }
 
-  return { created, updated, skipped, total: users.length, results };
+  return {
+    created,
+    updated,
+    linkedByDni,
+    skipped,
+    total: users.length,
+    suggestionsQueued: suggestions.length,
+    results
+  };
 };
 
 const parseEventTime = (value) => {
@@ -230,5 +340,6 @@ module.exports = {
   importBiostarUsers,
   importBiostarEvents,
   findPersonByBiometricId,
-  eventDocId
+  eventDocId,
+  extractBiostarDniCandidates
 };

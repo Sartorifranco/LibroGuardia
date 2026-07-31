@@ -76,3 +76,33 @@ export const formatDoorAccessPhrase = (entry = {}, doorNamesById = {}) => {
   const door = resolveDoorName(entry, doorNamesById);
   return { name, verb, door, phrase: `${name} ${verb} por ${door}` };
 };
+
+/** Origen normalizado para filtros de Accesos por puerta. */
+export const resolveDoorEntryOrigin = (entry = {}) => {
+  const source = String(entry.entrySource || '').toLowerCase();
+  if (source === 'biostar') return 'biostar';
+  if (source === 'kiosk' || source === 'molinete' || source === 'reader') return 'kiosk';
+  if (entry.doorId && !source) return 'kiosk';
+  return 'manual';
+};
+
+export const DOOR_ENTRY_ORIGIN_FILTERS = [
+  { id: 'all', label: 'Todos los orígenes' },
+  { id: 'biostar', label: 'BioStar' },
+  { id: 'kiosk', label: 'Kiosko / lector' },
+  { id: 'manual', label: 'Manual con puerta' }
+];
+
+/**
+ * Filtra accesos por puerta (doorId) y origen.
+ * doorId = 'all' | id concreto; origin = all|biostar|kiosk|manual
+ */
+export const filterDoorAccessEntries = (entries = [], { doorId = 'all', origin = 'all' } = {}) => {
+  const door = String(doorId || 'all');
+  const org = String(origin || 'all');
+  return (entries || []).filter((entry) => {
+    if (door !== 'all' && String(entry.doorId || '') !== door) return false;
+    if (org !== 'all' && resolveDoorEntryOrigin(entry) !== org) return false;
+    return true;
+  });
+};

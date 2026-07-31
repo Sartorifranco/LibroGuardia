@@ -18,7 +18,7 @@ describe('navigation routes', () => {
     expect(guardiaPath('botoneraGuardia')).toBe('/guardia/botonera');
     expect(guardiaPath('vehiculosAutorizados')).toBe('/guardia/vehiculos-autorizados');
     expect(adminPath('users')).toBe('/admin/users');
-    expect(adminPath('peopleAccess')).toBe('/admin/people-access');
+    expect(adminPath('peopleAccess')).toBe('/admin/personas');
     expect(adminPath('equiposAcceso')).toBe('/admin/equipos-acceso');
     expect(adminPath('doors')).toBe('/admin/equipos-acceso');
     expect(adminPath('lectores')).toBe('/admin/equipos-acceso');
@@ -34,6 +34,7 @@ describe('navigation routes', () => {
     expect(tabFromGuardiaSegment('botonera-monitoreo')).toBe('botonera');
     expect(tabFromGuardiaSegment('botonera-guardia')).toBe('botonera');
     expect(sectionFromAdminSegment('people-access')).toBe('peopleAccess');
+    expect(sectionFromAdminSegment('personas')).toBe('peopleAccess');
     expect(sectionFromAdminSegment('equipos-acceso')).toBe('equiposAcceso');
     expect(sectionFromAdminSegment('citaciones')).toBe('citaciones');
     expect(sectionFromAdminSegment('visitas')).toBe('visitas');

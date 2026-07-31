@@ -141,10 +141,11 @@ function DoorPeoplePanel({ authToken, doorId, doorName, doorRelayMode, onMessage
             {doorName || doorId}
           </p>
           <p className="door-people__desc">
-            Personas con esta puerta marcada en su ficha
+            Lista explícita: solo quienes tienen <strong>esta</strong> puerta marcada en Personas
+            (vacío en la ficha = ninguna puerta; no hay acceso global).
             {typeof canPass === 'number'
               ? ` · ${canPass} pueden pasar ahora · ${blocked} con problema`
-              : ` (${assigned})`}
+              : ` · ${assigned} asignados`}
             .
             {note ? ` ${note}` : ''}
           </p>

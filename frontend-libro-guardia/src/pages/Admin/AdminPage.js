@@ -63,7 +63,7 @@ const ADMIN_NAV_GROUPS = [
       },
       {
         id: 'peopleAccess',
-        label: 'Acceso personal',
+        label: 'Personas',
         icon: Users,
         match: (u) =>
           hasPermission(u, 'access.doors.manage')

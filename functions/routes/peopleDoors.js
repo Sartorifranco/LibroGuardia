@@ -15,11 +15,19 @@ const {
   buildPersonProfilePatch,
   hasForeignConflict
 } = require('../lib/peopleProfileUpdate');
+const { loadAllPeople, analyzePeopleAlerts } = require('../lib/peopleAlerts');
+const { mergePeople } = require('../lib/peopleMerge');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 
 const router = express.Router();
 
 const personToJSON = personToAdminJSON;
+
+const canPeopleManage = requireAnyPermission([
+  'access.doors.manage',
+  'access.control',
+  'master.nomina.write'
+]);
 
 const findPeopleByField = async (field, value) => {
   if (!value) return [];
@@ -51,6 +59,88 @@ router.get(
       res.json({ people: q ? people.slice(0, 80) : people });
     } catch (err) {
       res.status(500).json({ message: 'Error al buscar personas', error: err.message });
+    }
+  }
+);
+
+/** Duplicados, incompletos y sugerencias BioStar. */
+router.get(
+  '/api/admin/people/alerts',
+  auth,
+  canPeopleManage,
+  async (_req, res) => {
+    try {
+      const people = await loadAllPeople(2000);
+      const alerts = analyzePeopleAlerts(people);
+      res.json({ ok: true, ...alerts });
+    } catch (err) {
+      res.status(500).json({ message: err.message || 'Error al analizar personas' });
+    }
+  }
+);
+
+/** Alias del plan: duplicados. */
+router.get(
+  '/api/admin/people/duplicates',
+  auth,
+  canPeopleManage,
+  async (_req, res) => {
+    try {
+      const people = await loadAllPeople(2000);
+      const alerts = analyzePeopleAlerts(people);
+      res.json({
+        ok: true,
+        duplicates: alerts.duplicates,
+        incomplete: alerts.incomplete,
+        counts: alerts.counts
+      });
+    } catch (err) {
+      res.status(500).json({ message: err.message || 'Error al listar duplicados' });
+    }
+  }
+);
+
+/** Sugerencias BioStar ↔ empleado. */
+router.get(
+  '/api/admin/people/biostar-suggestions',
+  auth,
+  canPeopleManage,
+  async (_req, res) => {
+    try {
+      const people = await loadAllPeople(2000);
+      const alerts = analyzePeopleAlerts(people);
+      res.json({
+        ok: true,
+        suggestions: alerts.biostarSuggestions,
+        count: alerts.counts.biostarSuggestions
+      });
+    } catch (err) {
+      res.status(500).json({ message: err.message || 'Error al listar sugerencias' });
+    }
+  }
+);
+
+/**
+ * Une dos fichas. Body: { keepId, mergeId }
+ * Conserva keepId; desactiva mergeId.
+ */
+router.post(
+  '/api/admin/people/merge',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const keepId = String(req.body?.keepId || '').trim();
+      const mergeId = String(req.body?.mergeId || '').trim();
+      const result = await mergePeople(keepId, mergeId, {
+        ignoredSuggestion: req.body?.ignored === true
+      });
+      res.json({ ok: true, message: 'Personas unificadas', ...result });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al unificar personas',
+        code: err.code
+      });
     }
   }
 );

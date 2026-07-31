@@ -3987,6 +3987,77 @@ html.dark .doors-plant-bar__body {
   color: var(--text-muted);
 }
 
+.door-access-editor__warn {
+  margin: 0 0 0.65rem;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.8125rem;
+  border-radius: 8px;
+  background: rgba(234, 179, 8, 0.12);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  color: var(--text, #111);
+}
+
+.door-access-editor__door-text {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem;
+}
+
+.people-hub-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.85rem;
+}
+
+.people-hub-tab {
+  border: 1px solid var(--border, #333);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.people-hub-tab.is-active {
+  background: var(--accent, #b91c1c);
+  border-color: var(--accent, #b91c1c);
+  color: #fff;
+  font-weight: 600;
+}
+
+.people-hub-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.people-hub-alert-card {
+  border: 1px solid var(--border, #333);
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+  background: var(--surface-2, rgba(0, 0, 0, 0.15));
+}
+
+.people-hub-alert-card h5 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.people-hub-alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.people-access-badge--all {
+  background: rgba(234, 179, 8, 0.2);
+  color: #ca8a04;
+}
+
 .door-access-editor__modes {
   display: flex;
   flex-wrap: wrap;

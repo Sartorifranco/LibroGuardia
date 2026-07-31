@@ -7,8 +7,8 @@ export const ADMIN_SECTION_META = {
   },
   doors: { title: 'Equipos de acceso', description: 'Puertas, lectores y estaciones en un solo lugar.' },
   peopleAccess: {
-    title: 'Acceso a puertas (personal)',
-    description: 'Por persona: puertas permitidas, tarjeta, ID biométrico y foto opcional.'
+    title: 'Personas',
+    description: 'Directorio único: empleados, terceros, clientes y credenciales de acceso.'
   },
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
   nomina: { title: 'Nómina de personal', description: 'Importar, buscar y editar empleados, turnos y tipo de autorización.' },

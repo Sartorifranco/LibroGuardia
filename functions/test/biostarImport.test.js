@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const firestorePath = require.resolve('../firestore');
 const normalizePath = require.resolve('../lib/normalize');
 const biostarImportPath = require.resolve('../lib/biostarImport');
+const peoplePath = require.resolve('../people');
+const biostarMatchPath = require.resolve('../lib/biostarMatch');
+const peopleAlertsPath = require.resolve('../lib/peopleAlerts');
 
 const installMock = () => {
   const people = new Map();
@@ -90,8 +93,13 @@ const installMock = () => {
     }
   };
 
-  delete require.cache[normalizePath];
-  delete require.cache[biostarImportPath];
+  [
+    normalizePath,
+    biostarImportPath,
+    peoplePath,
+    biostarMatchPath,
+    peopleAlertsPath
+  ].forEach((p) => { delete require.cache[p]; });
   return { people, entries };
 };
 
@@ -108,8 +116,13 @@ describe('biostarImport', () => {
   });
 
   afterEach(() => {
-    delete require.cache[firestorePath];
-    delete require.cache[biostarImportPath];
+    [
+      firestorePath,
+      biostarImportPath,
+      peoplePath,
+      biostarMatchPath,
+      peopleAlertsPath
+    ].forEach((p) => { delete require.cache[p]; });
   });
 
   it('crea persona con biometricExternalId = user_id BioStar', async () => {
@@ -125,13 +138,36 @@ describe('biostarImport', () => {
     assert.equal(row.name, 'Juan Pérez');
     assert.deepEqual(row.allowedDoorIds, ['puerta-p1']);
     assert.equal(row.active, true);
+    assert.equal(row.category, 'sin_clasificar');
   });
 
-  it('actualiza persona existente por biometricExternalId', async () => {
+  it('vincula por DNI si user_id parece DNI y ya existe persona', async () => {
+    people.set('p1', {
+      dniNormalized: '38646611',
+      name: 'SARTORI Franco',
+      allowedDoorIds: ['puerta-p1'],
+      source: 'nomina',
+      active: true
+    });
+    // Mock findPersonByDni via firestore query on dniNormalized
+    const result = await importBiostarUsers(
+      [{ user_id: '38646611', name: 'SARTORI Franco', disabled: 'false' }],
+      { defaultDoorId: 'puerta-p2' }
+    );
+    assert.equal(result.created, 0);
+    assert.equal(result.updated, 1);
+    assert.equal(result.linkedByDni, 1);
+    assert.equal(people.get('p1').biometricExternalId, '38646611');
+    // No agrega puerta nueva si ya tenía puertas
+    assert.deepEqual(people.get('p1').allowedDoorIds, ['puerta-p1']);
+  });
+
+  it('actualiza persona existente por biometricExternalId sin agregar puertas si ya tiene', async () => {
     people.set('p1', {
       biometricExternalId: '42',
       name: 'Viejo',
-      allowedDoorIds: ['otra']
+      allowedDoorIds: ['otra'],
+      source: 'nomina'
     });
     const result = await importBiostarUsers(
       [{ user_id: '42', name: 'Nuevo', disabled: 'true' }],
@@ -141,7 +177,7 @@ describe('biostarImport', () => {
     assert.equal(result.updated, 1);
     assert.equal(people.get('p1').name, 'Nuevo');
     assert.equal(people.get('p1').active, false);
-    assert.deepEqual(people.get('p1').allowedDoorIds, ['otra', 'puerta-p1']);
+    assert.deepEqual(people.get('p1').allowedDoorIds, ['otra']);
   });
 
   it('importa evento idempotente con entrySource biostar', async () => {

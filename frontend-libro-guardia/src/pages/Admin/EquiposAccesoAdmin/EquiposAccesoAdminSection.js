@@ -101,7 +101,7 @@ function EquiposAccesoAdminSection({
                 {' — '}
                 En
                 {' '}
-                <em>Acceso personal</em>
+                <em>Personas</em>
                 {' '}
                 cargá DNI, número de tarjeta y/o ID del biométrico de cada persona.
               </li>

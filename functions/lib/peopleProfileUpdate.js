@@ -9,6 +9,22 @@ const { normalizePersonName, buildNameTokens } = require('./nameUtils');
 const { normalizeAllowedDoorIds } = require('./doorAccess');
 const { normalizePhotoDataUrl } = require('./personPhoto');
 
+const CATEGORIES = ['empleado', 'tercero', 'cliente', 'sin_clasificar'];
+
+const resolveCategory = (data = {}) => {
+  const raw = String(data.category || '').trim().toLowerCase();
+  if (CATEGORIES.includes(raw)) return raw;
+  const tipo = String(data.tipo || '').toLowerCase();
+  if (tipo === 'visita' || tipo === 'cliente') return 'cliente';
+  if (tipo === 'temporal' || tipo === 'tercero' || tipo === 'contratista') return 'tercero';
+  if (data.source === 'biostar' && !(data.dniNormalized || data.idNumberNormalized || data.dni)) {
+    return 'sin_clasificar';
+  }
+  if (tipo === 'empleado' || data.legajoNormalized || data.legajo) return 'empleado';
+  if (data.source === 'biostar') return 'sin_clasificar';
+  return 'sin_clasificar';
+};
+
 const personToAdminJSON = (doc) => {
   const data = (doc && typeof doc.data === 'function' ? doc.data() : doc) || {};
   const id = doc?.id || data.id || '';
@@ -24,6 +40,10 @@ const personToAdminJSON = (doc) => {
     accessCard: data.accessCard || '',
     biometricExternalId: data.biometricExternalId || '',
     biometricBrand: data.biometricBrand || '',
+    biostarUserId: data.biostarUserId || '',
+    source: data.source || data.origen || '',
+    category: resolveCategory(data),
+    nameKey: data.nameKey || '',
     allowedDoorIds: normalizeAllowedDoorIds(data.allowedDoorIds)
   };
 };
@@ -106,6 +126,14 @@ const buildPersonProfilePatch = (existing = {}, body = {}) => {
     patch.biometricBrand = raw || null;
   }
 
+  if (has('category')) {
+    const raw = String(body.category || '').trim().toLowerCase();
+    if (raw && !CATEGORIES.includes(raw)) {
+      return { ok: false, status: 400, message: 'category inválida' };
+    }
+    patch.category = raw || 'sin_clasificar';
+  }
+
   return { ok: true, patch };
 };
 
@@ -120,5 +148,7 @@ const hasForeignConflict = (matches = [], personId) =>
 module.exports = {
   personToAdminJSON,
   buildPersonProfilePatch,
-  hasForeignConflict
+  hasForeignConflict,
+  resolveCategory,
+  CATEGORIES
 };
