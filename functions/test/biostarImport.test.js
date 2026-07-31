@@ -85,7 +85,8 @@ const installMock = () => {
         }
       },
       FieldValue: {
-        serverTimestamp: () => ({ __sv: true })
+        serverTimestamp: () => ({ __sv: true }),
+        delete: () => ({ __delete: true })
       },
       Timestamp: {
         fromDate: (d) => ({ toDate: () => d, __ts: d.toISOString() })
@@ -194,6 +195,33 @@ describe('biostarImport', () => {
     );
     assert.equal(result.updated, 1);
     assert.deepEqual(people.get('p1').allowedDoorIds, ['puerta-p2']);
+  });
+
+  it('no reactiva ficha mergeada: actualiza el canónico con DNI', async () => {
+    people.set('orphan', {
+      biometricExternalId: '55',
+      name: 'Franco S',
+      source: 'biostar',
+      active: false,
+      mergedIntoId: 'emp'
+    });
+    people.set('emp', {
+      name: 'SARTORI Franco',
+      dniNormalized: '38646611',
+      idNumber: '38646611',
+      biometricExternalId: '55',
+      source: 'nomina',
+      allowedDoorIds: ['puerta-p2'],
+      active: true
+    });
+    const result = await importBiostarUsers(
+      [{ user_id: '55', name: 'Franco S', disabled: 'false' }],
+      { defaultDoorId: 'puerta-p2' }
+    );
+    assert.equal(result.updated, 1);
+    assert.equal(people.get('orphan').active, false);
+    assert.equal(people.get('emp').biometricExternalId, '55');
+    assert.equal(people.get('emp').active, true);
   });
 
   it('importa evento idempotente con entrySource biostar', async () => {

@@ -108,14 +108,42 @@ function PeopleCleanupWizard({ authToken, onDone, onError, onSuccess }) {
         token: authToken,
         body: { action: actionOverride || item.action }
       });
-      if (data.report?.errors?.length) {
-        onError?.(data.report.errors[0]?.message || 'Falló la sugerencia');
-      } else {
-        onSuccess?.(data.message || 'Sugerencia aplicada');
-        setLastMsg(data.message || 'OK');
+      const applied = Number(data.report?.applied || 0);
+      const errors = data.report?.errors || [];
+      if (errors.length || applied < 1) {
+        onError?.(errors[0]?.message || 'La sugerencia no se aplicó');
+        await loadPlan();
+        return;
       }
-      if (data.planAfter) setPlan(data.planAfter);
-      else await loadPlan();
+
+      // Quitar de inmediato de la UI (el puente BioStar no debe reaparecerla).
+      setPlan((prev) => {
+        if (!prev?.groups) return prev;
+        const strip = (list = []) => list.filter((s) => s.id !== item.id);
+        const groups = {
+          uniones: strip(prev.groups.uniones),
+          dni: strip(prev.groups.dni),
+          puertas: strip(prev.groups.puertas),
+          revisar: strip(prev.groups.revisar)
+        };
+        return {
+          ...prev,
+          groups,
+          suggestions: (prev.suggestions || []).filter((s) => s.id !== item.id),
+          summary: {
+            ...(prev.summary || {}),
+            suggestions: Math.max(0, (prev.summary?.suggestions || 1) - 1)
+          }
+        };
+      });
+      onSuccess?.(data.message || 'Sugerencia aplicada');
+      setLastMsg(data.message || 'OK');
+      // Recalcular en servidor (fuente de verdad)
+      const fresh = await apiFetch('/admin/people/cleanup-plan', {
+        token: authToken,
+        allowForbidden: true
+      });
+      if (fresh.plan) setPlan(fresh.plan);
       onDone?.();
     } catch (err) {
       onError?.(err.message || 'Falló al aplicar');

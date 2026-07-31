@@ -26,11 +26,39 @@ const findPersonByBiometricId = async (biometricExternalId) => {
   if (!code) return null;
   const snap = await db.collection('people')
     .where('biometricExternalId', '==', code)
-    .limit(1)
+    .limit(10)
     .get();
   if (snap.empty) return null;
-  const doc = snap.docs[0];
-  return { id: doc.id, ...(doc.data() || {}) };
+
+  const rows = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
+  // Preferir activa y no fusionada (evita reactivar fichas mergeadas).
+  const active = rows.filter((p) => p.active !== false && !p.mergedIntoId);
+  if (active.length) {
+    active.sort((a, b) => {
+      const score = (p) => {
+        let s = 0;
+        if (p.dniNormalized || p.idNumber) s += 5;
+        if (p.legajo || p.legajoNormalized) s += 3;
+        if (p.source && p.source !== 'biostar') s += 2;
+        return s;
+      };
+      return score(b) - score(a);
+    });
+    return active[0];
+  }
+
+  // Si solo hay fusionadas, seguir el enlace al canónico.
+  for (const row of rows) {
+    const into = String(row.mergedIntoId || '').trim();
+    if (!into) continue;
+    const keepSnap = await db.collection('people').doc(into).get();
+    if (keepSnap.exists) {
+      return { id: keepSnap.id, ...(keepSnap.data() || {}) };
+    }
+  }
+
+  // Último recurso: la primera fila (no debería reactivar merged).
+  return rows[0];
 };
 
 const findPersonByDniAny = async (dniNormalized) => {
@@ -94,6 +122,15 @@ const importBiostarUsers = async (users = [], options = {}) => {
       if (existing) {
         matchedBy = 'dni';
         linkedByDni += 1;
+      }
+    }
+
+    // Si caímos en una ficha ya fusionada, trabajar sobre el canónico.
+    if (existing?.mergedIntoId) {
+      const keepSnap = await db.collection('people').doc(String(existing.mergedIntoId)).get();
+      if (keepSnap.exists) {
+        existing = { id: keepSnap.id, ...(keepSnap.data() || {}) };
+        matchedBy = matchedBy || 'merged_redirect';
       }
     }
 

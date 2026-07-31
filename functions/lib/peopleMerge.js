@@ -95,10 +95,16 @@ const mergePeople = async (keepId, mergeId, {
   }
 
   await keepRef.set(patch, { merge: true });
+  // Importante: sacar el ID biométrico de la ficha fusionada. Si queda,
+  // el puente BioStar la vuelve a encontrar y la reactiva (active: true).
   await mergeRef.set({
     active: false,
     mergedIntoId: keep,
     mergeIgnored: ignoredSuggestion === true,
+    biometricExternalId: FieldValue.delete(),
+    biostarUserId: FieldValue.delete(),
+    biometricBrand: FieldValue.delete(),
+    allowedDoorIds: [],
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
