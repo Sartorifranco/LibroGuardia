@@ -89,26 +89,19 @@ const upsertPersonalMaster = async (personId, parsed) => {
   return { id: ref.id, created: true, ...payload };
 };
 
+/** Auth de nómina con id estable: 1 write, sin query (crítico para no pasar 60s de Hosting). */
 const syncNominaAuthorization = async (person, parsed) => {
   if (!person?.id) return null;
-
-  const snap = await db.collection('authorizations')
-    .where('personId', '==', person.id)
-    .limit(50)
-    .get();
-
-  const existingDoc = snap.docs.find((doc) => {
-    const data = doc.data();
-    return data.source === 'nomina' && data.type === 'permanent';
-  });
+  const authRef = db.collection('authorizations').doc(`nomina-perm-${person.id}`);
 
   if (!parsed.createPermanent) {
-    if (existingDoc) {
-      await existingDoc.ref.set({
-        active: false,
-        updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
-    }
+    await authRef.set({
+      active: false,
+      source: 'nomina',
+      type: 'permanent',
+      personId: person.id,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
     return null;
   }
 
@@ -127,16 +120,13 @@ const syncNominaAuthorization = async (person, parsed) => {
     notes: `Nómina · ${parsed.authorizationPolicy}`
   });
 
-  if (!existingDoc) {
-    const ref = await db.collection('authorizations').add({
-      ...record,
-      createdAt: FieldValue.serverTimestamp()
-    });
-    return ref.id;
-  }
-
-  await existingDoc.ref.set({ ...record, active: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  return existingDoc.id;
+  await authRef.set({
+    ...record,
+    active: true,
+    updatedAt: FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  return authRef.id;
 };
 
 const applyParsedToPersonAndAuth = async (parsed) => {
@@ -325,16 +315,48 @@ const deactivateMissingNomina = async (keepKeys = { legajos: new Set(), dnis: ne
   return { deactivated, peopleDeactivated };
 };
 
-const upsertPersonalMasterCached = async (personId, parsed, caches) => {
-  let existing = null;
+const findMasterDoc = async (parsed, caches) => {
   if (parsed.legajoNormalized && caches.masterByLegajo.has(parsed.legajoNormalized)) {
-    existing = caches.masterByLegajo.get(parsed.legajoNormalized);
-  } else if (parsed.idNumberNormalized && caches.masterByDni.has(parsed.idNumberNormalized)) {
-    existing = caches.masterByDni.get(parsed.idNumberNormalized);
-  } else if (parsed.name && caches.masterByName.has(parsed.name.toLowerCase())) {
-    existing = caches.masterByName.get(parsed.name.toLowerCase());
+    return caches.masterByLegajo.get(parsed.legajoNormalized);
+  }
+  if (parsed.idNumberNormalized && caches.masterByDni.has(parsed.idNumberNormalized)) {
+    return caches.masterByDni.get(parsed.idNumberNormalized);
+  }
+  if (parsed.name && caches.masterByName.has(parsed.name.toLowerCase())) {
+    return caches.masterByName.get(parsed.name.toLowerCase());
   }
 
+  let snap = null;
+  if (parsed.legajoNormalized) {
+    snap = await db.collection('personalMaster')
+      .where('legajoNormalized', '==', parsed.legajoNormalized)
+      .limit(1)
+      .get();
+  }
+  if ((!snap || snap.empty) && parsed.idNumberNormalized) {
+    snap = await db.collection('personalMaster')
+      .where('idNumberNormalized', '==', parsed.idNumberNormalized)
+      .limit(1)
+      .get();
+  }
+  if ((!snap || snap.empty) && parsed.name) {
+    snap = await db.collection('personalMaster')
+      .where('nameLower', '==', parsed.name.toLowerCase())
+      .limit(1)
+      .get();
+  }
+  if (!snap || snap.empty) return null;
+
+  const doc = snap.docs[0];
+  const row = { id: doc.id, ref: doc.ref, data: doc.data() || {} };
+  if (parsed.legajoNormalized) caches.masterByLegajo.set(parsed.legajoNormalized, row);
+  if (parsed.idNumberNormalized) caches.masterByDni.set(parsed.idNumberNormalized, row);
+  if (parsed.name) caches.masterByName.set(parsed.name.toLowerCase(), row);
+  return row;
+};
+
+const upsertPersonalMasterCached = async (personId, parsed, caches) => {
+  const existing = await findMasterDoc(parsed, caches);
   const payload = buildMasterPayload(personId, parsed);
 
   if (existing) {
@@ -460,32 +482,14 @@ const resolvePersonCached = async (parsed, caches) => {
   return person;
 };
 
-/** Solo personalMaster de nómina; people se resuelve on-demand (evita OOM/503). */
-const loadImportCaches = async () => {
-  const masterSnap = await db.collection('personalMaster').where('source', '==', 'nomina').get();
-
-  const masterByLegajo = new Map();
-  const masterByDni = new Map();
-  const masterByName = new Map();
-  masterSnap.docs.forEach((doc) => {
-    const data = doc.data() || {};
-    const row = { id: doc.id, ref: doc.ref, data };
-    const legajo = String(data.legajoNormalized || data.legajo || '').trim();
-    const dni = String(data.idNumberNormalized || data.idNumber || '').trim();
-    const name = String(data.nameLower || data.name || '').toLowerCase().trim();
-    if (legajo) masterByLegajo.set(legajo, row);
-    if (dni) masterByDni.set(dni, row);
-    if (name) masterByName.set(name, row);
-  });
-
-  return {
-    masterByLegajo,
-    masterByDni,
-    masterByName,
-    peopleByLegajo: new Map(),
-    peopleByDni: new Map()
-  };
-};
+/** Caches vacíos: master/people se resuelven on-demand por query (evita lecturas masivas). */
+const loadImportCaches = async () => ({
+  masterByLegajo: new Map(),
+  masterByDni: new Map(),
+  masterByName: new Map(),
+  peopleByLegajo: new Map(),
+  peopleByDni: new Map()
+});
 
 const mapPool = async (items, concurrency, worker) => {
   const results = new Array(items.length);
@@ -508,7 +512,7 @@ const importNominaRows = async (rows = [], meta = {}) => {
   const job = await createNominaImportJob(rows, meta);
   let result = null;
   do {
-    result = await processNominaImportStep(job.jobId, { batchSize: 20, concurrency: 4 });
+    result = await processNominaImportStep(job.jobId, { batchSize: 5, concurrency: 2 });
   } while (!result.done);
   return {
     total: result.total,
@@ -561,7 +565,22 @@ const createNominaImportJob = async (rows = [], meta = {}) => {
   return { jobId: ref.id, rowCount: list.length };
 };
 
-const processNominaImportStep = async (jobId, { batchSize = 15, concurrency = 4 } = {}) => {
+const finalizeNominaReplace = async (job, stats) => {
+  if (job.replace !== true) {
+    return { ...stats, deactivated: stats.deactivated || 0, peopleDeactivated: stats.peopleDeactivated || 0 };
+  }
+  const wiped = await deactivateMissingNomina({
+    legajos: new Set(job.keepLegajos || []),
+    dnis: new Set(job.keepDnis || [])
+  });
+  return {
+    ...stats,
+    deactivated: wiped.deactivated,
+    peopleDeactivated: wiped.peopleDeactivated
+  };
+};
+
+const processNominaImportStep = async (jobId, { batchSize = 5, concurrency = 2 } = {}) => {
   const ref = db.collection('nominaImports').doc(jobId);
   const snap = await ref.get();
   if (!snap.exists) {
@@ -587,21 +606,12 @@ const processNominaImportStep = async (jobId, { batchSize = 15, concurrency = 4 
   const stats = { ...emptyStats(), ...(job.stats || {}) };
   if (!Array.isArray(stats.errors)) stats.errors = [];
 
-  if (cursor >= rows.length) {
-    let deactivated = stats.deactivated || 0;
-    let peopleDeactivated = stats.peopleDeactivated || 0;
-    if (job.replace === true) {
-      const wiped = await deactivateMissingNomina({
-        legajos: new Set(job.keepLegajos || []),
-        dnis: new Set(job.keepDnis || [])
-      });
-      deactivated = wiped.deactivated;
-      peopleDeactivated = wiped.peopleDeactivated;
-    }
-    const finalStats = { ...stats, deactivated, peopleDeactivated };
+  // Paso aparte: replace/bajas (no mezclar con upserts → evita 502 por timeout Hosting 60s).
+  if (job.status === 'finalizing') {
+    const finalStats = await finalizeNominaReplace(job, stats);
     await ref.set({
       status: 'done',
-      cursor: rows.length,
+      cursor: rows.length || job.rowCount || cursor,
       stats: finalStats,
       rows: FieldValue.delete(),
       finishedAt: FieldValue.serverTimestamp()
@@ -609,20 +619,43 @@ const processNominaImportStep = async (jobId, { batchSize = 15, concurrency = 4 
     return {
       done: true,
       status: 'done',
-      total: rows.length,
-      processed: rows.length,
+      total: job.rowCount || rows.length,
+      processed: job.rowCount || rows.length,
       ...finalStats,
       importId: jobId
     };
   }
 
-  const size = Math.max(1, Math.min(40, Number(batchSize) || 15));
-  const slice = rows.slice(cursor, cursor + size);
-  const caches = await loadImportCaches();
+  if (cursor >= rows.length) {
+    await ref.set({ status: 'finalizing' }, { merge: true });
+    return {
+      done: false,
+      status: 'finalizing',
+      total: rows.length || job.rowCount || 0,
+      processed: cursor,
+      ...stats,
+      importId: jobId
+    };
+  }
 
+  const size = Math.max(1, Math.min(10, Number(batchSize) || 5));
+  const slice = rows.slice(cursor, cursor + size);
+  if (!slice.length) {
+    await ref.set({ status: 'finalizing' }, { merge: true });
+    return {
+      done: false,
+      status: 'finalizing',
+      total: rows.length,
+      processed: cursor,
+      ...stats,
+      importId: jobId
+    };
+  }
+
+  const caches = await loadImportCaches();
   await ref.set({ status: 'processing' }, { merge: true });
 
-  const outcomes = await mapPool(slice, Math.max(1, Math.min(6, Number(concurrency) || 4)), async (row, index) => {
+  const outcomes = await mapPool(slice, Math.max(1, Math.min(3, Number(concurrency) || 2)), async (row, index) => {
     const parsed = parseNominaRow(trimNominaRowPayload(row));
     if (!parsed.valid) {
       return {
@@ -670,34 +703,21 @@ const processNominaImportStep = async (jobId, { batchSize = 15, concurrency = 4 
 
   const nextCursor = cursor + slice.length;
   const finishedRows = nextCursor >= rows.length;
-  let deactivated = stats.deactivated || 0;
-  let peopleDeactivated = stats.peopleDeactivated || 0;
 
-  if (finishedRows && job.replace === true) {
-    const wiped = await deactivateMissingNomina({
-      legajos: keepLegajos,
-      dnis: keepDnis
-    });
-    deactivated = wiped.deactivated;
-    peopleDeactivated = wiped.peopleDeactivated;
-  }
-
-  const nextStats = { ...stats, deactivated, peopleDeactivated };
   await ref.set({
-    status: finishedRows ? 'done' : 'processing',
+    status: finishedRows ? 'finalizing' : 'processing',
     cursor: nextCursor,
     keepLegajos: [...keepLegajos],
     keepDnis: [...keepDnis],
-    stats: nextStats,
-    ...(finishedRows ? { rows: FieldValue.delete(), finishedAt: FieldValue.serverTimestamp() } : {})
+    stats
   }, { merge: true });
 
   return {
-    done: finishedRows,
-    status: finishedRows ? 'done' : 'processing',
+    done: false,
+    status: finishedRows ? 'finalizing' : 'processing',
     total: rows.length,
     processed: nextCursor,
-    ...nextStats,
+    ...stats,
     importId: jobId
   };
 };

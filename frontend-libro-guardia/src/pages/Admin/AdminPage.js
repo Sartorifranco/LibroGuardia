@@ -225,7 +225,11 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
           {pendingAction && (
             <div className="admin-action-indicator">
               <Loader2 className="animate-spin" size={18} />
-              <span>Acción en curso…</span>
+              <span>
+                {String(pendingAction).startsWith('upload-nomina:')
+                  ? `Importando nómina… ${String(pendingAction).slice('upload-nomina:'.length)}`
+                  : 'Acción en curso…'}
+              </span>
             </div>
           )}
         </div>

@@ -129,8 +129,8 @@ router.post('/api/admin/nomina/upload', auth, requirePermission('master.nomina.w
 
 router.post('/api/admin/nomina/upload/:jobId/step', auth, requirePermission('master.nomina.write'), async (req, res) => {
   try {
-    const batchSize = Number(req.body?.batchSize) || 15;
-    const result = await processNominaImportStep(req.params.jobId, { batchSize, concurrency: 4 });
+    const batchSize = Number(req.body?.batchSize) || 5;
+    const result = await processNominaImportStep(req.params.jobId, { batchSize, concurrency: 2 });
     let message = result.done
       ? `Nómina importada: ${result.imported} empleados (${result.created} nuevos, ${result.updated} actualizados)`
       : `Procesando nómina… ${result.processed}/${result.total}`;

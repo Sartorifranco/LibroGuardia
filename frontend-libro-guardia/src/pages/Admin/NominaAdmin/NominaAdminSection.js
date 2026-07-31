@@ -351,17 +351,17 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
         const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const stepWithRetry = async () => {
           let lastErr;
-          for (let attempt = 0; attempt < 4; attempt += 1) {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
             try {
               return await apiFetch(`/admin/nomina/upload/${jobId}/step`, {
                 method: 'POST',
                 token: authToken,
-                body: { batchSize: 15 }
+                body: { batchSize: 5 }
               });
             } catch (err) {
               lastErr = err;
               if (err?.status === 503 || err?.status === 502 || err?.isNetworkError) {
-                await sleep(1200 * (attempt + 1));
+                await sleep(800 * (attempt + 1));
                 continue;
               }
               throw err;
@@ -371,8 +371,18 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
         };
 
         let result = { done: false };
-        while (!result.done) {
+        let guard = 0;
+        const maxSteps = Math.ceil(parsedData.length / 5) + 5;
+        while (!result.done && guard < maxSteps) {
+          guard += 1;
           result = await stepWithRetry();
+          if (typeof setPendingAction === 'function' && result.processed != null && result.total) {
+            setPendingAction(`upload-nomina:${result.processed}/${result.total}`);
+          }
+        }
+        if (!result.done) {
+          setError(`La importación no terminó (job ${jobId}). Reintentá; si sigue, avisá a Sistemas.`);
+          return;
         }
 
         const imported = result.imported || 0;
