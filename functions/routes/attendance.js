@@ -1,7 +1,8 @@
 const express = require('express');
 const { db, FieldValue, Timestamp } = require('../firestore');
 const {
-  importNominaRows,
+  createNominaImportJob,
+  processNominaImportStep,
   listNominaPersonal,
   listNominaBirthdays,
   saveNominaEmployee,
@@ -107,28 +108,42 @@ router.post('/api/admin/nomina/upload', auth, requirePermission('master.nomina.w
     if (!Array.isArray(data) || data.length === 0) {
       return res.status(400).json({ message: 'Se espera un array no vacío de filas de nómina' });
     }
-    const result = await importNominaRows(data, {
+    // Job + pasos: Hosting corta ~60s; un solo POST con 155 filas daba 502/503.
+    const job = await createNominaImportJob(data, {
       importedBy: req.user.id,
       replace: replace === true,
       keepLegajos: Array.isArray(req.body?.keepLegajos) ? req.body.keepLegajos : [],
       keepDnis: Array.isArray(req.body?.keepDnis) ? req.body.keepDnis : []
     });
-    let message = `Nómina importada: ${result.imported} empleados (${result.created} nuevos, ${result.updated} actualizados)`;
-    if (result.replace && result.deactivated > 0) {
-      message += `. ${result.deactivated} de la nómina anterior dados de baja`;
-    }
-    if (result.skipped > 0) {
-      message += `. ${result.skipped} filas omitidas`;
-    }
-    if (result.imported === 0 && result.total > 0) {
-      message += '. Revisá el Excel (DNI/legajo/nombre)';
-    }
     res.status(200).json({
-      message,
-      ...result
+      ok: true,
+      jobId: job.jobId,
+      rowCount: job.rowCount,
+      status: 'queued',
+      message: `Importación encolada (${job.rowCount} filas)`
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al importar nómina', error: err.message });
+    res.status(500).json({ message: 'Error al encolar importación de nómina', error: err.message });
+  }
+});
+
+router.post('/api/admin/nomina/upload/:jobId/step', auth, requirePermission('master.nomina.write'), async (req, res) => {
+  try {
+    const batchSize = Number(req.body?.batchSize) || 15;
+    const result = await processNominaImportStep(req.params.jobId, { batchSize, concurrency: 4 });
+    let message = result.done
+      ? `Nómina importada: ${result.imported} empleados (${result.created} nuevos, ${result.updated} actualizados)`
+      : `Procesando nómina… ${result.processed}/${result.total}`;
+    if (result.done && result.deactivated > 0) {
+      message += `. ${result.deactivated} de la nómina anterior dados de baja`;
+    }
+    if (result.done && result.skipped > 0) {
+      message += `. ${result.skipped} filas omitidas`;
+    }
+    res.status(200).json({ message, ...result });
+  } catch (err) {
+    const status = err.code === 'not_found' ? 404 : 500;
+    res.status(status).json({ message: 'Error al procesar nómina', error: err.message });
   }
 });
 
