@@ -289,10 +289,10 @@ function PeopleAccessAdminSection() {
             ) : (
               <>
                 <div className="people-hub-alert-card people-hub-alert-card--actions">
-                  <h5>Acciones rápidas de limpieza</h5>
+                  <h5>Acciones rápidas</h5>
                   <p className="historial-meta">
-                    Usá esto para corregir errores típicos de import (BioStar + nómina) sin editar
-                    ficha por ficha.
+                    Para aceptar sugerencia por sugerencia usá la pestaña <strong>Limpieza</strong>.
+                    Acá quedan atajos masivos solo si ya revisaste el listado.
                   </p>
                   <div className="people-hub-alert-actions">
                     <button
@@ -311,14 +311,15 @@ function PeopleAccessAdminSection() {
                     <button
                       type="button"
                       className="btn btn-secondary"
-                      disabled={merging || !(alerts.counts?.biostarDoorIssues > 0)}
+                      disabled={merging || !(alerts.counts?.allDoorsPeople > 0)}
                       onClick={() => runRepair(
-                        '/admin/people/repair-biostar-doors',
-                        { mode: 'clear' },
-                        '¿Quitar TODAS las puertas a huérfanos BioStar (sin DNI/legajo)?\nQuedarán sin acceso hasta que los unifiques con un empleado o les asignes puertas a mano.'
+                        '/admin/people/repair-all-doors',
+                        { mode: 'biostar_default_others_clear' },
+                        `¿Corregir a TODOS los que tienen las ${alerts.activeDoorCount || 2} puertas?\n\n• BioStar sin nómina → 1 puerta\n• Resto → sin puertas (hay que asignarlas a propósito)\n\nEsto revierte la migración vieja que puso “todas” a todos.`
                       )}
                     >
-                      BioStar sin nómina → sin puertas
+                      Quitar “todas las puertas”
+                      {alerts.counts?.allDoorsPeople ? ` (${alerts.counts.allDoorsPeople})` : ''}
                     </button>
                     <button
                       type="button"

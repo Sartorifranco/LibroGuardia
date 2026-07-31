@@ -132,11 +132,12 @@ const importBiostarUsers = async (users = [], options = {}) => {
           tipo: 'empleado'
         });
       }
-      // Solo agregar defaultDoor si no tenía puertas (o es huérfano BioStar)
-      if (defaultDoorId && (!hadDoors || isOrphanStyle)) {
-        patch.allowedDoorIds = resolveDoorGrant(existing.allowedDoorIds, defaultDoorId, {
-          forceDoor: isOrphanStyle && !hadDoors
-        });
+      // Huérfanos BioStar: siempre solo la puerta del lector (nunca “todas”).
+      // Si ya tenía puertas legítimas (empleado linkeado), no tocar.
+      if (defaultDoorId && isOrphanStyle) {
+        patch.allowedDoorIds = [defaultDoorId];
+      } else if (defaultDoorId && !hadDoors) {
+        patch.allowedDoorIds = resolveDoorGrant(existing.allowedDoorIds, defaultDoorId);
       }
       if (!existing.nameKey && name) {
         patch.nameKey = buildNameKeyWithInitials(name) || buildNameTokens(name);

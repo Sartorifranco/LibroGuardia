@@ -4128,6 +4128,28 @@ html.dark .doors-plant-bar__body {
   cursor: pointer;
 }
 
+.people-cleanup__card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.people-cleanup__card-body {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.people-cleanup__card-body h5 {
+  margin: 0 0 0.35rem;
+}
+
+.people-cleanup__card .people-hub-alert-actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
 .people-hub-alert-card code {
   font-size: 0.85em;
 }

@@ -24,6 +24,12 @@ describe('biostarMatch', () => {
     assert.ok(c.some((x) => x.dni === '30111222'));
   });
 
+  it('ignora user_id que parece fecha YYYYMMDD', () => {
+    assert.equal(looksLikeDni('20260716'), false);
+    const c = extractBiostarDniCandidates({ user_id: '20260716', name: 'Limpieza' });
+    assert.equal(c.length, 0);
+  });
+
   it('nombre display evita puro número', () => {
     assert.equal(biostarDisplayName({ name: '12345' }, '9'), 'BioStar 9');
     assert.equal(biostarDisplayName({ name: 'Ana López' }, '9'), 'Ana López');

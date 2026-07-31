@@ -180,6 +180,22 @@ describe('biostarImport', () => {
     assert.deepEqual(people.get('p1').allowedDoorIds, ['otra']);
   });
 
+  it('huérfano BioStar con todas las puertas queda solo en defaultDoorId', async () => {
+    people.set('p1', {
+      biometricExternalId: '99',
+      name: 'Limpieza X',
+      allowedDoorIds: ['puerta-p1', 'puerta-p2'],
+      source: 'biostar',
+      active: true
+    });
+    const result = await importBiostarUsers(
+      [{ user_id: '99', name: 'Limpieza X', disabled: 'false' }],
+      { defaultDoorId: 'puerta-p2' }
+    );
+    assert.equal(result.updated, 1);
+    assert.deepEqual(people.get('p1').allowedDoorIds, ['puerta-p2']);
+  });
+
   it('importa evento idempotente con entrySource biostar', async () => {
     people.set('p1', {
       biometricExternalId: '7',

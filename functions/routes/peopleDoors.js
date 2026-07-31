@@ -19,9 +19,14 @@ const { loadAllPeople, analyzePeopleAlerts } = require('../lib/peopleAlerts');
 const { mergePeople } = require('../lib/peopleMerge');
 const {
   repairBiostarOrphanDoors,
+  repairAllDoorsAccess,
   clearSuspiciousSharedDnis
 } = require('../lib/peopleRepair');
-const { buildCleanupPlan, applyCleanupPlan } = require('../lib/peopleCleanup');
+const {
+  buildCleanupPlan,
+  applyCleanupPlan,
+  applyCleanupActions
+} = require('../lib/peopleCleanup');
 const { getDoorsConfig } = require('../lib/doorsConfig');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 
@@ -230,8 +235,39 @@ router.get(
 );
 
 /**
- * Aplica limpieza segura (+ merges opcionales de revisión).
- * Body: { clearSuspiciousDnis?, repairBiostarDoors?, applyAutoMerges?, extraMerges?, biostarDoorMode? }
+ * Aplica UNA o varias sugerencias explícitas del asistente.
+ * Body: { action } | { actions: [...] }
+ */
+router.post(
+  '/api/admin/people/cleanup-action',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const actions = Array.isArray(body.actions)
+        ? body.actions
+        : (body.action ? [body.action] : []);
+      const result = await applyCleanupActions(actions);
+      res.json({
+        ok: true,
+        message: result.report.errors.length
+          ? `Aplicadas ${result.report.applied}; ${result.report.errors.length} con error`
+          : `Aplicada${result.report.applied === 1 ? '' : 's'} ${result.report.applied} sugerencia${result.report.applied === 1 ? '' : 's'}`,
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al aplicar sugerencia',
+        code: err.code
+      });
+    }
+  }
+);
+
+/**
+ * Aplica limpieza en lote (compat). Preferí cleanup-action por sugerencia.
+ * Body: { clearSuspiciousDnis?, repairBiostarDoors?, applyAutoMerges?, extraMerges?, biostarDoorMode?, repairAllDoors? }
  */
 router.post(
   '/api/admin/people/cleanup-apply',
@@ -241,11 +277,12 @@ router.post(
     try {
       const body = req.body || {};
       const result = await applyCleanupPlan({
-        clearSuspiciousDnis: body.clearSuspiciousDnis !== false,
-        repairBiostarDoors: body.repairBiostarDoors !== false,
-        applyAutoMerges: body.applyAutoMerges !== false,
+        clearSuspiciousDnis: body.clearSuspiciousDnis === true,
+        repairBiostarDoors: body.repairBiostarDoors === true,
+        applyAutoMerges: body.applyAutoMerges === true,
         extraMerges: Array.isArray(body.extraMerges) ? body.extraMerges : [],
-        biostarDoorMode: body.biostarDoorMode === 'clear' ? 'clear' : 'single'
+        biostarDoorMode: body.biostarDoorMode === 'clear' ? 'clear' : 'single',
+        repairAllDoors: body.repairAllDoors === true
       });
       res.json({
         ok: true,
@@ -255,6 +292,38 @@ router.post(
     } catch (err) {
       res.status(err.status || 500).json({
         message: err.message || 'Error al aplicar limpieza',
+        code: err.code
+      });
+    }
+  }
+);
+
+/**
+ * Corrige personas con acceso a TODAS las puertas activas.
+ * Body: { mode?: 'biostar_default_others_clear'|'clear'|'default', doorId?, personIds? }
+ */
+router.post(
+  '/api/admin/people/repair-all-doors',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const mode = ['clear', 'default', 'biostar_default_others_clear'].includes(req.body?.mode)
+        ? req.body.mode
+        : 'biostar_default_others_clear';
+      const result = await repairAllDoorsAccess({
+        mode,
+        doorId: req.body?.doorId || null,
+        personIds: Array.isArray(req.body?.personIds) ? req.body.personIds : null
+      });
+      res.json({
+        ok: true,
+        message: `Corregidas ${result.updated} fichas con acceso a todas las puertas`,
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'Error al reparar acceso total',
         code: err.code
       });
     }

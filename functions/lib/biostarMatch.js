@@ -4,11 +4,14 @@
 
 const { normalizeIdNumber } = require('../dniParser');
 const { buildNameTokens } = require('./nameUtils');
+const { looksLikeDateDni } = require('./personIdentity');
 
-/** DNI argentino típico: 7–8 dígitos. */
+/** DNI argentino típico: 7–8 dígitos (no fechas YYYYMMDD). */
 const looksLikeDni = (digits = '') => {
   const d = String(digits || '').replace(/\D/g, '');
-  return d.length >= 7 && d.length <= 8;
+  if (d.length < 7 || d.length > 8) return false;
+  if (looksLikeDateDni(d)) return false;
+  return true;
 };
 
 const pushCandidate = (list, raw, source) => {
