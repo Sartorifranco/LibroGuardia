@@ -3,11 +3,14 @@
     "formato": "NUEVO: apiBaseUrl + readers[]. VIEJO (sigue válido): doorId/username/password/serialPort en la raíz = un solo lector.",
     "apiBaseUrl": "URL base de la API Firebase, compartida por todos los lectores de la estación",
     "readers": "Lista de lectores USB/serie manejados por ESTE proceso Node",
+    "serialPort": "Puerto físico de ese lector: COM3 (Windows) o /dev/ttyUSB0 (Raspberry). Un serialPort por doorId.",
     "plugin": "serial_dni (default) | zkteco | hikvision | suprema | hid — traduce el frame a /api/access/ingest",
     "localServerPort": "Puerto HTTP local (solo LAN). 0 o ausente = deshabilitado. Requiere localServerSecret.",
     "localServerSecret": "Secreto compartido (Bearer / X-Station-Secret) para GET /status y POST /open/:doorId",
     "localServerHost": "Bind del servidor local (default 0.0.0.0 = todas las interfaces LAN)",
-    "localRelay": "Opcional por lector. SR201: { host, port, channel, pulseSeconds }. HTTP: { driver: 'generic_http', httpUrl, httpMethod, httpAuthToken, pulseSeconds }."
+    "localRelay": "Opcional por lector. SR201: { host, port, channel, pulseSeconds }. HTTP: { driver: 'generic_http', httpUrl, httpMethod, httpAuthToken, pulseSeconds }.",
+    "OPEN_POLL_MS": "Env opcional. Intervalo del poll de aperturas remotas (default 5000). Antes era 2000.",
+    "HEARTBEAT_MS": "Env opcional. Heartbeat a la nube (default 60000). Ya no reclama aperturas: eso lo hace el poll."
   },
   "apiBaseUrl": "https://mss-guard.web.app/api",
   "localServerPort": 8787,

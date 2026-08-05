@@ -25,8 +25,13 @@ const {
   auth,
   requirePermission
 } = require('../middleware/auth');
+const { bumpAuthorizationsVersion } = require('../lib/dataVersions');
 
 const router = express.Router();
+
+const bumpAuthQuiet = () => bumpAuthorizationsVersion().catch((err) => {
+  console.warn('[authorizations] bumpAuthorizationsVersion', err.message);
+});
 
 const todayDateString = () => new Date().toISOString().slice(0, 10);
 
@@ -189,6 +194,7 @@ router.post('/api/admin/authorizations', auth, requirePermission('master.citacio
       message: 'Autorización registrada',
       authorization: { id: ref.id, ...data, personId: person.id }
     });
+    bumpAuthQuiet();
   } catch (err) {
     res.status(400).json({ message: err.message || 'Error al guardar autorización' });
   }
@@ -203,6 +209,7 @@ router.delete('/api/admin/authorizations/:id', auth, requirePermission('master.c
     }
     const data = snap.data() || {};
     await ref.update({ active: false, updatedAt: FieldValue.serverTimestamp() });
+    bumpAuthQuiet();
     logActivity(db, FieldValue, {
       actorUsername: req.user.username || req.user.id,
       actorId: req.user.id,
@@ -238,6 +245,7 @@ router.post('/api/admin/authorizations/upload', auth, requirePermission('master.
     });
 
     await batch.commit();
+    bumpAuthQuiet();
     res.status(200).json({
       message: `${parsed.length} autorizaciones cargadas exitosamente`,
       count: parsed.length,
@@ -335,6 +343,7 @@ router.post('/api/admin/citaciones/upload', auth, requirePermission('master.cita
     }
 
     await batch.commit();
+    bumpAuthQuiet();
     res.status(200).json({ message: `${count} citaciones cargadas exitosamente`, count });
   } catch (err) {
     res.status(500).json({ message: 'Error al cargar citaciones', error: err.message });

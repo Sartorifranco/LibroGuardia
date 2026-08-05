@@ -312,6 +312,12 @@ const saveDoorsConfig = async (updates = {}) => {
   }
 
   await db.collection('settings').doc(DOORS_SETTINGS_DOC).set(payload, { merge: true });
+  try {
+    const { bumpDoorsVersion } = require('./dataVersions');
+    await bumpDoorsVersion();
+  } catch (err) {
+    console.warn('[doorsConfig] bumpDoorsVersion', err.message);
+  }
   return getDoorsConfig();
 };
 

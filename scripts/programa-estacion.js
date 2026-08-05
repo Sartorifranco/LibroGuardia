@@ -85,7 +85,8 @@ const DEFAULTS = {
   offlineAllowlistFile: '',
   offlineQueueFile: '',
   onlineScanTimeoutMs: 12000,
-  allowlistTimeoutMs: 120000,
+  /** Hosting corta ~60s; con allowlist en lote el backend responde en segundos. */
+  allowlistTimeoutMs: 90000,
   /** Puerto HTTP local (0 = deshabilitado). Solo LAN; sin tÃºnel. */
   localServerPort: 0,
   localServerHost: '0.0.0.0',
@@ -96,7 +97,7 @@ const DEFAULTS = {
  * VersiÃ³n del proceso door-reader-bridge (semver de scripts).
  * Bump cuando cambie el contrato del servidor local o el framing.
  */
-const BRIDGE_VERSION = '1.4.0';
+const BRIDGE_VERSION = '1.6.1';
 /** API del servidor HTTP local (status/open/CORS). Subir si cambia el contrato. */
 const LOCAL_STATION_API_VERSION = 3;
 
@@ -227,12 +228,14 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
   };
 
   let rawReaders;
-  if (Array.isArray(fileCfg.readers) && fileCfg.readers.length > 0) {
+  const hasStationCreds = Boolean(String(fileCfg.username || '').trim() && String(fileCfg.password || ''));
+  const isStationFormat = Array.isArray(fileCfg.readers) || Boolean(String(fileCfg.estacionId || '').trim());
+  if (Array.isArray(fileCfg.readers)) {
     rawReaders = fileCfg.readers;
+  } else if (isStationFormat && hasStationCreds && !fileCfg.doorId) {
+    rawReaders = [];
   } else {
     // Legacy: un lector plano (+ overrides por env, como hasta ahora).
-    // Archivos de cachÃ© conservan el nombre histÃ³rico (sin readerId) para no
-    // invalidar allowlists ya generadas en estaciones instaladas.
     const legacyDoorId = String(env.DOOR_ID || fileCfg.doorId || 'door').trim();
     const legacyDir = path.dirname(resolvedPath);
     rawReaders = [{
@@ -267,18 +270,32 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
   if (!apiBaseUrl) {
     throw new Error('Falta apiBaseUrl (ej. https://mss-guard.web.app/api)');
   }
-  readers.forEach((r, idx) => {
-    if (!r.username || !r.password) {
-      throw new Error(`Lector[${idx}]: faltan username/password del usuario kiosk`);
+
+  const stationUsername = String(fileCfg.username || env.STATION_USERNAME || '').trim();
+  const stationPassword = String(fileCfg.password || env.STATION_PASSWORD || '');
+  const estacionId = String(fileCfg.estacionId || env.ESTACION_ID || '').trim();
+
+  if (readers.length === 0) {
+    if (!stationUsername || !stationPassword) {
+      throw new Error(
+        'Estación sin lectores: faltan username/password de la máquina '
+        + '(código de instalación de la estación en Admin → Estaciones)'
+      );
     }
-    if (!r.doorId) {
-      throw new Error(`Lector[${idx}]: falta doorId`);
-    }
-  });
+  } else {
+    readers.forEach((r, idx) => {
+      if (!r.username || !r.password) {
+        throw new Error(`Lector[${idx}]: faltan username/password del usuario kiosk`);
+      }
+      if (!r.doorId) {
+        throw new Error(`Lector[${idx}]: falta doorId`);
+      }
+    });
+  }
 
   const stdinCount = readers.filter((r) => r.inputMode === 'stdin').length;
   if (stdinCount > 1) {
-    throw new Error('Solo un lector puede usar inputMode "stdin" por estaciÃ³n');
+    throw new Error('Solo un lector puede usar inputMode "stdin" por estación');
   }
 
   const localServerPort = Number(
@@ -308,6 +325,10 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
       : 0,
     localServerHost,
     localServerSecret,
+    estacionId,
+    stationUsername: stationUsername || (readers[0] && readers[0].username) || '',
+    stationPassword: stationPassword || (readers[0] && readers[0].password) || '',
+    configVersion: Number(fileCfg.configVersion) || 0,
     readers
   };
 };
@@ -430,6 +451,55 @@ const fireLocalRelay = async (cfg, localRelay = {}) => {
   const command = buildPulseCommand(channel, 'jog', seconds);
   const tcp = await sendTcpCommand(host, port, command);
   return { via: 'tcp-local', driver: 'sr201', host, port, channel, mode, command, ...tcp };
+};
+
+/**
+ * Sondeo liviano: ¿responde la placa de relé en la LAN?
+ * No dispara el relé (SR201: comando de estado "01").
+ */
+const probeLocalRelay = async (localRelay = {}) => {
+  const sanitized = sanitizeLocalRelay(localRelay) || localRelay;
+  if (!sanitized) {
+    return null;
+  }
+  const driver = sanitized.driver === 'generic_http' ? 'generic_http' : 'sr201';
+
+  if (driver === 'generic_http') {
+    const httpUrl = String(sanitized.httpUrl || '').trim();
+    if (!httpUrl) return null;
+    try {
+      await requestJson('GET', httpUrl, { timeoutMs: 3000 });
+      return {
+        relayReachable: true,
+        relayDriver: 'generic_http',
+        relayHost: httpUrl
+      };
+    } catch (_err) {
+      return {
+        relayReachable: false,
+        relayDriver: 'generic_http',
+        relayHost: httpUrl
+      };
+    }
+  }
+
+  const host = String(sanitized.host || '').trim();
+  const port = Number(sanitized.port) || 6722;
+  if (!host) return null;
+  try {
+    await sendTcpCommand(host, port, '01', 2500);
+    return {
+      relayReachable: true,
+      relayDriver: 'sr201',
+      relayHost: host
+    };
+  } catch (_err) {
+    return {
+      relayReachable: false,
+      relayDriver: 'sr201',
+      relayHost: host
+    };
+  }
 };
 
 const requestJson = (method, urlString, { headers = {}, body, timeoutMs = 25000 } = {}) =>
@@ -628,10 +698,17 @@ const createApiClient = (cfg) => {
       timeoutMs: 20000
     });
 
-  const fetchDoorAllowlist = async () =>
-    authorizedRequest('GET', `/access/door-allowlist/${encodeURIComponent(cfg.doorId)}`, {
+  const fetchDoorAllowlist = async ({ clientVersion, clientDateBucket, force } = {}) => {
+    const params = new URLSearchParams();
+    if (clientVersion != null && clientVersion !== '') params.set('clientVersion', String(clientVersion));
+    if (clientDateBucket) params.set('clientDateBucket', String(clientDateBucket));
+    if (force) params.set('force', '1');
+    const qs = params.toString();
+    const path = `/access/door-allowlist/${encodeURIComponent(cfg.doorId)}${qs ? `?${qs}` : ''}`;
+    return authorizedRequest('GET', path, {
       timeoutMs: cfg.allowlistTimeoutMs || 120000
     });
+  };
 
   const postOfflineEntries = async (events) =>
     authorizedRequest('POST', '/access/offline-entries', {
@@ -1145,8 +1222,10 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
   const host = String(opts.host || DEFAULTS.localServerHost).trim() || DEFAULTS.localServerHost;
   const port = Number(opts.port);
   const secret = String(opts.secret || '').trim();
-  const getStatus = opts.getStatus;
-  const openDoor = opts.openDoor;
+  const handlers = {
+    getStatus: opts.getStatus,
+    openDoor: opts.openDoor
+  };
   const logFn = opts.logFn || (() => {});
   const env = opts.env || process.env;
 
@@ -1212,7 +1291,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
 
       if (method === 'GET' && url.pathname === '/status') {
         if (!requireAuth(req, res)) return;
-        const status = await Promise.resolve(getStatus());
+        const status = await Promise.resolve(handlers.getStatus());
         sendJson(res, 200, {
           ok: true,
           bridgeVersion: BRIDGE_VERSION,
@@ -1230,7 +1309,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
         const relayOverride = sanitizeLocalRelay(
           body.localRelay || body.relay || (body.host ? body : null)
         );
-        const result = await Promise.resolve(openDoor(doorId, relayOverride));
+        const result = await Promise.resolve(handlers.openDoor(doorId, relayOverride));
         if (result && result.notFound) {
           sendJson(res, 404, {
             ok: false,
@@ -1268,6 +1347,10 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
       server,
       port: boundPort,
       host,
+      setHandlers: (next = {}) => {
+        if (typeof next.getStatus === 'function') handlers.getStatus = next.getStatus;
+        if (typeof next.openDoor === 'function') handlers.openDoor = next.openDoor;
+      },
       close: () => new Promise((resClose, rejClose) => {
         server.close((err) => (err ? rejClose(err) : resClose()));
       })
@@ -1357,14 +1440,31 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
 
   const refreshAllowlist = async (reason = 'scheduled') => {
     if (!cfg.offlineCache) return false;
-    const res = await api.fetchDoorAllowlist();
+    const force = reason === 'startup'
+      || reason === 'cloud-enable'
+      || String(reason).startsWith('forceResync');
+    const res = await api.fetchDoorAllowlist({
+      clientVersion: force ? undefined : cachedAllowlist?.version,
+      clientDateBucket: force ? undefined : cachedAllowlist?.dateBucket,
+      force
+    });
     if (res.status < 200 || res.status >= 300) {
       throw new Error(res.data?.message || `allowlist HTTP ${res.status}`);
+    }
+    if (res.data?.unchanged) {
+      log(cfg, 'info', 'Allowlist sin cambios (caché vigente)', {
+        reason,
+        version: res.data.version,
+        count: res.data.count,
+        dateBucket: res.data.dateBucket
+      });
+      return false;
     }
     persistAllowlist(res.data);
     log(cfg, 'info', 'Allowlist offline actualizada', {
       reason,
       count: res.data?.count,
+      version: res.data?.version,
       generatedAt: res.data?.generatedAt,
       file: cfg.offlineAllowlistFile
     });
@@ -1516,18 +1616,20 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
 
   await api.withNetworkRetry(() => api.login(), 'login');
 
+  // No bloquear el arranque (ni el HTTP local :8787) con la allowlist.
+  // Si falla, se usa la caché en disco; el timer/heartbeat reintentan.
   if (cfg.offlineCache) {
-    try {
-      await refreshAllowlist('startup');
-    } catch (err) {
+    refreshAllowlist('startup').catch((err) => {
       log(cfg, 'warn', 'No se pudo cargar allowlist al iniciar (se usarÃ¡ cachÃ© en disco si hay)', {
         error: err.message
       });
-    }
+    });
   }
 
-  const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 5 * 60 * 1000);
-  const OPEN_POLL_MS = Number(process.env.OPEN_POLL_MS || 2000);
+  const HEARTBEAT_MS = Number(process.env.HEARTBEAT_MS || 60 * 1000);
+  // 5 s: latencia aceptable al abrir desde Admin y ~60% menos lecturas vacías
+  // que el poll anterior de 2 s. Override con OPEN_POLL_MS.
+  const OPEN_POLL_MS = Number(process.env.OPEN_POLL_MS || 5000);
   let allowlistTimer = null;
 
   const processPendingOpens = async (opens, source) => {
@@ -1628,17 +1730,34 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
                 : null)
           }
         : {};
-      const res = await api.heartbeat(allowlistPayload);
+
+      const relay = sanitizeLocalRelay(lastLocalRelay)
+        || sanitizeLocalRelay(cachedAllowlist?.localRelay)
+        || sanitizeLocalRelay(cfg.localRelay)
+        || null;
+      let relayPayload = {};
+      if (relay?.host || relay?.httpUrl) {
+        const probed = await probeLocalRelay(relay);
+        if (probed) relayPayload = probed;
+      }
+
+      const res = await api.heartbeat({
+        ...allowlistPayload,
+        serialConnected: Boolean(serialConnected),
+        // El poll dedicado (OPEN_POLL_MS) ya reclama aperturas; evitar doble lectura.
+        claimPendingOpens: false,
+        ...relayPayload
+      });
       if (res.status >= 200 && res.status < 300) {
         log(cfg, 'info', 'Heartbeat OK', {
           lectorId: res.data?.lectorId,
           status: res.data?.connectionStatus,
+          serialConnected: Boolean(serialConnected),
+          relayReachable: relayPayload.relayReachable,
           forceResync: Boolean(res.data?.forceResync),
-          pendingOpens: Array.isArray(res.data?.pendingOpens) ? res.data.pendingOpens.length : 0,
           allowlistGeneratedAt: allowlistPayload.allowlistGeneratedAt || null
         });
 
-        await processPendingOpens(res.data?.pendingOpens, 'heartbeat');
         await adoptOfflineFromCloud(res.data);
 
         if (cfg.offlineCache) {
@@ -1891,27 +2010,142 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
   return { stop, cfg, getStatus, openLocal };
 };
 
+const readerFingerprint = (cfg = {}) => [
+  cfg.lectorId || '',
+  cfg.doorId || '',
+  cfg.readerId || '',
+  cfg.serialPort || '',
+  cfg.username || '',
+  cfg.offlineCache ? '1' : '0',
+  cfg.localFirstMode ? '1' : '0'
+].join('|');
+
+const listDiscoveredSerialPorts = async () => {
+  try {
+    const { SerialPort } = require('serialport');
+    const ports = await SerialPort.list();
+    return (ports || [])
+      .map((p) => String(p.path || '').trim())
+      .filter(Boolean)
+      .sort();
+  } catch (_err) {
+    return [];
+  }
+};
+
+const persistStationConfigCache = (configPath, stationMeta, cloudConfig) => {
+  if (!configPath || !cloudConfig) return;
+  try {
+    const prev = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      : {};
+    const next = {
+      ...prev,
+      apiBaseUrl: cloudConfig.apiBaseUrl || prev.apiBaseUrl,
+      estacionId: cloudConfig.estacionId || stationMeta.estacionId || prev.estacionId,
+      configVersion: cloudConfig.configVersion != null
+        ? cloudConfig.configVersion
+        : prev.configVersion,
+      localServerPort: cloudConfig.localServerPort != null
+        ? cloudConfig.localServerPort
+        : prev.localServerPort,
+      localServerSecret: cloudConfig.localServerSecret || prev.localServerSecret,
+      localServerHost: cloudConfig.localServerHost || prev.localServerHost || '0.0.0.0',
+      username: cloudConfig.username || prev.username || stationMeta.stationUsername,
+      password: cloudConfig.password || prev.password || stationMeta.stationPassword,
+      readers: Array.isArray(cloudConfig.readers) ? cloudConfig.readers : (prev.readers || []),
+      _meta: cloudConfig._meta || prev._meta
+    };
+    if (!cloudConfig.password && prev.password) next.password = prev.password;
+    if (!cloudConfig.username && prev.username) next.username = prev.username;
+    fs.writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  } catch (_err) {
+    // no romper el servicio por fallo de caché
+  }
+};
+
 const main = async () => {
-  const station = loadConfig();
+  let station = loadConfig();
   let stopping = false;
   const shouldStop = () => stopping;
-  const runtimes = [];
+  /** @type {Array<{ stop: Function, cfg: object, fingerprint: string }>} */
+  let runtimes = [];
   let localServer = null;
+  let appliedVersion = Number(station.configVersion) || 0;
+  const logCfg = () => ({ logFile: station.logFile });
 
-  log({ logFile: station.logFile }, 'info', 'door-reader-bridge estaciÃ³n iniciando', {
+  const rebuildLocalServerHandlers = () => {
+    if (!localServer || typeof localServer.setHandlers !== 'function') {
+      return;
+    }
+    const handlers = buildStationLocalHandlers(runtimes);
+    localServer.setHandlers(handlers);
+  };
+
+  const applyReaderSet = async (readerCfgs = []) => {
+    const desired = readerCfgs.map((r) => {
+      const cfg = normalizeReaderConfig(r, {
+        apiBaseUrl: station.apiBaseUrl,
+        logFile: station.logFile,
+        reconnectMinMs: station.reconnectMinMs,
+        reconnectMaxMs: station.reconnectMaxMs,
+        idleMs: r.idleMs,
+        inputMode: r.inputMode,
+        configPath: station.configPath
+      });
+      return { cfg, fingerprint: readerFingerprint(cfg) };
+    });
+
+    const desiredFp = new Set(desired.map((d) => d.fingerprint));
+    const kept = [];
+    for (const rt of runtimes) {
+      if (desiredFp.has(rt.fingerprint)) {
+        kept.push(rt);
+      } else {
+        try { rt.stop(); } catch (_e) { /* ignore */ }
+        log(logCfg(), 'info', 'Lector detenido (ya no asignado o cambió)', {
+          doorId: rt.cfg?.doorId,
+          readerId: rt.cfg?.readerId,
+          serialPort: rt.cfg?.serialPort
+        });
+      }
+    }
+
+    const keptFp = new Set(kept.map((r) => r.fingerprint));
+    for (const item of desired) {
+      if (keptFp.has(item.fingerprint)) continue;
+      try {
+        const runtime = await startReaderRuntime(item.cfg, { shouldStop });
+        kept.push({ ...runtime, fingerprint: item.fingerprint });
+        log(logCfg(), 'info', 'Lector iniciado (sync Admin)', {
+          doorId: item.cfg.doorId,
+          readerId: item.cfg.readerId,
+          serialPort: item.cfg.serialPort
+        });
+      } catch (err) {
+        log(logCfg(), 'error', 'No se pudo iniciar lector', {
+          doorId: item.cfg.doorId,
+          error: err.message
+        });
+      }
+    }
+
+    runtimes = kept;
+    rebuildLocalServerHandlers();
+  };
+
+  log(logCfg(), 'info', 'door-reader-bridge estación iniciando', {
     bridgeVersion: BRIDGE_VERSION,
     localStationApiVersion: LOCAL_STATION_API_VERSION,
     apiBaseUrl: station.apiBaseUrl,
+    estacionId: station.estacionId || null,
     readers: station.readers.length,
     configPath: station.configPath,
     localServerPort: station.localServerPort || null,
     doors: station.readers.map((r) => `${r.doorId}/${r.readerId}@${r.serialPort}`)
   });
 
-  for (const readerCfg of station.readers) {
-    const runtime = await startReaderRuntime(readerCfg, { shouldStop });
-    runtimes.push(runtime);
-  }
+  await applyReaderSet(station.readers);
 
   if (station.localServerPort > 0) {
     const handlers = buildStationLocalHandlers(runtimes);
@@ -1921,26 +2155,118 @@ const main = async () => {
       secret: station.localServerSecret,
       getStatus: handlers.getStatus,
       openDoor: handlers.openDoor,
-      logFn: (level, message, extra) => log({ logFile: station.logFile }, level, message, extra)
+      logFn: (level, message, extra) => log(logCfg(), level, message, extra)
     });
   }
+
+  const stationLogin = async () => {
+    const res = await requestJson('POST', `${station.apiBaseUrl}/auth/login`, {
+      body: { username: station.stationUsername, password: station.stationPassword },
+      timeoutMs: 20000
+    });
+    if (res.status < 200 || res.status >= 300 || !res.data?.token) {
+      throw new Error(res.data?.message || `Login estación falló (${res.status})`);
+    }
+    return res.data.token;
+  };
+
+  const syncFromCloud = async (reason = 'poll') => {
+    try {
+      const token = await stationLogin();
+      const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+      const ports = await listDiscoveredSerialPorts();
+
+      await requestJson('POST', `${station.apiBaseUrl}/estaciones/heartbeat`, {
+        headers,
+        body: { discoveredPorts: ports, configVersionAck: appliedVersion },
+        timeoutMs: 20000
+      });
+
+      const cfgRes = await requestJson('GET', `${station.apiBaseUrl}/estaciones/runtime-config`, {
+        headers,
+        timeoutMs: 60000
+      });
+      if (cfgRes.status < 200 || cfgRes.status >= 300) {
+        throw new Error(cfgRes.data?.message || `runtime-config HTTP ${cfgRes.status}`);
+      }
+
+      const payload = cfgRes.data || {};
+      const cloudVersion = Number(payload.configVersion) || 0;
+      const cloudConfig = payload.config || {};
+      const force = Boolean(payload.forceConfigSync);
+
+      if (!force && cloudVersion === appliedVersion) return;
+
+      const readerRows = Array.isArray(cloudConfig.readers) ? cloudConfig.readers : [];
+      const merged = readerRows.map((row) => {
+        const local = station.readers.find((r) => (
+          (row.lectorId && r.lectorId === row.lectorId)
+          || (r.doorId === row.doorId && r.readerId === row.readerId)
+        ));
+        return {
+          ...row,
+          password: row.password || local?.password || ''
+        };
+      }).filter((row) => row.username && row.password && row.doorId);
+
+      await applyReaderSet(merged);
+      station = {
+        ...station,
+        readers: merged.map((r) => normalizeReaderConfig(r, {
+          apiBaseUrl: station.apiBaseUrl,
+          logFile: station.logFile,
+          reconnectMinMs: station.reconnectMinMs,
+          reconnectMaxMs: station.reconnectMaxMs,
+          configPath: station.configPath
+        })),
+        configVersion: cloudVersion,
+        estacionId: cloudConfig.estacionId || station.estacionId
+      };
+      appliedVersion = cloudVersion;
+      persistStationConfigCache(station.configPath, station, {
+        ...cloudConfig,
+        readers: merged,
+        username: station.stationUsername,
+        password: station.stationPassword,
+        configVersion: cloudVersion
+      });
+
+      await requestJson('POST', `${station.apiBaseUrl}/estaciones/heartbeat`, {
+        headers,
+        body: { discoveredPorts: ports, configVersionAck: appliedVersion },
+        timeoutMs: 15000
+      });
+
+      log(logCfg(), 'info', 'Config de estación aplicada (hot-reload)', {
+        reason,
+        configVersion: appliedVersion,
+        readers: merged.length
+      });
+    } catch (err) {
+      log(logCfg(), 'warn', 'Sync de estación diferido', { reason, error: err.message });
+    }
+  };
+
+  // Primera sync pronto; luego cada 45 s.
+  setTimeout(() => { syncFromCloud('startup'); }, 3000);
+  const syncTimer = setInterval(() => { syncFromCloud('interval'); }, 45 * 1000);
 
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
+    clearInterval(syncTimer);
     runtimes.forEach((rt) => {
       try { rt.stop(); } catch (_e) { /* ignore */ }
     });
     if (localServer) {
       localServer.close().catch(() => {});
     }
-    log({ logFile: station.logFile }, 'info', 'Cerrando door-reader-bridgeâ€¦');
+    log(logCfg(), 'info', 'Cerrando door-reader-bridge…');
     setTimeout(() => process.exit(0), 500);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  // Mantener el proceso vivo (los loops serie/stdin corren en background).
   await new Promise(() => {});
 };
 

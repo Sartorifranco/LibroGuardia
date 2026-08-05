@@ -31,12 +31,25 @@ const {
   buildRetainSourcesPlan,
   applyRetainSourcesStep
 } = require('../lib/peopleRetainSources');
+const {
+  matchesAccessFilter,
+  backfillPeopleLastAccess
+} = require('../lib/peopleLastAccess');
+const { bumpPeopleVersion } = require('../lib/dataVersions');
+const {
+  resolvePeopleListVersion,
+  writePeopleListMeta
+} = require('../lib/peopleListCache');
 const { getDoorsConfig } = require('../lib/doorsConfig');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 
 const router = express.Router();
 
 const personToJSON = personToAdminJSON;
+
+const bumpPeopleQuiet = () => bumpPeopleVersion().catch((err) => {
+  console.warn('[peopleDoors] bumpPeopleVersion', err.message);
+});
 
 const canPeopleManage = requireAnyPermission([
   'access.doors.manage',
@@ -50,7 +63,10 @@ const findPeopleByField = async (field, value) => {
   return snap.docs;
 };
 
-/** Buscar personas. Por defecto solo activas sin merge (ocultá basura desactivada). */
+/** Buscar personas. Por defecto solo activas sin merge (ocultá basura desactivada).
+ *  Query clientVersion: si el padrón no cambió, responde { unchanged: true } sin
+ *  releer la colección (ahorro principal del listado Admin).
+ */
 router.get(
   '/api/admin/people',
   auth,
@@ -59,10 +75,51 @@ router.get(
     try {
       const q = String(req.query.q || '').trim().toLowerCase();
       const includeInactive = req.query.includeInactive === '1' || req.query.includeInactive === 'true';
+      const accessFilter = String(req.query.accessFilter || req.query.lastAccess || '').trim();
+      const clientVersion = req.query.clientVersion;
+
+      // Búsqueda puntual (q) siempre va a Firestore: no usa la caché de listado.
+      if (!q && !includeInactive && !accessFilter) {
+        const versionInfo = await resolvePeopleListVersion(clientVersion);
+        if (versionInfo.unchanged) {
+          return res.json({
+            unchanged: true,
+            version: versionInfo.version,
+            people: [],
+            includeInactive,
+            accessFilter: null,
+            truncated: false
+          });
+        }
+
+        const snap = await db.collection('people').limit(1500).get();
+        let people = snap.docs.map(personToJSON);
+        people = people.filter((p) => p.active !== false && !p.mergedIntoId);
+        people.sort((a, b) => a.name.localeCompare(b.name, 'es'));
+
+        await writePeopleListMeta({
+          version: versionInfo.version,
+          count: people.length,
+          peopleVer: versionInfo.peopleVer
+        });
+
+        return res.json({
+          people,
+          version: versionInfo.version,
+          unchanged: false,
+          includeInactive,
+          accessFilter: null,
+          truncated: snap.size >= 1500
+        });
+      }
+
       const snap = await db.collection('people').limit(1500).get();
       let people = snap.docs.map(personToJSON);
       if (!includeInactive) {
         people = people.filter((p) => p.active !== false && !p.mergedIntoId);
+      }
+      if (accessFilter) {
+        people = people.filter((p) => matchesAccessFilter(p, accessFilter));
       }
       if (q) {
         const digits = q.replace(/\D/g, '');
@@ -79,10 +136,41 @@ router.get(
       res.json({
         people: q ? people.slice(0, 80) : people,
         includeInactive,
+        accessFilter: accessFilter || null,
         truncated: snap.size >= 1500
       });
     } catch (err) {
       res.status(500).json({ message: 'Error al buscar personas', error: err.message });
+    }
+  }
+);
+
+/**
+ * Recalcula lastAccessAt desde el historial de entradas autorizadas.
+ * Body: { limit?: number, cursorMillis?: number }
+ */
+router.post(
+  '/api/admin/people/backfill-last-access',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const result = await backfillPeopleLastAccess({
+        limit: req.body?.limit,
+        cursorMillis: req.body?.cursorMillis ?? null
+      });
+      res.json({
+        ok: true,
+        message: result.done
+          ? `Recálculo terminado: ${result.updated} personas actualizadas.`
+          : `Lote procesado: ${result.updated} personas. Podés seguir con el cursor.`,
+        ...result
+      });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        message: err.message || 'No se pudo recalcular últimos accesos',
+        error: err.message
+      });
     }
   }
 );
@@ -456,6 +544,7 @@ router.put(
         ...patch,
         updatedAt: FieldValue.serverTimestamp()
       });
+      bumpPeopleQuiet();
       const updated = await ref.get();
       res.json({ message: 'Persona actualizada', person: personToJSON(updated) });
     } catch (err) {
@@ -476,7 +565,7 @@ router.get(
         return res.status(400).json({ message: 'doorId inválido' });
       }
 
-      const diagnose = String(req.query.diagnose || '1') !== '0';
+      const diagnose = String(req.query.diagnose || '0') === '1';
       if (diagnose) {
         const { diagnoseDoorPeople } = require('../lib/doorPeopleDiagnostics');
         const result = await diagnoseDoorPeople(doorId);
@@ -491,7 +580,12 @@ router.get(
       res.json({
         doorId,
         people: explicitSnap.docs.map(personToJSON),
-        note: 'Solo ingresan quienes tengan esta puerta marcada explícitamente en su lista.'
+        summary: {
+          assigned: explicitSnap.size,
+          canPassNow: null,
+          blocked: null
+        },
+        note: 'Lista rápida. Usá “Calcular quién puede pasar ahora” para el diagnóstico completo.'
       });
     } catch (err) {
       res.status(err.status || 500).json({
@@ -523,6 +617,7 @@ router.post(
       const hadNoDoors = normalizeAllowedDoorIds(prev).length === 0;
       const allowedDoorIds = addDoorToAllowedList(prev, doorId);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
+      bumpPeopleQuiet();
       const updated = await ref.get();
       res.json({
         message: hadNoDoors
@@ -553,6 +648,7 @@ router.delete(
       }
       const allowedDoorIds = removeDoorFromAllowedList(snap.data().allowedDoorIds, doorId);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
+      bumpPeopleQuiet();
       const updated = await ref.get();
       res.json({ message: 'Puerta quitada de la persona', person: personToJSON(updated) });
     } catch (err) {
@@ -587,6 +683,7 @@ router.put(
       const ref = snap.docs[0].ref;
       const allowedDoorIds = normalizeAllowedDoorIds(req.body?.allowedDoorIds);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
+      bumpPeopleQuiet();
       const updated = await ref.get();
       res.json({ message: 'Puertas actualizadas', person: personToJSON(updated) });
     } catch (err) {

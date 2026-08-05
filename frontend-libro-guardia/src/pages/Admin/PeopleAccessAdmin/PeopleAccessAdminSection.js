@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, DoorOpen, Search, Save } from 'lucide-react';
+import { DoorOpen, RefreshCw, Search, Save, Users } from 'lucide-react';
 import DoorAccessEditor from '../../../components/DoorAccessEditor';
 import PersonPhotoField from '../../../components/PersonPhotoField';
 import { useAuth } from '../../../context/AuthContext';
@@ -7,17 +7,26 @@ import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
 import { hasPermission } from '../../../utils/permissions';
+import {
+  ACCESS_FILTER_OPTIONS,
+  formatLastAccessLabel,
+  matchesClientAccessFilter
+} from '../../../utils/peopleLastAccess';
 
+import BiostarSyncStatus from './BiostarSyncStatus';
 import PeopleCleanupWizard from './PeopleCleanupWizard';
 
-const CATEGORY_TABS = [
-  { id: 'limpieza', label: 'Limpieza' },
-  { id: 'todos', label: 'Todas' },
+const HUB_TABS = [
+  { id: 'directorio', label: 'Directorio' },
+  { id: 'limpieza', label: 'Limpieza' }
+];
+
+const CATEGORY_FILTERS = [
+  { id: 'todos', label: 'Todas las categorías' },
   { id: 'empleado', label: 'Empleados' },
   { id: 'tercero', label: 'Terceros' },
   { id: 'cliente', label: 'Clientes' },
-  { id: 'sin_clasificar', label: 'Sin clasificar' },
-  { id: 'alertas', label: 'Alertas' }
+  { id: 'sin_clasificar', label: 'Sin clasificar' }
 ];
 
 const accessLabel = (allowedDoorIds, activeDoorCount = 0) => {
@@ -59,27 +68,70 @@ function PeopleAccessAdminSection() {
   const [activeDoorCount, setActiveDoorCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
-  const [hubTab, setHubTab] = useState('limpieza');
+  const [accessFilter, setAccessFilter] = useState('all');
+  const [hubTab, setHubTab] = useState('directorio');
+  const [categoryFilter, setCategoryFilter] = useState('todos');
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [saving, setSaving] = useState(false);
-  const [alerts, setAlerts] = useState(null);
-  const [alertsLoading, setAlertsLoading] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const [merging, setMerging] = useState(false);
 
   const canManage = hasPermission(currentUser, 'access.doors.manage')
     || hasPermission(currentUser, 'access.control')
     || hasPermission(currentUser, 'master.nomina.write');
 
-  const loadPeople = useCallback(async () => {
+  const peopleCacheKey = authToken ? `mss.peopleList.v1.${String(authToken).slice(-12)}` : null;
+
+  const readPeopleCache = () => {
+    if (!peopleCacheKey || typeof sessionStorage === 'undefined') return null;
+    try {
+      const raw = sessionStorage.getItem(peopleCacheKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.people) || parsed.version == null) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const writePeopleCache = (payload) => {
+    if (!peopleCacheKey || typeof sessionStorage === 'undefined') return;
+    try {
+      sessionStorage.setItem(peopleCacheKey, JSON.stringify({
+        version: payload.version,
+        people: payload.people || [],
+        savedAt: Date.now()
+      }));
+    } catch {
+      // sessionStorage lleno o bloqueado: el listado sigue funcionando sin caché.
+    }
+  };
+
+  const loadPeople = useCallback(async ({ force = false } = {}) => {
     if (!authToken) return;
     setLoading(true);
     try {
+      const cached = force ? null : readPeopleCache();
+      const versionQs = cached?.version != null
+        ? `?clientVersion=${encodeURIComponent(cached.version)}`
+        : '';
       const [data, doorsData] = await Promise.all([
-        apiFetch('/admin/people', { token: authToken, allowForbidden: true }),
+        apiFetch(`/admin/people${versionQs}`, { token: authToken, allowForbidden: true }),
         apiFetch('/admin/doors-config', { token: authToken, allowForbidden: true }).catch(() => ({}))
       ]);
-      setPeople(data.people || []);
+
+      if (data?.unchanged && cached) {
+        setPeople(cached.people);
+      } else {
+        const list = data.people || [];
+        setPeople(list);
+        if (data?.version != null) {
+          writePeopleCache({ version: data.version, people: list });
+        }
+      }
+
       const doors = (doorsData.config?.doors || []).filter((d) => d.active !== false);
       setActiveDoorCount(doors.length);
     } catch (err) {
@@ -89,32 +141,16 @@ function PeopleAccessAdminSection() {
     }
   }, [authToken, showError]);
 
-  const loadAlerts = useCallback(async () => {
-    if (!authToken) return;
-    setAlertsLoading(true);
-    try {
-      const data = await apiFetch('/admin/people/alerts', { token: authToken, allowForbidden: true });
-      setAlerts(data);
-    } catch (err) {
-      showError(err.message || 'No se pudieron cargar alertas');
-    } finally {
-      setAlertsLoading(false);
-    }
-  }, [authToken, showError]);
-
   useEffect(() => {
     loadPeople();
   }, [loadPeople]);
 
-  useEffect(() => {
-    if (hubTab === 'alertas') loadAlerts();
-  }, [hubTab, loadAlerts]);
-
   const filtered = useMemo(() => {
     let list = people;
-    if (hubTab !== 'todos' && hubTab !== 'alertas' && hubTab !== 'limpieza') {
-      list = list.filter((p) => (p.category || 'sin_clasificar') === hubTab);
+    if (categoryFilter !== 'todos') {
+      list = list.filter((p) => (p.category || 'sin_clasificar') === categoryFilter);
     }
+    list = list.filter((p) => matchesClientAccessFilter(p, accessFilter));
     const q = filter.trim().toLowerCase();
     if (!q) return list;
     const digits = q.replace(/\D/g, '');
@@ -125,7 +161,41 @@ function PeopleAccessAdminSection() {
       || (digits && String(p.legajo || '').includes(digits))
       || String(p.biometricExternalId || '').toLowerCase().includes(q)
     );
-  }, [people, filter, hubTab]);
+  }, [people, filter, categoryFilter, accessFilter]);
+
+  const handleBackfillLastAccess = async () => {
+    if (!authToken || backfilling) return;
+    const ok = await confirm({
+      title: 'Recalcular últimos accesos',
+      message: 'Va a leer el historial de pases autorizados y completar “último acceso” en cada ficha. Puede tardar varios lotes si hay mucho historial.',
+      confirmLabel: 'Recalcular',
+      tone: 'default'
+    });
+    if (!ok) return;
+    setBackfilling(true);
+    try {
+      let cursor = null;
+      let totalUpdated = 0;
+      let rounds = 0;
+      do {
+        const data = await apiFetch('/admin/people/backfill-last-access', {
+          method: 'POST',
+          token: authToken,
+          body: { limit: 800, cursorMillis: cursor }
+        });
+        totalUpdated += Number(data.updated) || 0;
+        cursor = data.nextCursorMillis ?? null;
+        rounds += 1;
+        if (data.done || !cursor || rounds >= 25) break;
+      } while (true);
+      showSuccess(`Últimos accesos recalculados (${totalUpdated} fichas tocadas).`);
+      await loadPeople({ force: true });
+    } catch (err) {
+      showError(err.message || 'No se pudo recalcular');
+    } finally {
+      setBackfilling(false);
+    }
+  };
 
   const selected = people.find((p) => p.id === selectedId) || null;
 
@@ -156,7 +226,7 @@ function PeopleAccessAdminSection() {
   const selectPerson = (person) => {
     setSelectedId(person.id);
     syncDraftFromPerson(person);
-    if (hubTab === 'alertas') setHubTab(person.category || 'todos');
+    setHubTab('directorio');
   };
 
   const updateDraftField = (field, value) => {
@@ -191,35 +261,19 @@ function PeopleAccessAdminSection() {
       });
       showSuccess(data.message || 'Persona actualizada');
       const updated = data.person;
-      setPeople((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
+      setPeople((prev) => {
+        const next = prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p));
+        // Invalidar versión de caché: el server ya bumpeó peopleVer.
+        if (peopleCacheKey && typeof sessionStorage !== 'undefined') {
+          try { sessionStorage.removeItem(peopleCacheKey); } catch { /* ignore */ }
+        }
+        return next;
+      });
       syncDraftFromPerson(updated);
     } catch (err) {
       showError(err.message || 'Error al guardar');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleMerge = async (keepId, mergeId) => {
-    if (!keepId || !mergeId) return;
-    if (!window.confirm('¿Unificar estas fichas? Se conserva la primera y se desactiva la segunda.')) {
-      return;
-    }
-    setMerging(true);
-    try {
-      const data = await apiFetch('/admin/people/merge', {
-        method: 'POST',
-        token: authToken,
-        body: { keepId, mergeId }
-      });
-      showSuccess(data.message || 'Personas unificadas');
-      await loadPeople();
-      await loadAlerts();
-      if (data.person?.id) selectPerson(data.person);
-    } catch (err) {
-      showError(err.message || 'No se pudo unificar');
-    } finally {
-      setMerging(false);
     }
   };
 
@@ -229,8 +283,7 @@ function PeopleAccessAdminSection() {
     try {
       const data = await apiFetch(path, { method: 'POST', token: authToken, body });
       showSuccess(data.message || 'Listo');
-      await loadPeople();
-      await loadAlerts();
+      await loadPeople({ force: true });
     } catch (err) {
       showError(err.message || 'No se pudo aplicar la corrección');
     } finally {
@@ -242,25 +295,26 @@ function PeopleAccessAdminSection() {
     return <p className="text-sm text-gray-500">No tenés permiso para gestionar Personas.</p>;
   }
 
-  const alertCount = alerts?.counts
-    ? (alerts.counts.duplicates || 0)
-      + (alerts.counts.incomplete || 0)
-      + (alerts.counts.biostarSuggestions || 0)
-      + (alerts.counts.biostarDoorIssues || 0)
-      + (alerts.counts.suspiciousDnis || 0)
-    : null;
-
   return (
     <div className="people-access-admin">
       <div className="admin-sub-section">
-        <p className="admin-block__desc" style={{ marginBottom: '1rem' }}>
-          Directorio único de personas. Las <strong>puertas permitidas</strong> son una lista
-          explícita (vacío = ninguna; no hay acceso global). Nómina y autorizaciones siguen
-          editando lo propio de cada caso; la identidad vive acá.
-        </p>
+        <div className="mss-data-card__head">
+          <div>
+            <h3 className="admin-block__title mss-data-card__title">Personas</h3>
+            <p className="admin-block__desc" style={{ margin: '0.35rem 0 0' }}>
+              Identidad única (nómina + BioStar + visitas). Las <strong>puertas permitidas</strong> son
+              una lista explícita: vacío = ninguna puerta.
+            </p>
+          </div>
+          <span className="mss-data-card__icon" aria-hidden>
+            <Users size={18} />
+          </span>
+        </div>
 
-        <div className="people-hub-tabs" role="tablist" aria-label="Categorías de personas">
-          {CATEGORY_TABS.map((tab) => (
+        <BiostarSyncStatus authToken={authToken} />
+
+        <div className="people-hub-tabs" role="tablist" aria-label="Secciones de Personas">
+          {HUB_TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -270,7 +324,6 @@ function PeopleAccessAdminSection() {
               onClick={() => setHubTab(tab.id)}
             >
               {tab.label}
-              {tab.id === 'alertas' && alertCount != null ? ` (${alertCount})` : ''}
             </button>
           ))}
         </div>
@@ -278,187 +331,20 @@ function PeopleAccessAdminSection() {
         {hubTab === 'limpieza' ? (
           <PeopleCleanupWizard
             authToken={authToken}
-            onDone={loadPeople}
+            onDone={() => loadPeople({ force: true })}
             onError={showError}
             onSuccess={showSuccess}
             confirm={confirm}
+            onOpenDirectory={({ accessFilter: nextAccess, category } = {}) => {
+              if (nextAccess) setAccessFilter(nextAccess);
+              if (category) setCategoryFilter(category);
+              setHubTab('directorio');
+            }}
+            onBackfillLastAccess={handleBackfillLastAccess}
+            backfilling={backfilling}
+            onBulkRepair={runRepair}
+            bulkBusy={merging}
           />
-        ) : hubTab === 'alertas' ? (
-          <div className="people-hub-alerts">
-            {alertsLoading || !alerts ? (
-              <div className="admin-empty admin-empty--loading" role="status">
-                <span>Analizando duplicados e incompletos…</span>
-              </div>
-            ) : (
-              <>
-                <div className="people-hub-alert-card people-hub-alert-card--actions">
-                  <h5>Acciones rápidas</h5>
-                  <p className="historial-meta">
-                    Para aceptar sugerencia por sugerencia usá la pestaña <strong>Limpieza</strong>.
-                    Acá quedan atajos masivos solo si ya revisaste el listado.
-                  </p>
-                  <div className="people-hub-alert-actions">
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={merging || !(alerts.counts?.biostarDoorIssues > 0)}
-                      onClick={() => runRepair(
-                        '/admin/people/repair-biostar-doors',
-                        { mode: 'single', doorId: alerts.defaultDoorId || undefined },
-                        `¿Dejar a los huérfanos BioStar (sin DNI/legajo) SOLO con la puerta ${alerts.defaultDoorId || 'por defecto'}?\n\nPersonal de limpieza u otros solo en huella dejarán de figurar en todas las puertas.`
-                      )}
-                    >
-                      BioStar sin nómina → 1 sola puerta
-                      {alerts.counts?.biostarDoorIssues ? ` (${alerts.counts.biostarDoorIssues})` : ''}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={merging || !(alerts.counts?.allDoorsPeople > 0)}
-                      onClick={() => runRepair(
-                        '/admin/people/repair-all-doors',
-                        { mode: 'biostar_default_others_clear' },
-                        `¿Corregir a TODOS los que tienen las ${alerts.activeDoorCount || 2} puertas?\n\n• BioStar sin nómina → 1 puerta\n• Resto → sin puertas (hay que asignarlas a propósito)\n\nEsto revierte la migración vieja que puso “todas” a todos.`
-                      )}
-                    >
-                      Quitar “todas las puertas”
-                      {alerts.counts?.allDoorsPeople ? ` (${alerts.counts.allDoorsPeople})` : ''}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      disabled={merging || !(alerts.counts?.suspiciousDnis > 0)}
-                      onClick={() => runRepair(
-                        '/admin/people/clear-suspicious-dnis',
-                        {},
-                        '¿Limpiar DNI que parecen fechas o están compartidos por 3+ personas?\nNo borra las fichas: deja el DNI vacío para corregirlo.'
-                      )}
-                    >
-                      Limpiar DNI basura / compartidos
-                      {alerts.counts?.suspiciousDnis ? ` (${alerts.counts.suspiciousDnis})` : ''}
-                    </button>
-                  </div>
-                </div>
-
-                <p className="historial-meta">
-                  {alerts.counts.duplicates} grupos duplicados · {alerts.counts.suspiciousDnis || 0} DNI sospechosos ·{' '}
-                  {alerts.counts.incomplete} incompletos · {alerts.counts.biostarSuggestions} sugerencias BioStar ·{' '}
-                  {alerts.counts.biostarDoorIssues || 0} BioStar con demasiadas puertas
-                </p>
-
-                <section>
-                  <h4>DNI sospechosos o compartidos</h4>
-                  <p className="historial-meta">
-                    Muchos “mismo DNI” vienen de cargas malas (ej. fecha <code>20260716</code> usada como documento).
-                    No son personas distintas con el mismo DNI real.
-                  </p>
-                  {(alerts.suspiciousDnis || []).length === 0 ? (
-                    <p className="historial-meta">No hay DNI marcados como sospechosos.</p>
-                  ) : (
-                    (alerts.suspiciousDnis || []).map((group) => (
-                      <div key={`susp-${group.key}`} className="people-hub-alert-card">
-                        <h5>
-                          <AlertTriangle size={14} aria-hidden /> {group.message || group.key}
-                        </h5>
-                        <ul>
-                          {(group.people || []).map((p) => (
-                            <li key={p.id}>
-                              <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(p)}>
-                                {p.name || '—'} · DNI {p.idNumber || '—'}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))
-                  )}
-                </section>
-
-                <section>
-                  <h4>Unir BioStar ↔ empleado (recomendado)</h4>
-                  <p className="historial-meta">
-                    Ej.: “Franco S” (huella) con “SARTORI Franco” (nómina). Conservá la ficha con DNI/legajo.
-                  </p>
-                  {(alerts.biostarSuggestions || []).length === 0 ? (
-                    <p className="historial-meta">Sin sugerencias fuertes por nombre.</p>
-                  ) : (
-                    (alerts.biostarSuggestions || []).map((s) => (
-                      <div key={`${s.orphan.id}-${s.candidate.id}`} className="people-hub-alert-card">
-                        <h5>Coincidencia {Math.round((s.score || 0) * 100)}%</h5>
-                        <p>{s.message || `${s.orphan.name} → ${s.candidate.name}`}</p>
-                        <div className="people-hub-alert-actions">
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={merging}
-                            onClick={() => handleMerge(s.candidate.id, s.orphan.id)}
-                          >
-                            Unir en empleado (con DNI)
-                          </button>
-                          <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(s.orphan)}>
-                            Ver BioStar
-                          </button>
-                          <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(s.candidate)}>
-                            Ver empleado
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </section>
-
-                <section>
-                  <h4>Otros duplicados</h4>
-                  {(alerts.duplicates || []).filter((g) => !(g.suspicious || g.looksLikeDate)).length === 0 ? (
-                    <p className="historial-meta">No hay otros grupos.</p>
-                  ) : (
-                    (alerts.duplicates || []).filter((g) => !(g.suspicious || g.looksLikeDate)).map((group) => (
-                      <div key={`${group.reason}-${group.key}`} className="people-hub-alert-card">
-                        <h5>
-                          <AlertTriangle size={14} aria-hidden />{' '}
-                          {group.message
-                            || (group.reason === 'dni' ? 'Mismo DNI' : group.reason === 'biometric' ? 'Mismo ID biométrico' : 'Mismo nombre sin DNI')}
-                          {group.strength === 'weak' ? ' (revisar: puede ser falso positivo)' : ''}
-                        </h5>
-                        <ul>
-                          {(group.people || []).map((p) => (
-                            <li key={p.id}>
-                              <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(p)}>
-                                {p.name || '—'} · DNI {p.idNumber || '—'} · bio {p.biometricExternalId || '—'}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                        {(group.people || []).length >= 2 && group.strength === 'high' ? (
-                          <div className="people-hub-alert-actions">
-                            <button
-                              type="button"
-                              className="btn btn-primary"
-                              disabled={merging}
-                              onClick={() => handleMerge(group.people[0].id, group.people[1].id)}
-                            >
-                              Unificar (conservar 1.ª)
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    ))
-                  )}
-                </section>
-
-                <section>
-                  <h4>Datos incompletos</h4>
-                  {(alerts.incomplete || []).slice(0, 40).map((p) => (
-                    <div key={p.id} className="people-hub-alert-card">
-                      <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(p)}>
-                        {p.name || '—'} · {(p.issues || []).join(', ')}
-                      </button>
-                    </div>
-                  ))}
-                </section>
-              </>
-            )}
-          </div>
         ) : (
           <div className="people-access-layout">
             <div className="people-access-list">
@@ -472,6 +358,44 @@ function PeopleAccessAdminSection() {
                   aria-label="Buscar persona"
                 />
               </div>
+              <div className="people-access-filters">
+                <label className="historial-meta people-access-filter-label">
+                  Categoría
+                  <select
+                    className="input-field"
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                    aria-label="Filtrar por categoría"
+                  >
+                    {CATEGORY_FILTERS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="historial-meta people-access-filter-label">
+                  Último acceso
+                  <select
+                    className="input-field"
+                    value={accessFilter}
+                    onChange={(e) => setAccessFilter(e.target.value)}
+                    aria-label="Filtrar por último acceso"
+                  >
+                    {ACCESS_FILTER_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-secondary-small"
+                  onClick={handleBackfillLastAccess}
+                  disabled={backfilling}
+                  title="Completa último acceso desde el historial de pases"
+                >
+                  {backfilling ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  {backfilling ? ' Recalculando…' : ' Recalcular últimos accesos'}
+                </button>
+              </div>
               {loading ? (
                 <div className="admin-empty admin-empty--loading" role="status">
                   <span>Cargando personas…</span>
@@ -484,19 +408,21 @@ function PeopleAccessAdminSection() {
                         <th className="px-3 py-2 text-left text-xs uppercase">Nombre</th>
                         <th className="px-3 py-2 text-left text-xs uppercase">Legajo</th>
                         <th className="px-3 py-2 text-left text-xs uppercase">DNI</th>
+                        <th className="px-3 py-2 text-left text-xs uppercase">Último acceso</th>
                         <th className="px-3 py-2 text-left text-xs uppercase">Puertas</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filtered.length === 0 ? (
                         <tr>
-                          <td colSpan={4} className="px-3 py-4 text-gray-500">
-                            No hay personas en esta categoría.
+                          <td colSpan={5} className="px-3 py-4 text-gray-500">
+                            No hay personas con estos filtros.
                           </td>
                         </tr>
                       ) : (
                         filtered.map((p) => {
                           const badge = accessLabel(p.allowedDoorIds, activeDoorCount);
+                          const last = formatLastAccessLabel(p);
                           return (
                             <tr
                               key={p.id}
@@ -522,6 +448,14 @@ function PeopleAccessAdminSection() {
                               </td>
                               <td className="px-3 py-2">{p.legajo || '—'}</td>
                               <td className="px-3 py-2">{p.idNumber || '—'}</td>
+                              <td className="px-3 py-2">
+                                <span
+                                  className={`people-access-last people-access-last--${last.kind}`}
+                                  title={last.title}
+                                >
+                                  {last.text}
+                                </span>
+                              </td>
                               <td className="px-3 py-2">
                                 <span className={`people-access-badge people-access-badge--${badge.kind}`}>
                                   {badge.text}
@@ -554,6 +488,15 @@ function PeopleAccessAdminSection() {
                       {selected.company ? selected.company : 'Sin empresa'} · id {selected.id}
                       {selected.biometricExternalId ? ` · bio ${selected.biometricExternalId}` : ''}
                     </p>
+                    {(() => {
+                      const last = formatLastAccessLabel(selected);
+                      return (
+                        <p className={`people-access-last people-access-last--${last.kind}`} title={last.title} style={{ marginTop: '0.35rem' }}>
+                          Último acceso: <strong>{last.text}</strong>
+                          {selected.lastAccessSource ? ` (${selected.lastAccessSource})` : ''}
+                        </p>
+                      );
+                    })()}
                   </div>
 
                   <div className="people-access-basic-form">

@@ -32,7 +32,7 @@ const {
   ACCESS_COMMERCIAL_PROFILES
 } = require('../lib/accessHardwareBrands');
 const { ACTUATOR_TEMPLATES } = require('../lib/actuatorTemplates');
-const { buildDoorAllowlist } = require('../lib/doorAllowlist');
+const { resolveDoorAllowlist } = require('../lib/allowlistCache');
 const { ingestOfflineEntries } = require('../lib/offlineEntries');
 const {
   checkAccessStatus,
@@ -517,6 +517,11 @@ router.post('/api/scan/resolve', auth, requirePermission('master.personal.read')
 /**
  * Allowlist offline por puerta: resultado ya calculado con decidirAcceso.
  * El bridge la cachea localmente cuando offlineCache está activo.
+ *
+ * Query opcional:
+ *   clientVersion + clientDateBucket → si coinciden con la meta vigente,
+ *   responde { unchanged: true } sin reconstruir (ahorra cientos de lecturas).
+ *   force=1 → reconstruye siempre.
  */
 router.get(
   '/api/access/door-allowlist/:doorId',
@@ -524,7 +529,14 @@ router.get(
   requirePermission('access.kiosk'),
   async (req, res) => {
     try {
-      const allowlist = await buildDoorAllowlist(req.params.doorId);
+      const allowlist = await resolveDoorAllowlist(req.params.doorId, {
+        clientVersion: req.query.clientVersion,
+        clientDateBucket: req.query.clientDateBucket,
+        force: req.query.force
+      });
+      if (allowlist.unchanged) {
+        return res.status(200).json(allowlist);
+      }
       res.json(allowlist);
     } catch (err) {
       res.status(err.status || 500).json({
