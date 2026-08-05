@@ -5,7 +5,9 @@
 
 const { db, FieldValue, admin } = require('../firestore');
 
-const FieldPath = admin.firestore.FieldPath;
+// Se resuelve al usarlo y no al cargar el módulo: quien solo necesita las
+// funciones de clasificación puede importarlo sin un admin inicializado.
+const documentIdPath = () => admin.firestore.FieldPath.documentId();
 
 const hasBiostarSignal = (data = {}) => {
   if (String(data.biometricExternalId || '').trim()) return true;
@@ -16,41 +18,72 @@ const hasBiostarSignal = (data = {}) => {
   return false;
 };
 
-const hasNominaSignal = (data = {}, personId, nominaPersonIds) => {
+const normalizeLegajo = (value) => String(value ?? '').trim().replace(/^0+/, '');
+
+const emptyNominaIndex = () => ({ personIds: new Set(), legajos: new Set() });
+
+/** Acepta el índice nuevo o el Set de personIds que se usaba antes. */
+const toNominaIndex = (value) => {
+  if (value instanceof Set) return { personIds: value, legajos: new Set() };
+  if (value && value.personIds instanceof Set) {
+    return {
+      personIds: value.personIds,
+      legajos: value.legajos instanceof Set ? value.legajos : new Set()
+    };
+  }
+  return emptyNominaIndex();
+};
+
+const hasNominaSignal = (data = {}, personId, nominaIndex) => {
   const origen = String(data.origen || '').toLowerCase();
   const source = String(data.source || '').toLowerCase();
   if (origen === 'nomina' || source === 'nomina') return true;
-  if (personId && nominaPersonIds instanceof Set && nominaPersonIds.has(personId)) return true;
+
+  const index = toNominaIndex(nominaIndex);
+  if (personId && index.personIds.has(personId)) return true;
+
+  // personalMaster casi nunca guarda personId (1 de 155 en agosto de 2026), así
+  // que sin cruzar por legajo el empleado de nómina cuya ficha nació en otro
+  // lado (el puente de citaciones la crea con origen 'import') no daba ninguna
+  // señal y el asistente lo desactivaba.
+  const legajo = normalizeLegajo(data.legajoNormalized || data.legajo);
+  if (legajo && index.legajos.has(legajo)) return true;
+
   return false;
 };
 
 /** Keep = nómina o BioStar. */
-const shouldKeepPerson = (data = {}, personId = '', nominaPersonIds = new Set()) => (
-  hasBiostarSignal(data) || hasNominaSignal(data, personId, nominaPersonIds)
+const shouldKeepPerson = (data = {}, personId = '', nominaIndex = emptyNominaIndex()) => (
+  hasBiostarSignal(data) || hasNominaSignal(data, personId, nominaIndex)
 );
 
-const loadNominaPersonIds = async () => {
+const loadNominaIndex = async () => {
   const snap = await db.collection('personalMaster')
     .where('source', '==', 'nomina')
     .get();
-  const ids = new Set();
+  const personIds = new Set();
+  const legajos = new Set();
   snap.docs.forEach((doc) => {
     const data = doc.data() || {};
     if (data.active === false) return;
     const personId = String(data.personId || '').trim();
-    if (personId) ids.add(personId);
+    if (personId) personIds.add(personId);
+    const legajo = normalizeLegajo(data.legajoNormalized || data.legajo);
+    if (legajo) legajos.add(legajo);
   });
-  return ids;
+  return { personIds, legajos };
 };
 
-const classifyPerson = (doc, nominaPersonIds) => {
+const loadNominaPersonIds = async () => (await loadNominaIndex()).personIds;
+
+const classifyPerson = (doc, nominaIndex) => {
   const data = doc.data() || {};
   const id = doc.id;
   const name = String(data.name || data.nombre || id).trim() || id;
   if (data.mergedIntoId || data.active === false) {
     return { kind: 'already_out', id, name };
   }
-  if (shouldKeepPerson(data, id, nominaPersonIds)) {
+  if (shouldKeepPerson(data, id, nominaIndex)) {
     const reason = hasBiostarSignal(data) ? 'biostar' : 'nomina';
     return { kind: 'keep', id, name, reason };
   }
@@ -61,7 +94,7 @@ const classifyPerson = (doc, nominaPersonIds) => {
  * Plan dry-run: recorre toda la colección people.
  */
 const buildRetainSourcesPlan = async () => {
-  const nominaPersonIds = await loadNominaPersonIds();
+  const nominaIndex = await loadNominaIndex();
   const summary = {
     keep: 0,
     keepNomina: 0,
@@ -69,14 +102,15 @@ const buildRetainSourcesPlan = async () => {
     deactivate: 0,
     alreadyOut: 0,
     scanned: 0,
-    nominaMasterLinked: nominaPersonIds.size
+    nominaMasterLinked: nominaIndex.personIds.size,
+    nominaMasterLegajos: nominaIndex.legajos.size
   };
   const sampleDeactivate = [];
   const sampleKeep = [];
 
   let lastId = null;
   for (;;) {
-    let query = db.collection('people').orderBy(FieldPath.documentId()).limit(300);
+    let query = db.collection('people').orderBy(documentIdPath()).limit(300);
     if (lastId) query = query.startAfter(lastId);
     const snap = await query.get();
     if (snap.empty) break;
@@ -84,7 +118,7 @@ const buildRetainSourcesPlan = async () => {
     snap.docs.forEach((doc) => {
       lastId = doc.id;
       summary.scanned += 1;
-      const row = classifyPerson(doc, nominaPersonIds);
+      const row = classifyPerson(doc, nominaIndex);
       if (row.kind === 'keep') {
         summary.keep += 1;
         if (row.reason === 'biostar') summary.keepBiostar += 1;
@@ -115,7 +149,7 @@ const buildRetainSourcesPlan = async () => {
  * Desactiva un lote de no-keepers. Pagina con cursor (doc id).
  */
 const applyRetainSourcesStep = async ({ cursor = null, batchSize = 40 } = {}) => {
-  const nominaPersonIds = await loadNominaPersonIds();
+  const nominaIndex = await loadNominaIndex();
   const size = Math.max(1, Math.min(80, Number(batchSize) || 40));
 
   let deactivated = 0;
@@ -127,7 +161,7 @@ const applyRetainSourcesStep = async ({ cursor = null, batchSize = 40 } = {}) =>
   const sample = [];
 
   while (deactivated < size && !exhausted) {
-    let query = db.collection('people').orderBy(FieldPath.documentId()).limit(100);
+    let query = db.collection('people').orderBy(documentIdPath()).limit(100);
     if (lastId) query = query.startAfter(lastId);
     const snap = await query.get();
     if (snap.empty) {
@@ -138,7 +172,7 @@ const applyRetainSourcesStep = async ({ cursor = null, batchSize = 40 } = {}) =>
     for (const doc of snap.docs) {
       lastId = doc.id;
       scanned += 1;
-      const row = classifyPerson(doc, nominaPersonIds);
+      const row = classifyPerson(doc, nominaIndex);
 
       if (row.kind === 'keep') {
         keep += 1;
@@ -181,6 +215,7 @@ module.exports = {
   hasBiostarSignal,
   hasNominaSignal,
   shouldKeepPerson,
+  loadNominaIndex,
   loadNominaPersonIds,
   buildRetainSourcesPlan,
   applyRetainSourcesStep

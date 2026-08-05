@@ -30,4 +30,35 @@ describe('peopleRetainSources', () => {
       source: 'sync'
     }, 'z', new Set(['other'])), false);
   });
+
+  // personalMaster casi no guarda personId (1 de 155 en agosto de 2026): sin el
+  // cruce por legajo el asistente daba de baja a 68 empleados de nómina cuya
+  // ficha la había creado el puente de citaciones con origen 'import'.
+  describe('cruce por legajo', () => {
+    const indice = { personIds: new Set(), legajos: new Set(['261', '2946']) };
+
+    it('keep al empleado de nómina que el puente creó con origen import', () => {
+      assert.equal(hasNominaSignal({ origen: 'import', legajoNormalized: '261' }, 'sin-link', indice), true);
+      assert.equal(shouldKeepPerson({ origen: 'import', legajoNormalized: '261' }, 'sin-link', indice), true);
+    });
+
+    it('ignora los ceros a la izquierda del legajo', () => {
+      assert.equal(hasNominaSignal({ origen: 'import', legajoNormalized: '000261' }, 'sin-link', indice), true);
+      assert.equal(hasNominaSignal({ origen: 'import', legajo: '0002946' }, 'sin-link', indice), true);
+    });
+
+    it('no keep si el legajo no está en la nómina', () => {
+      assert.equal(shouldKeepPerson({ origen: 'import', legajoNormalized: '99999' }, 'sin-link', indice), false);
+    });
+
+    it('no keep si la ficha no tiene legajo', () => {
+      assert.equal(shouldKeepPerson({ origen: 'import' }, 'sin-link', indice), false);
+      assert.equal(shouldKeepPerson({ origen: 'import', legajoNormalized: '' }, 'sin-link', indice), false);
+    });
+
+    it('sigue aceptando el Set de personIds que se usaba antes', () => {
+      assert.equal(shouldKeepPerson({ origen: 'import' }, 'p1', new Set(['p1'])), true);
+      assert.equal(shouldKeepPerson({ origen: 'import', legajoNormalized: '261' }, 'p9', new Set(['p1'])), false);
+    });
+  });
 });

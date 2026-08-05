@@ -54,14 +54,7 @@ const installSettingsMocks = ({ doorId = 'puerta-p1' } = {}) => {
     exports: {
       db: {
         collection() {
-          return {
-            async get() {
-              return { docs: [], empty: true };
-            },
-            limit() {
-              return this;
-            }
-          };
+          return mockQuery([]);
         }
       },
       FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' },
@@ -72,6 +65,38 @@ const installSettingsMocks = ({ doorId = 'puerta-p1' } = {}) => {
   delete require.cache[require.resolve('../lib/doorAllowlist')];
   delete require.cache[require.resolve('../doorController')];
   delete require.cache[require.resolve('../lib/relayDispatch')];
+};
+
+/**
+ * Query mockeada que aplica de verdad los where de igualdad, para que los tests
+ * vean el mismo subconjunto que vería Firestore.
+ */
+const mockQuery = (rows = [], log = null) => {
+  const build = (current, filters) => ({
+    where(field, op, value) {
+      const next = filters.concat([{ field, op, value }]);
+      if (op !== '==') return build(current, next);
+      return build(current.filter((r) => r[field] === value), next);
+    },
+    limit() { return build(current, filters); },
+    orderBy() { return build(current, filters); },
+    async get() {
+      if (log) log.push({ filters, leidos: current.length });
+      return {
+        empty: current.length === 0,
+        size: current.length,
+        docs: current.map((row) => ({
+          id: row.id,
+          ref: { id: row.id },
+          data: () => {
+            const { id, ...rest } = row;
+            return rest;
+          }
+        }))
+      };
+    }
+  });
+  return build(rows, []);
 };
 
 describe('doorAllowlist', () => {
@@ -115,26 +140,7 @@ describe('doorAllowlist', () => {
     installSettingsMocks({ doorId: 'puerta-p1' });
     require.cache[firestorePath].exports.db = {
       collection(name) {
-        if (name === 'people') {
-          return {
-            async get() {
-              return {
-                empty: false,
-                docs: people.map((p) => ({
-                  id: p.id,
-                  data: () => {
-                    const { id, ...rest } = p;
-                    return rest;
-                  }
-                }))
-              };
-            }
-          };
-        }
-        return {
-          limit() { return this; },
-          async get() { return { docs: [], empty: true }; }
-        };
+        return mockQuery(name === 'people' ? people : []);
       }
     };
 
@@ -173,28 +179,13 @@ describe('doorAllowlist', () => {
     installSettingsMocks({ doorId: 'puerta-p1' });
     require.cache[firestorePath].exports.db = {
       collection(name) {
-        if (name === 'people') {
-          return {
-            async get() {
-              return {
-                empty: false,
-                docs: [{
-                  id: 'vis-person',
-                  data: () => ({
-                    dniNormalized: '44444444',
-                    nombre: 'Visitante',
-                    allowedDoorIds: [],
-                    active: true
-                  })
-                }]
-              };
-            }
-          };
-        }
-        return {
-          limit() { return this; },
-          async get() { return { docs: [], empty: true }; }
-        };
+        return mockQuery(name === 'people' ? [{
+          id: 'vis-person',
+          dniNormalized: '44444444',
+          nombre: 'Visitante',
+          allowedDoorIds: [],
+          active: true
+        }] : []);
       }
     };
 
@@ -385,5 +376,63 @@ describe('doorAllowlist', () => {
 
     assert.equal(muchas, pocas, `80x más personas disparó ${muchas} consultas en vez de ${pocas}`);
     assert.ok(muchas <= 10, `la allowlist hizo ${muchas} consultas a Firestore, esperaba un puñado fijo`);
+  });
+
+  // Las fichas dadas de baja nunca entran a la allowlist, así que traerlas solo
+  // cuesta lecturas: en agosto de 2026 eran 583 de las 847 de la colección.
+  it('no lee las fichas inactivas', async () => {
+    const people = [
+      {
+        id: 'activa',
+        dniNormalized: '11111111',
+        nombre: 'Activa Una',
+        allowedDoorIds: ['puerta-p1'],
+        active: true
+      },
+      ...Array.from({ length: 50 }, (_, i) => ({
+        id: `baja-${i}`,
+        dniNormalized: String(90_000_000 + i),
+        nombre: `Baja ${i}`,
+        allowedDoorIds: ['puerta-p1'],
+        active: false
+      }))
+    ];
+    const authorizations = [
+      { id: 'auth-activa', personId: 'activa', active: true, type: 'permanent' }
+    ];
+
+    const log = [];
+    installSettingsMocks({ doorId: 'puerta-p1' });
+    require.cache[firestorePath].exports.db = {
+      collection(name) {
+        if (name === 'people') return mockQuery(people, log);
+        if (name === 'authorizations') return mockQuery(authorizations);
+        return mockQuery([]);
+      }
+    };
+
+    delete require.cache[require.resolve('../lib/doorAllowlist')];
+    delete require.cache[require.resolve('../lib/visitasAccess')];
+    const { buildDoorAllowlist: build } = require('../lib/doorAllowlist');
+
+    const result = await build('puerta-p1', {
+      referenceDate: new Date('2026-07-23T10:00:00-03:00')
+    });
+
+    assert.equal(result.count, 1);
+    assert.equal(result.entries[0].dniNormalized, '11111111');
+
+    const consultaPeople = log[0];
+    assert.ok(consultaPeople, 'se esperaba una consulta a people');
+    assert.deepEqual(
+      consultaPeople.filters,
+      [{ field: 'active', op: '==', value: true }],
+      'people tiene que consultarse filtrando por active'
+    );
+    assert.equal(
+      consultaPeople.leidos,
+      1,
+      `se leyeron ${consultaPeople.leidos} fichas habiendo 50 dadas de baja`
+    );
   });
 });

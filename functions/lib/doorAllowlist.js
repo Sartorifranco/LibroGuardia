@@ -103,8 +103,10 @@ const mapPool = async (items, concurrency, mapper) => {
   return results;
 };
 
+// Las inactivas nunca llegan a la allowlist (decideCandidateOffline las rechaza),
+// pero traerlas costaba una lectura cada una: en agosto de 2026 eran 583 de 847.
 const loadPeopleCandidates = async () => {
-  const snap = await db.collection('people').get();
+  const snap = await db.collection('people').where('active', '==', true).get();
   return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 };
 

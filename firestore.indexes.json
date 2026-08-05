@@ -158,6 +158,14 @@
         { "fieldPath": "sourceFile", "order": "ASCENDING" },
         { "fieldPath": "sourceHash", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "pending_local_opens",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "doorId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -88,35 +88,32 @@ const claimPendingLocalOpens = async (doorId, { limit = 5 } = {}) => {
   const id = String(doorId || '').trim();
   if (!id) throw httpError(400, 'doorId requerido');
 
+  // La estación pollea cada ~2 s. Sin filtrar por status, cada poll pagaba una
+  // lectura por cada apertura histórica de la puerta y el costo crecía para
+  // siempre; los pedidos ya resueltos se borran justamente para que la consulta
+  // vuelva vacía.
   const snap = await db.collection(COLLECTION)
     .where('doorId', '==', id)
+    .where('status', '==', 'pending')
     .limit(30)
     .get();
 
   const now = Date.now();
+  const max = Math.max(1, Math.min(20, Number(limit) || 5));
   const claimed = [];
   const batch = db.batch();
   let writes = 0;
 
   for (const doc of snap.docs) {
+    if (claimed.length >= max) break;
     const data = doc.data() || {};
-    if (data.status !== 'pending') continue;
-    if (claimed.length >= Math.max(1, Math.min(20, Number(limit) || 5))) break;
+
+    batch.delete(doc.ref);
+    writes += 1;
 
     const expiresAtMs = Date.parse(data.expiresAt || '') || 0;
-    if (expiresAtMs && expiresAtMs < now) {
-      batch.set(doc.ref, {
-        status: 'expired',
-        claimedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
-      writes += 1;
-      continue;
-    }
-    batch.set(doc.ref, {
-      status: 'claimed',
-      claimedAt: FieldValue.serverTimestamp()
-    }, { merge: true });
-    writes += 1;
+    if (expiresAtMs && expiresAtMs < now) continue;
+
     claimed.push({
       id: doc.id,
       doorId: data.doorId,
