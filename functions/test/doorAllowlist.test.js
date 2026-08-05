@@ -222,4 +222,168 @@ describe('doorAllowlist', () => {
     });
     assert.equal(result.count, 0);
   });
+
+  it('path en lote: arma allowlist sin decidirAccesoFn (pocas lecturas)', async () => {
+    const people = [
+      {
+        id: 'p-ok',
+        dniNormalized: '11111111',
+        nombre: 'Permitido Uno',
+        allowedDoorIds: ['puerta-p1'],
+        active: true
+      },
+      {
+        id: 'p-other-door',
+        dniNormalized: '22222222',
+        nombre: 'Otra Puerta',
+        allowedDoorIds: ['puerta-otra'],
+        active: true
+      },
+      {
+        id: 'p-inactive',
+        dniNormalized: '33333333',
+        nombre: 'Inactivo',
+        allowedDoorIds: ['puerta-p1'],
+        active: false
+      },
+      {
+        id: 'p-no-auth',
+        dniNormalized: '55555555',
+        nombre: 'Sin Auth',
+        allowedDoorIds: ['puerta-p1'],
+        active: true
+      }
+    ];
+    const authorizations = [
+      {
+        id: 'auth-ok',
+        personId: 'p-ok',
+        active: true,
+        type: 'permanent'
+      },
+      {
+        id: 'auth-other',
+        personId: 'p-other-door',
+        active: true,
+        type: 'permanent'
+      },
+      {
+        id: 'auth-inactive-person',
+        personId: 'p-inactive',
+        active: true,
+        type: 'permanent'
+      }
+    ];
+
+    const chainable = (docs) => {
+      const q = {
+        where() { return q; },
+        limit() { return q; },
+        async get() {
+          return {
+            empty: !docs.length,
+            docs: docs.map((row) => ({
+              id: row.id,
+              data: () => {
+                const { id, ...rest } = row;
+                return rest;
+              }
+            }))
+          };
+        }
+      };
+      return q;
+    };
+
+    installSettingsMocks({ doorId: 'puerta-p1' });
+    require.cache[firestorePath].exports.db = {
+      collection(name) {
+        if (name === 'people') return chainable(people);
+        if (name === 'authorizations') return chainable(authorizations);
+        if (name === 'visitas') return chainable([]);
+        return chainable([]);
+      }
+    };
+
+    delete require.cache[require.resolve('../lib/doorAllowlist')];
+    delete require.cache[require.resolve('../lib/visitasAccess')];
+    const { buildDoorAllowlist: build } = require('../lib/doorAllowlist');
+
+    const result = await build('puerta-p1', {
+      referenceDate: new Date('2026-07-23T10:00:00-03:00')
+    });
+    assert.equal(result.count, 1);
+    assert.equal(result.entries[0].dniNormalized, '11111111');
+    assert.equal(result.entries[0].authorizationType, 'permanent');
+  });
+
+  // Guarda del incidente del 31/7 al 4/8: el path viejo consultaba
+  // authorizations por persona y la allowlist llegó a 226.562 lecturas por
+  // llamada. Las lecturas tienen que ser constantes, no proporcionales al
+  // padrón.
+  it('las lecturas no crecen con la cantidad de personas', async () => {
+    const countGetsFor = async (cantidadPersonas) => {
+      const people = Array.from({ length: cantidadPersonas }, (_, i) => ({
+        id: `p-${i}`,
+        dniNormalized: String(10_000_000 + i),
+        nombre: `Persona ${i}`,
+        allowedDoorIds: ['puerta-p1'],
+        active: true
+      }));
+      const authorizations = people.map((p, i) => ({
+        id: `auth-${i}`,
+        personId: p.id,
+        active: true,
+        type: 'permanent'
+      }));
+
+      let gets = 0;
+      const chainable = (docs) => {
+        const q = {
+          where() { return q; },
+          limit() { return q; },
+          orderBy() { return q; },
+          async get() {
+            gets += 1;
+            return {
+              empty: !docs.length,
+              docs: docs.map((row) => ({
+                id: row.id,
+                data: () => {
+                  const { id, ...rest } = row;
+                  return rest;
+                }
+              }))
+            };
+          }
+        };
+        return q;
+      };
+
+      installSettingsMocks({ doorId: 'puerta-p1' });
+      require.cache[firestorePath].exports.db = {
+        collection(name) {
+          if (name === 'people') return chainable(people);
+          if (name === 'authorizations') return chainable(authorizations);
+          return chainable([]);
+        }
+      };
+
+      delete require.cache[require.resolve('../lib/doorAllowlist')];
+      delete require.cache[require.resolve('../lib/visitasAccess')];
+      const { buildDoorAllowlist: build } = require('../lib/doorAllowlist');
+
+      const result = await build('puerta-p1', {
+        referenceDate: new Date('2026-07-23T10:00:00-03:00')
+      });
+      assert.equal(result.count, cantidadPersonas);
+      return gets;
+    };
+
+    const pocas = await countGetsFor(5);
+    const muchas = await countGetsFor(400);
+
+    assert.equal(muchas, pocas, `80x más personas disparó ${muchas} consultas en vez de ${pocas}`);
+    assert.ok(muchas <= 10, `la allowlist hizo ${muchas} consultas a Firestore, esperaba un puñado fijo`);
+  });
 });

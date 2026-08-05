@@ -1,6 +1,9 @@
 /**
- * Allowlist offline por puerta: resultado YA calculado con decidirAcceso
- * (misma lógica de negocio que online). No reimplementa reglas.
+ * Allowlist offline por puerta: misma lógica de negocio que decidirAcceso,
+ * pero con lecturas Firestore en lote (no N queries por persona).
+ *
+ * Motivo: Hosting corta requests ~60s; el path viejo (decidirAcceso × gente)
+ * superaba ese límite y la mini PC veía "Timeout de red".
  */
 
 const { db } = require('../firestore');
@@ -9,7 +12,10 @@ const { getAccessControlConfig } = require('./accessControlStore');
 const { buildRelayConfigForDoor } = require('../doorController');
 const { buildLocalRelayPayload, resolveRelayMode } = require('./relayDispatch');
 const { normalizeDni, getArgentinaDateParts, buildFullName } = require('./normalize');
-const { endOfArgentinaDay } = require('./visitasAccess');
+const { endOfArgentinaDay, findEligibleVisita } = require('./visitasAccess');
+const { evaluateAuthorizationCandidates } = require('./accessValidation');
+const { hydrateAuthorizationForRead } = require('./transportCsvParser');
+const { applyDoorRestrictionForIngreso } = require('./doorAccess');
 
 const httpError = (status, message, code) => {
   const err = new Error(message);
@@ -103,19 +109,23 @@ const loadPeopleCandidates = async () => {
 };
 
 /**
- * DNIs de visitas vigentes que podrían no estar en people.
+ * Carga visitas (docs completos) para evaluar elegibilidad en memoria.
  */
-const loadVisitaDniCandidates = async (referenceDate = new Date()) => {
-  let snap;
+const loadVisitasDocs = async () => {
   try {
-    snap = await db.collection('visitas').limit(300).get();
+    const snap = await db.collection('visitas').limit(300).get();
+    return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   } catch {
     return [];
   }
+};
 
+/**
+ * DNIs de visitas vigentes que podrían no estar en people.
+ */
+const loadVisitaDniCandidatesFromDocs = (visitasDocs = []) => {
   const out = [];
-  for (const doc of snap.docs) {
-    const data = doc.data() || {};
+  for (const data of visitasDocs) {
     const estado = data.estado;
     if (estado !== 'pendiente' && estado !== 'autorizada') continue;
     const dni = normalizeDni(data.dniVisitanteNormalized || data.dniVisitante || '');
@@ -128,19 +138,211 @@ const loadVisitaDniCandidates = async (referenceDate = new Date()) => {
   return out;
 };
 
+const mapAuthDoc = (doc) => hydrateAuthorizationForRead({ id: doc.id, ...doc.data() });
+
 /**
- * Construye la allowlist de ingreso para una puerta usando decidirAcceso.
+ * Autorizaciones activas relevantes para hoy, indexadas por personId.
+ * 3 lecturas en paralelo en lugar de 2–3 por persona.
+ */
+const loadAuthorizationsByPersonId = async (today) => {
+  const col = db.collection('authorizations');
+  const [permanentSnap, citacionSnap, rangeSnap] = await Promise.all([
+    col.where('active', '==', true).where('type', '==', 'permanent').get(),
+    col
+      .where('active', '==', true)
+      .where('type', '==', 'citacion')
+      .where('appointmentDate', '==', today)
+      .get(),
+    col
+      .where('active', '==', true)
+      .where('type', 'in', ['visita', 'visit', 'temporal'])
+      .get()
+  ]);
+
+  const byPerson = new Map();
+  const ensure = (personId) => {
+    if (!byPerson.has(personId)) {
+      byPerson.set(personId, { permanentDocs: [], citacionDocs: [], rangeDocs: [] });
+    }
+    return byPerson.get(personId);
+  };
+
+  for (const doc of permanentSnap.docs) {
+    const auth = mapAuthDoc(doc);
+    if (!auth.personId) continue;
+    ensure(auth.personId).permanentDocs.push(auth);
+  }
+  for (const doc of citacionSnap.docs) {
+    const auth = mapAuthDoc(doc);
+    if (!auth.personId) continue;
+    ensure(auth.personId).citacionDocs.push(auth);
+  }
+  for (const doc of rangeSnap.docs) {
+    const auth = mapAuthDoc(doc);
+    if (!auth.personId) continue;
+    const endDate = auth.endDate || auth.startDate;
+    if (!auth.startDate || !endDate || today < auth.startDate || today > endDate) continue;
+    ensure(auth.personId).rangeDocs.push(auth);
+  }
+
+  return byPerson;
+};
+
+/**
+ * Evalúa un candidato con datos ya cargados (sin I/O por persona).
+ * Misma semántica que decidirAcceso para ingreso + puerta.
+ * Siempre devuelve { authorized, denialReason?, ... } (nunca null).
+ */
+const decideCandidateOffline = async ({
+  candidate,
+  doorId,
+  referenceDate,
+  today,
+  dayCode,
+  authByPersonId,
+  visitasDocs
+}) => {
+  const dni = candidate.dniNormalized;
+  const person = candidate.person;
+  const personId = candidate.personId || person?.id || null;
+  const nameSnapshot = person
+    ? (personDisplayName(person) || buildFullName(candidate.nombre, candidate.apellido))
+    : buildFullName(candidate.nombre, candidate.apellido);
+
+  const base = {
+    personId,
+    personName: nameSnapshot,
+    dniNormalized: dni,
+    authorization: null,
+    authorizationType: null,
+    allowedDoorIds: person?.allowedDoorIds ?? []
+  };
+
+  if (person && person.active === false) {
+    return { ...base, authorized: false, denialReason: 'persona_inactiva' };
+  }
+
+  let authorization = null;
+  let authorizationType = null;
+  let authorized = false;
+  let denialReason = personId ? null : 'no_encontrado';
+
+  if (personId) {
+    const bucket = authByPersonId.get(personId) || {
+      permanentDocs: [],
+      citacionDocs: [],
+      rangeDocs: []
+    };
+    let evaluation = evaluateAuthorizationCandidates({
+      permanentDocs: bucket.permanentDocs,
+      citacionDocs: bucket.citacionDocs,
+      rangeDocs: [],
+      today,
+      dayCode,
+      referenceDate
+    });
+    if (!evaluation.authorization) {
+      evaluation = evaluateAuthorizationCandidates({
+        permanentDocs: [],
+        citacionDocs: [],
+        rangeDocs: bucket.rangeDocs,
+        today,
+        dayCode,
+        referenceDate
+      });
+    }
+    authorization = evaluation.authorization;
+    denialReason = evaluation.denialReason;
+    if (authorization) {
+      authorized = true;
+      authorizationType = authorization.type;
+      denialReason = null;
+    } else if (!denialReason) {
+      denialReason = 'sin_citacion_para_hoy';
+    }
+  }
+
+  let allowedDoorIds = authorization?.allowedDoorIds != null
+    ? authorization.allowedDoorIds
+    : (person?.allowedDoorIds ?? []);
+
+  if (!authorized) {
+    const visitaMatch = await findEligibleVisita({
+      dniNormalized: dni,
+      doorId,
+      movementType: 'ingreso',
+      now: referenceDate,
+      visitasDocs
+    });
+    if (visitaMatch.visita) {
+      return {
+        ...base,
+        authorized: true,
+        denialReason: null,
+        personName: visitaMatch.visita.nombreVisitante || nameSnapshot,
+        authorizationType: 'visita_empleado',
+        authorization: null,
+        allowedDoorIds: visitaMatch.allowedDoorIds
+      };
+    }
+    if (visitaMatch.reason === 'puerta_no_autorizada') {
+      return {
+        ...base,
+        authorized: false,
+        denialReason: 'puerta_no_autorizada',
+        allowedDoorIds: visitaMatch.allowedDoorIds || allowedDoorIds
+      };
+    }
+  }
+
+  const restricted = applyDoorRestrictionForIngreso({
+    authorized,
+    denialReason,
+    allowedDoorIds,
+    doorId,
+    movementType: 'ingreso'
+  });
+
+  return {
+    ...base,
+    authorized: Boolean(restricted.authorized),
+    denialReason: restricted.authorized ? null : (restricted.denialReason || denialReason || 'denegado'),
+    authorizationType: restricted.authorized ? authorizationType : null,
+    authorization: restricted.authorized ? authorization : null,
+    allowedDoorIds
+  };
+};
+
+const toAllowlistEntry = (decision, candidate, referenceDate) => {
+  if (!decision?.authorized) return null;
+  const dni = candidate.dniNormalized;
+  return {
+    dniNormalized: decision.dniNormalized || dni,
+    legajoNormalized: candidate.legajoNormalized
+      ? String(candidate.legajoNormalized).trim()
+      : (candidate.person?.legajoNormalized || candidate.person?.legajo || null),
+    nombre: decision.personName
+      || personDisplayName(candidate.person)
+      || buildFullName(candidate.nombre, candidate.apellido),
+    authorizationType: decision.authorizationType || null,
+    validUntil: resolveValidUntil(decision, referenceDate),
+    personId: decision.personId || null
+  };
+};
+
+/**
+ * Construye la allowlist de ingreso para una puerta.
  *
  * @param {string} doorId
- * @param {{ referenceDate?: Date, decidirAccesoFn?: Function }} [options]
+ * @param {{ referenceDate?: Date, decidirAccesoFn?: Function, concurrency?: number }} [options]
+ *   Si pasás decidirAccesoFn (tests), usa el path lento por candidato.
  */
 const buildDoorAllowlist = async (doorId, options = {}) => {
   const id = String(doorId || '').trim();
   if (!id) throw httpError(400, 'doorId es obligatorio');
 
   const referenceDate = options.referenceDate || new Date();
-  const decidirAccesoFn = options.decidirAccesoFn
-    || require('../accessControl').decidirAcceso;
+  const { dateString: today, dayCode } = getArgentinaDateParts(referenceDate);
 
   const doorsConfig = await getDoorsConfig();
   const door = findDoorById(doorsConfig, id);
@@ -152,8 +354,11 @@ const buildDoorAllowlist = async (doorId, options = {}) => {
   const relayConfig = buildRelayConfigForDoor(door, accessConfig);
   const localRelay = buildLocalRelayPayload(relayConfig);
 
-  const people = await loadPeopleCandidates();
-  const visitaExtras = await loadVisitaDniCandidates(referenceDate);
+  const [people, visitasDocs] = await Promise.all([
+    loadPeopleCandidates(),
+    loadVisitasDocs()
+  ]);
+  const visitaExtras = loadVisitaDniCandidatesFromDocs(visitasDocs);
 
   const candidates = [];
   const queuedDnis = new Set();
@@ -195,53 +400,59 @@ const buildDoorAllowlist = async (doorId, options = {}) => {
     });
   }
 
-  // Misma lógica (decidirAcceso); solo paraleliza lecturas independientes.
-  const concurrency = Math.max(1, Number(options.concurrency) || 12);
-  const evaluated = await mapPool(candidates, concurrency, async (candidate) => {
-    const dni = candidate.dniNormalized;
-    const resolvedPerson = candidate.person
-      ? {
-        personId: candidate.personId || candidate.person.id,
-        person: candidate.person,
-        dniNormalized: dni,
-        nameSnapshot: personDisplayName(candidate.person) || buildFullName(candidate.nombre, candidate.apellido),
-        resolutionPath: 'allowlist'
-      }
-      : {
-        personId: null,
-        person: null,
-        dniNormalized: dni,
-        nameSnapshot: buildFullName(candidate.nombre, candidate.apellido),
-        resolutionPath: 'allowlist_visita'
-      };
+  let entries;
 
-    const decision = await decidirAccesoFn({
-      dni,
-      nombre: candidate.nombre,
-      apellido: candidate.apellido,
-      tipoMovimiento: 'ingreso',
-      doorId: id,
-      referenceDate,
-      resolvedPerson
+  // Path de tests: inyección de decidirAcceso (compat).
+  if (typeof options.decidirAccesoFn === 'function') {
+    const decidirAccesoFn = options.decidirAccesoFn;
+    const concurrency = Math.max(1, Number(options.concurrency) || 12);
+    const evaluated = await mapPool(candidates, concurrency, async (candidate) => {
+      const dni = candidate.dniNormalized;
+      const resolvedPerson = candidate.person
+        ? {
+          personId: candidate.personId || candidate.person.id,
+          person: candidate.person,
+          dniNormalized: dni,
+          nameSnapshot: personDisplayName(candidate.person)
+            || buildFullName(candidate.nombre, candidate.apellido),
+          resolutionPath: 'allowlist'
+        }
+        : {
+          personId: null,
+          person: null,
+          dniNormalized: dni,
+          nameSnapshot: buildFullName(candidate.nombre, candidate.apellido),
+          resolutionPath: 'allowlist_visita'
+        };
+
+      const decision = await decidirAccesoFn({
+        dni,
+        nombre: candidate.nombre,
+        apellido: candidate.apellido,
+        tipoMovimiento: 'ingreso',
+        doorId: id,
+        referenceDate,
+        resolvedPerson
+      });
+      return toAllowlistEntry(decision, candidate, referenceDate);
     });
+    entries = evaluated.filter(Boolean);
+  } else {
+    const authByPersonId = await loadAuthorizationsByPersonId(today);
+    const evaluated = await Promise.all(candidates.map((candidate) =>
+      decideCandidateOffline({
+        candidate,
+        doorId: id,
+        referenceDate,
+        today,
+        dayCode,
+        authByPersonId,
+        visitasDocs
+      }).then((decision) => toAllowlistEntry(decision, candidate, referenceDate))
+    ));
+    entries = evaluated.filter(Boolean);
+  }
 
-    if (!decision?.authorized) return null;
-
-    return {
-      dniNormalized: decision.dniNormalized || dni,
-      legajoNormalized: candidate.legajoNormalized
-        ? String(candidate.legajoNormalized).trim()
-        : (candidate.person?.legajoNormalized || candidate.person?.legajo || null),
-      nombre: decision.personName
-        || personDisplayName(candidate.person)
-        || buildFullName(candidate.nombre, candidate.apellido),
-      authorizationType: decision.authorizationType || null,
-      validUntil: resolveValidUntil(decision, referenceDate),
-      personId: decision.personId || null
-    };
-  });
-
-  const entries = evaluated.filter(Boolean);
   entries.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es'));
 
   return {
@@ -258,5 +469,8 @@ const buildDoorAllowlist = async (doorId, options = {}) => {
 module.exports = {
   buildDoorAllowlist,
   resolveValidUntil,
-  combineDateAndTimeAr
+  combineDateAndTimeAr,
+  decideCandidateOffline,
+  loadAuthorizationsByPersonId,
+  loadVisitasDocs
 };
