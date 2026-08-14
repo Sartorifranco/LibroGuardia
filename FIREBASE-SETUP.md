@@ -1,14 +1,14 @@
-﻿# Libro de Guardia Bacar â€” 100% Firebase
+# Libro de Guardia Bacar — 100% Firebase
 
 Todo el proyecto corre en Firebase. **Sin MongoDB, sin API Node local.**
 
 | Componente | Servicio Firebase / local |
 |---|---|
-| Frontend | Hosting â†’ https://mss-guard.web.app |
-| Backend / API | Cloud Functions â†’ `/api/*` |
+| Frontend | Hosting → https://mss-guard.web.app |
+| Backend / API | Cloud Functions → `/api/*` |
 | Base de datos | **Firestore** |
 | Secretos | Firebase Secret Manager / `functions/.env` (`JWT_SECRET`) |
-| Molinete (hardware) | Puente mÃ­nimo `scripts/sr201-bridge.js` en PC de planta |
+| Molinete (hardware) | Puente mínimo `scripts/sr201-bridge.js` en PC de planta |
 
 ---
 
@@ -24,16 +24,16 @@ Todo el proyecto corre en Firebase. **Sin MongoDB, sin API Node local.**
 
 ---
 
-## Paso 1 â€” Habilitar Firestore
+## Paso 1 — Habilitar Firestore
 
-1. AbrÃ­ https://console.firebase.google.com/project/legajosonline-959f6/firestore
+1. Abrí https://console.firebase.google.com/project/legajosonline-959f6/firestore
 2. Clic en **Create database**
-3. ElegÃ­ modo **Production**
-4. RegiÃ³n: **southamerica-east1** (SÃ£o Paulo, la mÃ¡s cercana)
+3. Elegí modo **Production**
+4. Región: **southamerica-east1** (São Paulo, la más cercana)
 
 ---
 
-## Paso 2 â€” Configurar JWT en functions/.env
+## Paso 2 — Configurar JWT en functions/.env
 
 ```powershell
 cd functions
@@ -41,24 +41,24 @@ copy .env.example .env
 notepad .env
 ```
 
-En `.env` ponÃ© el mismo valor secreto que usarÃ¡s en producciÃ³n, por ejemplo:
+En `.env` poné el mismo valor secreto que usarás en producción, por ejemplo:
 
 ```
 JWT_SECRET=BacarGuard_LG_2026_JWT_xK9mP2vQ7nR4wL8sT1
 ```
 
-> No subas `.env` a Git. Se despliega con la Function automÃ¡ticamente.
+> No subas `.env` a Git. Se despliega con la Function automáticamente.
 
 ---
 
-## Paso 3 â€” Crear usuario admin en Firestore
+## Paso 3 — Crear usuario admin en Firestore
 
-**a)** DescargÃ¡ la clave de cuenta de servicio:
+**a)** Descargá la clave de cuenta de servicio:
 - https://console.firebase.google.com/project/legajosonline-959f6/settings/serviceaccounts/adminsdk
 - Clic en **Generar nueva clave privada**
-- GuardÃ¡ el JSON como `functions/serviceAccountKey.json`
+- Guardá el JSON como `functions/serviceAccountKey.json`
 
-**b)** EjecutÃ¡:
+**b)** Ejecutá:
 
 ```powershell
 cd functions
@@ -72,7 +72,7 @@ Debe decir: `Admin "admin" creado/actualizado en Firestore.`
 
 ---
 
-## Paso 4 â€” Desplegar todo
+## Paso 4 — Desplegar todo
 
 ```powershell
 cd C:\Users\Admin\Desktop\LG
@@ -81,7 +81,7 @@ cd C:\Users\Admin\Desktop\LG
 
 ---
 
-## Paso 5 â€” Verificar
+## Paso 5 — Verificar
 
 | URL | Resultado esperado |
 |---|---|
@@ -92,14 +92,14 @@ Login: **admin** / **Bacar2026**
 
 ---
 
-## Colecciones Firestore (automÃ¡ticas)
+## Colecciones Firestore (automáticas)
 
-| ColecciÃ³n | Contenido |
+| Colección | Contenido |
 |---|---|
 | `users` | Usuarios (id = username) |
 | `entries` | Registros del libro |
 | `personalMaster` | Base de personal |
-| `mobiles` | MÃ³viles de flota |
+| `mobiles` | Móviles de flota |
 | `drivers` | Choferes de flota |
 
 ---
@@ -107,8 +107,8 @@ Login: **admin** / **Bacar2026**
 ## Flujo de trabajo diario
 
 ```powershell
-# 1. EditÃ¡s cÃ³digo en tu PC
-# 2. DesplegÃ¡s:
+# 1. Editás código en tu PC
+# 2. Desplegás:
 .\scripts\deploy-firebase.ps1
 ```
 
@@ -133,8 +133,8 @@ npm start
 ## Apagar el API Node+Mongo viejo (192.168.0.9)
 
 Ya **no** se necesita Mongo ni `bacarguard-api` para Libro de Guardia.
-**Fase 15:** confirmado en planta â€” sin datos relevantes; no se migra nada.
-El cÃ³digo histÃ³rico quedÃ³ en `legacy/backend-libro-guardia/`.
+**Fase 15:** confirmado en planta — sin datos relevantes; no se migra nada.
+El código histórico quedó en `legacy/backend-libro-guardia/`.
 
 ```powershell
 pm2 status
@@ -145,7 +145,7 @@ pm2 status
 netstat -ano | findstr ":5020"
 ```
 
-GuÃ­a completa: [docs/MIGRACION-BACKEND.md](./docs/MIGRACION-BACKEND.md) Â§13.
+Guía completa: [docs/MIGRACION-BACKEND.md](./docs/MIGRACION-BACKEND.md) — sección "Apagado en planta".
 
-SÃ­ hacen falta los puentes locales (SR201 / citaciones) â€” ver [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md),
+Sí hacen falta los puentes locales (SR201 / citaciones) — ver [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md),
 [docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md) y `.\scripts\setup-servidor.ps1`.

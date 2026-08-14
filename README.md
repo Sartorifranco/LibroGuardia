@@ -1,52 +1,49 @@
-﻿# Libro de Novedades Bacar S.A.
+# Libro de Novedades Bacar S.A.
 
-Sistema web para registrar personal, vehÃ­culos externos, flota interna y novedades de guardia,
-con control de acceso (molinete/puertas) vÃ­a SR201.
+Sistema web para registrar personal, vehículos externos, flota interna y novedades de guardia,
+con control de acceso (molinete/puertas) vía SR201.
 
-## Arquitectura â€” Firebase + puente local de hardware
+## Arquitectura — Firebase + puente local de hardware
 
 | Componente | Servicio |
 |---|---|
-| Frontend | Firebase Hosting â†’ https://mss-guard.web.app |
-| Backend / API | Cloud Functions â†’ `/api/*` (Firestore) |
+| Frontend | Firebase Hosting → https://mss-guard.web.app |
+| Backend / API | Cloud Functions → `/api/*` (Firestore) |
 | Base de datos | **Firestore** (sin MongoDB) |
-| Molinete / puertas | `scripts/sr201-bridge.js` en PC de planta (HTTP â†’ TCP SR201) â€” **mantener** |
-| Citaciones Excel | `scripts/citaciones-folder-bridge.js` â€” **en uso, mantener** |
+| Molinete / puertas | `scripts/sr201-bridge.js` en PC de planta (HTTP → TCP SR201) — **mantener** |
+| Citaciones Excel | `scripts/citaciones-folder-bridge.js` — **en uso, mantener** |
 
 El frontend **no** habla con Firestore directamente (`firestore.rules` lo bloquea): todo pasa por Cloud Functions.
 
-**GuÃ­a setup:** [FIREBASE-SETUP.md](./FIREBASE-SETUP.md)  
-**InstalaciÃ³n cliente nuevo:** [INSTALL-CLIENTE-NUEVO.md](./INSTALL-CLIENTE-NUEVO.md)  
-**Puente SR201:** [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md)  
-**Lector puerta desatendida:** [docs/INSTALACION-LECTOR-PUERTA.md](./docs/INSTALACION-LECTOR-PUERTA.md)  
-**Puente citaciones:** [docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md)  
-**MigraciÃ³n backend:** [docs/MIGRACION-BACKEND.md](./docs/MIGRACION-BACKEND.md)
+**Guía setup:** [FIREBASE-SETUP.md](./FIREBASE-SETUP.md)  
+**Instalación cliente nuevo:** [INSTALL-CLIENTE-NUEVO.md](./INSTALL-CLIENTE-NUEVO.md)  
+**Índice completo de documentación técnica/hardware:** [docs/README.md](./docs/README.md)
 
 ---
 
-## Deploy (producciÃ³n)
+## Deploy (producción)
 
 ### GitHub Actions (recomendado)
 
-En cada push/PR corre el job **Test**. En push a `main` (o vÃ­a *Actions â†’ CI â†’ Run workflow*) corre **Deploy** de Hosting + Cloud Functions, usando `.firebaserc` / `firebase.json` del repo.
+En cada push/PR corre el job **Test**. En push a `main` (o vía *Actions → CI → Run workflow*) corre **Deploy** de Hosting + Cloud Functions, usando `.firebaserc` / `firebase.json` del repo.
 
-**Secret requerido** (Settings â†’ Secrets and variables â†’ Actions):
+**Secret requerido** (Settings → Secrets and variables → Actions):
 
 | Secret | Contenido |
 |--------|-----------|
 | `FIREBASE_SERVICE_ACCOUNT` | JSON completo de una cuenta de servicio de Google Cloud con rol **Firebase Admin** (o equivalente para deploy de Hosting + Functions) |
 
-**CÃ³mo generar el JSON (por instalaciÃ³n / cliente):**
+**Cómo generar el JSON (por instalación / cliente):**
 
-1. AbrÃ­ [Google Cloud Console](https://console.cloud.google.com/) â†’ proyecto Firebase del cliente.
-2. IAM y administraciÃ³n â†’ Cuentas de servicio â†’ Crear cuenta de servicio (ej. `github-deploy`).
-3. OtorgÃ¡ el rol **Firebase Admin** (o *Firebase Hosting Admin* + *Cloud Functions Admin* + *Service Account User* si preferÃ­s roles mÃ¡s acotados).
-4. En la cuenta â†’ Claves â†’ Agregar clave â†’ JSON â†’ descargar el archivo.
-5. En el repo de GitHub del cliente: Settings â†’ Secrets â†’ New repository secret â†’ nombre `FIREBASE_SERVICE_ACCOUNT` â†’ pegÃ¡ el contenido completo del JSON.
+1. Abrí [Google Cloud Console](https://console.cloud.google.com/) → proyecto Firebase del cliente.
+2. IAM y administración → Cuentas de servicio → Crear cuenta de servicio (ej. `github-deploy`).
+3. Otorgá el rol **Firebase Admin** (o *Firebase Hosting Admin* + *Cloud Functions Admin* + *Service Account User* si preferís roles más acotados).
+4. En la cuenta → Claves → Agregar clave → JSON → descargar el archivo.
+5. En el repo de GitHub del cliente: Settings → Secrets → New repository secret → nombre `FIREBASE_SERVICE_ACCOUNT` → pegá el contenido completo del JSON.
 
 Cada cliente tiene su propio repo/proyecto Firebase y su propio secret; el workflow no hardcodea el project id.
 
-El puente SR201 **no** se despliega desde Actions (la PC de planta no es alcanzable desde internet). SeguÃ­ usando `.\scripts\deploy-sr201-bridge.ps1` en planta.
+El puente SR201 **no** se despliega desde Actions (la PC de planta no es alcanzable desde internet). Seguí usando `.\scripts\deploy-sr201-bridge.ps1` en planta.
 
 ### Manual (fallback PowerShell)
 
@@ -58,15 +55,15 @@ El puente SR201 **no** se despliega desde Actions (la PC de planta no es alcanza
 .\scripts\deploy-frontend.ps1
 ```
 
-No hay backend Node+Mongo que desplegar. El API viejo estÃ¡ archivado en `legacy/backend-libro-guardia/` (**no usar**).
+No hay backend Node+Mongo que desplegar. El API viejo está archivado en `legacy/backend-libro-guardia/` (**no usar**).
 
-### Servicios locales en planta (mantener â€” no son el API Node/Mongo)
+### Servicios locales en planta (mantener — no son el API Node/Mongo)
 
 En PCs de la red local (siempre encendidas), dejar corriendo:
 
 | Servicio | Docs |
 |----------|------|
-| Puente SR201 | [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md) Â· `.\scripts\setup-servidor.ps1` |
+| Puente SR201 | [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md) · `.\scripts\setup-servidor.ps1` |
 | Puente citaciones Excel | [docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md) |
 
 ```powershell
@@ -85,7 +82,7 @@ npm install
 npm start
 ```
 
-Opcional â€” emuladores Firebase:
+Opcional — emuladores Firebase:
 
 ```powershell
 firebase emulators:start --only functions,hosting,firestore
@@ -100,41 +97,41 @@ firebase emulators:start --only functions,hosting,firestore
 |---|---|
 | `guardia` | Registro, kiosk, puertas, GPS, asistencia |
 | `supervisor` | Lo anterior + maestros, flota, usuarios |
-| `monitoreo` | VehÃ­culos autorizados / botonera monitoreo |
+| `monitoreo` | Vehículos autorizados / botonera monitoreo |
 | `admin` | Acceso completo + roles / SR201 / GPS config |
 
 ---
 
-## Backend â€” estructura de rutas
+## Backend — estructura de rutas
 
 `functions/app.js` solo arma Express (cors, JSON) y monta los routers.
-La lÃ³gica de cada endpoint estÃ¡ en `functions/routes/*.js` (paths absolutos `/api/...`).
+La lógica de cada endpoint está en `functions/routes/*.js` (paths absolutos `/api/...`).
 Middleware compartido: `functions/middleware/auth.js`.
 
 | Archivo | Dominio |
 |---------|---------|
 | `routes/auth.js` | Health, bootstrap setup, login / me / change-password |
 | `routes/adminUsersRoles.js` | Usuarios, roles, permisos por rol |
-| `routes/masterData.js` | Personal, citaciones master, vehÃ­culos autorizados |
+| `routes/masterData.js` | Personal, citaciones master, vehículos autorizados |
 | `routes/authorizations.js` | Autorizaciones, imports/bridge de citaciones |
 | `routes/access.js` | Access-control, puertas, airlock, kiosk, validar, scan |
-| `routes/fleetGps.js` | Flota (mÃ³viles/choferes) y GPS UBIKA |
-| `routes/attendance.js` | NÃ³mina, citados, alertas de asistencia |
+| `routes/fleetGps.js` | Flota (móviles/choferes) y GPS UBIKA |
+| `routes/attendance.js` | Nómina, citados, alertas de asistencia |
 | `routes/entries.js` | `GET/POST /api/entries` |
 | `routes/peopleDoors.js` | `allowedDoorIds` por persona / puerta |
-| `routes/system.js` | BÃºsqueda, actividad, auditorÃ­a, reportes, notificaciones, vencimientos |
+| `routes/system.js` | Búsqueda, actividad, auditoría, reportes, notificaciones, vencimientos |
 
 Drivers de puerta: `functions/lib/doorDrivers/`. Reportes gerenciales: `functions/reports.js`.
 
 ## Endpoints principales
 
 - `GET /api/health`
-- `POST /api/auth/login` Â· `GET /api/auth/me` Â· `POST /api/auth/change-password`
+- `POST /api/auth/login` · `GET /api/auth/me` · `POST /api/auth/change-password`
 - `GET/POST /api/entries`
 - Control de acceso: `/api/access/*`, `/api/guard/open-door`, `/api/admin/doors-config`
 - Reportes: `GET /api/reports/summary`
-- Citaciones, nÃ³mina, GPS flota, roles, auditorÃ­a, notificaciones: ver tabla de routers arriba
+- Citaciones, nómina, GPS flota, roles, auditoría, notificaciones: ver tabla de routers arriba
 
 ## Legacy
 
-`legacy/backend-libro-guardia/` â€” Express + Mongo histÃ³rico. **No desplegar.** Ver `legacy/README.md`.
+`legacy/backend-libro-guardia/` — Express + Mongo histórico. **No desplegar.** Ver `legacy/README.md`.
