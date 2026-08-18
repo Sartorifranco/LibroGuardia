@@ -9,6 +9,7 @@ const { db, FieldValue } = require('../firestore');
 const { getDoorsConfig, findDoorById } = require('./doorsConfig');
 const { getRoleById, createRole, updateRole } = require('../roles');
 const { PERMISSION_KEYS } = require('../permissions');
+const { getAccessHardwareBrand } = require('./accessHardwareBrands');
 
 const LECTORES = 'lectores';
 /** ID legado en Firestore; el label visible es “Estación de acceso”. */
@@ -122,6 +123,11 @@ const toLectorJson = (doc) => {
       ? Number(data.allowlistEntryCount)
       : null,
     allowlistReportedAt: data.allowlistReportedAt || null,
+    brandId: data.brandId || '',
+    plugin: data.plugin || '',
+    deviceHost: data.deviceHost || '',
+    devicePort: data.devicePort == null ? null : data.devicePort,
+    detectMeta: data.detectMeta || null,
     puertoDetectado: data.puertoDetectado || null,
     inputModeDetectado: data.inputModeDetectado || null,
     createdAt: data.createdAt || null,
@@ -181,12 +187,50 @@ const sanitizeLectorFields = (body = {}, previous = {}) => {
     ? String(body.estacionId || '').trim()
     : String(previous.estacionId || '').trim();
 
+  let brandId = body.brandId !== undefined
+    ? String(body.brandId || '').trim().toLowerCase()
+    : String(previous.brandId || '').trim().toLowerCase();
+  let plugin = body.plugin !== undefined
+    ? String(body.plugin || '').trim().toLowerCase()
+    : String(previous.plugin || '').trim().toLowerCase();
+  if (brandId) {
+    const brand = getAccessHardwareBrand(brandId);
+    if (!brand) throw httpError(400, `Marca desconocida: ${brandId}`, 'unknown_brand');
+    if (!plugin) plugin = String(brand.stationPlugin || brandId).trim().toLowerCase();
+  }
+  const deviceHost = body.deviceHost !== undefined
+    ? String(body.deviceHost || '').trim().slice(0, 200)
+    : String(previous.deviceHost || '').trim().slice(0, 200);
+  let devicePort = null;
+  const portRaw = body.devicePort !== undefined ? body.devicePort : previous.devicePort;
+  if (portRaw != null && portRaw !== '') {
+    const n = Number(portRaw);
+    if (Number.isFinite(n) && n > 0 && n <= 65535) devicePort = Math.floor(n);
+  }
+  let detectMeta = null;
+  const metaSrc = body.detectMeta !== undefined ? body.detectMeta : previous.detectMeta;
+  if (metaSrc && typeof metaSrc === 'object') {
+    detectMeta = {
+      model: metaSrc.model ? String(metaSrc.model).slice(0, 120) : null,
+      firmware: metaSrc.firmware ? String(metaSrc.firmware).slice(0, 120) : null,
+      via: metaSrc.via ? String(metaSrc.via).slice(0, 80) : null,
+      confidence: metaSrc.confidence ? String(metaSrc.confidence).slice(0, 40) : null,
+      detectedAt: metaSrc.detectedAt ? String(metaSrc.detectedAt).slice(0, 40) : null,
+      bestEffort: Boolean(metaSrc.bestEffort)
+    };
+  }
+
   return {
     nombre,
     doorId,
     readerId,
     direction,
     estacionId,
+    brandId: brandId || '',
+    plugin: plugin || '',
+    deviceHost: deviceHost || '',
+    devicePort,
+    detectMeta,
     ...sanitizeOfflineOptions(body, previous)
   };
 };

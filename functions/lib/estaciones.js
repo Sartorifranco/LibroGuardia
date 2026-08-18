@@ -220,6 +220,8 @@ const buildReaderEntryForStation = (lector, { apiBaseUrl, password = '' } = {}) 
     baudRate: flat.baudRate,
     idleMs: flat.idleMs,
     inputMode: flat.inputMode,
+    plugin: String(lector.plugin || lector.brandId || '').trim() || undefined,
+    brand: String(lector.brandId || '').trim() || undefined,
     offlineCache: flat.offlineCache,
     localFirstMode: flat.localFirstMode,
     offlineCacheRefreshMs: flat.offlineCacheRefreshMs,

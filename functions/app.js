@@ -40,6 +40,7 @@ app.use(require('./routes/access'));
 app.use(require('./routes/empresasDestinos'));
 app.use(require('./routes/lectores'));
 app.use(require('./routes/estaciones'));
+app.use(require('./routes/hardwareDetect'));
 app.use(require('./routes/empleado'));
 app.use(require('./routes/visitasAdmin'));
 app.use(require('./routes/appearance'));

@@ -56,11 +56,224 @@ const emptyCreateForm = () => ({
   doorId: '',
   readerId: '',
   direction: 'ingreso',
+  estacionId: '',
+  brandId: '',
+  plugin: '',
+  deviceHost: '',
+  devicePort: '',
+  detectUsername: 'admin',
+  detectPassword: '',
+  detectMeta: null,
   offlineCache: true,
   localFirstMode: false,
   offlineCacheRefreshMinutes: 15,
   offlineCacheMaxAgeHours: 24
 });
+
+const BRAND_OPTIONS = [
+  { id: '', label: 'Sin marca / elegir luego' },
+  { id: 'zkteco', label: 'ZKTeco', plugin: 'zkteco' },
+  { id: 'hikvision', label: 'Hikvision', plugin: 'hikvision' },
+  { id: 'suprema', label: 'Suprema (BioStar)', plugin: 'suprema' },
+  { id: 'hid', label: 'HID', plugin: 'hid' },
+  { id: 'dni_generic', label: 'Lector de DNI', plugin: 'serial_dni' }
+];
+
+/** Panel de auto-detección por IP (estación LAN). */
+function DetectBrandPanel({
+  form,
+  onChange,
+  estaciones = [],
+  authToken,
+  disabled
+}) {
+  const [busy, setBusy] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
+  const [candidates, setCandidates] = useState([]);
+
+  const runDetect = async () => {
+    if (!form.estacionId) {
+      setStatusMsg('Elegí una estación (tiene que estar en línea en planta).');
+      return;
+    }
+    if (!String(form.deviceHost || '').trim()) {
+      setStatusMsg('Ingresá la IP del equipo.');
+      return;
+    }
+    setBusy(true);
+    setStatusMsg('Enviando pedido a la estación…');
+    setCandidates([]);
+    try {
+      const created = await apiFetch('/admin/hardware/detect', {
+        method: 'POST',
+        token: authToken,
+        body: {
+          estacionId: form.estacionId,
+          host: String(form.deviceHost || '').trim(),
+          port: form.devicePort ? Number(form.devicePort) : null,
+          username: form.detectUsername || 'admin',
+          password: form.detectPassword || ''
+        }
+      });
+      const jobId = created.jobId;
+      setStatusMsg('Esperando resultado de la estación…');
+      const deadline = Date.now() + 22000;
+      let job = null;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const poll = await apiFetch(`/admin/hardware/detect/${encodeURIComponent(jobId)}`, {
+          token: authToken
+        });
+        job = poll.job;
+        if (job && !['pending', 'running'].includes(job.status)) break;
+      }
+      if (!job || ['pending', 'running', 'expired'].includes(job.status)) {
+        setStatusMsg('No hubo respuesta a tiempo (estación offline o IP inalcanzable). Elegí la marca a mano.');
+        setBusy(false);
+        return;
+      }
+      const list = Array.isArray(job.candidates) ? job.candidates : [];
+      setCandidates(list);
+      if (!list.length) {
+        setStatusMsg(
+          job.error === 'auth_failed_hint'
+            ? 'No detectamos marca (¿usuario/contraseña incorrectos?). Elegí manualmente.'
+            : 'No detectamos marca conocida. Elegí manualmente.'
+        );
+      } else {
+        setStatusMsg('Revisá el resultado y confirmá.');
+      }
+    } catch (err) {
+      setStatusMsg(err.message || 'Error al detectar');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmCandidate = (c) => {
+    onChange({
+      brandId: c.brandId || '',
+      plugin: c.stationPlugin || c.brandId || '',
+      detectMeta: {
+        model: c.model || null,
+        firmware: c.firmware || null,
+        via: c.via || null,
+        confidence: c.confidence || null,
+        detectedAt: new Date().toISOString(),
+        bestEffort: Boolean(c.bestEffort)
+      }
+    });
+    setStatusMsg(`Marca confirmada: ${c.brandId}${c.model ? ` (${c.model})` : ''}. Guardá el lector para aplicar.`);
+    setCandidates([]);
+  };
+
+  return (
+    <div className="admin-block" style={{ marginTop: '0.75rem', padding: '0.75rem', border: '1px solid var(--border, #d5dde8)', borderRadius: 8 }}>
+      <p className="historial-meta" style={{ marginBottom: '0.5rem' }}>
+        Auto-detectar marca por IP (la estación en LAN hace el probe; no se expone el equipo a internet).
+      </p>
+      <div className="admin-form-grid">
+        <label>
+          <span className="historial-meta">Estación (obligatoria para detectar)</span>
+          <select
+            className="input-field"
+            value={form.estacionId || ''}
+            onChange={(e) => onChange({ estacionId: e.target.value })}
+            disabled={disabled || busy}
+          >
+            <option value="">— Elegir estación —</option>
+            {estaciones.map((e) => (
+              <option key={e.id} value={e.id}>{e.nombre || e.id}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span className="historial-meta">IP del equipo</span>
+          <input
+            className="input-field"
+            value={form.deviceHost || ''}
+            onChange={(e) => onChange({ deviceHost: e.target.value })}
+            placeholder="192.168.0.55"
+            disabled={disabled || busy}
+          />
+        </label>
+        <label>
+          <span className="historial-meta">Puerto (opcional)</span>
+          <input
+            className="input-field"
+            value={form.devicePort || ''}
+            onChange={(e) => onChange({ devicePort: e.target.value })}
+            placeholder="auto"
+            disabled={disabled || busy}
+          />
+        </label>
+        <label>
+          <span className="historial-meta">Usuario equipo</span>
+          <input
+            className="input-field"
+            value={form.detectUsername || ''}
+            onChange={(e) => onChange({ detectUsername: e.target.value })}
+            disabled={disabled || busy}
+            autoComplete="off"
+          />
+        </label>
+        <label>
+          <span className="historial-meta">Contraseña equipo</span>
+          <input
+            className="input-field"
+            type="password"
+            value={form.detectPassword || ''}
+            onChange={(e) => onChange({ detectPassword: e.target.value })}
+            disabled={disabled || busy}
+            autoComplete="new-password"
+          />
+        </label>
+      </div>
+      <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <button type="button" className="btn-secondary" onClick={runDetect} disabled={disabled || busy}>
+          {busy ? 'Detectando…' : 'Detectar marca'}
+        </button>
+        <label style={{ minWidth: 180 }}>
+          <span className="historial-meta">Marca / plugin</span>
+          <select
+            className="input-field"
+            value={form.brandId || ''}
+            onChange={(e) => {
+              const opt = BRAND_OPTIONS.find((b) => b.id === e.target.value);
+              onChange({
+                brandId: e.target.value,
+                plugin: opt?.plugin || '',
+                detectMeta: null
+              });
+            }}
+            disabled={disabled || busy}
+          >
+            {BRAND_OPTIONS.map((b) => (
+              <option key={b.id || 'none'} value={b.id}>{b.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {statusMsg ? <p className="historial-meta" style={{ marginTop: '0.5rem' }}>{statusMsg}</p> : null}
+      {candidates.map((c) => (
+        <div key={`${c.brandId}-${c.via}`} style={{ marginTop: '0.5rem' }}>
+          <p>
+            Detectamos: <strong>{c.brandId}</strong>
+            {c.model ? ` · ${c.model}` : ''}
+            {c.bestEffort || c.confidence === 'low' ? ' (best-effort / poco confiable)' : ''}
+            {c.via === 'biostar2_server' ? ' — servidor BioStar 2' : ''}
+            {' — ¿confirmás?'}
+          </p>
+          <button type="button" className="btn-primary" onClick={() => confirmCandidate(c)}>
+            Confirmar {c.brandId}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 
 const offlineFieldsFromRow = (row = {}) => ({
   offlineCache: Boolean(row.offlineCache),
@@ -262,7 +475,9 @@ function PairingCodeModal({ pairing, onClose }) {
 function EditLectorModal({
   draft,
   doors,
+  estaciones = [],
   pendingAction,
+  authToken,
   onChange,
   onDoorChange,
   onReaderChange,
@@ -307,6 +522,13 @@ function EditLectorModal({
           Si cambiás puerta, readerId o modos offline/instantáneo, descargá de nuevo la
           {' '}<code>configuracion-estacion.json</code> y copiala a la mini PC (o regenerá credenciales / usá el código de instalación).
         </p>
+        <DetectBrandPanel
+          form={draft}
+          onChange={onChange}
+          estaciones={estaciones}
+          authToken={authToken}
+          disabled={Boolean(pendingAction)}
+        />
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -479,6 +701,7 @@ function LectoresAdminSection({ pendingAction, runAction }) {
   };
 
   const [lectores, setLectores] = useState([]);
+  const [estaciones, setEstaciones] = useState([]);
   const [doors, setDoors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [createForm, setCreateForm] = useState(emptyCreateForm);
@@ -497,12 +720,14 @@ function LectoresAdminSection({ pendingAction, runAction }) {
     if (!canManage) return;
     setLoading(true);
     try {
-      const [lectoresData, doorsData] = await Promise.all([
+      const [lectoresData, doorsData, estData] = await Promise.all([
         apiFetch('/admin/lectores', { token: authToken, allowForbidden: true }),
-        apiFetch('/admin/doors-config', { token: authToken, allowForbidden: true })
+        apiFetch('/admin/doors-config', { token: authToken, allowForbidden: true }),
+        apiFetch('/admin/estaciones', { token: authToken, allowForbidden: true }).catch(() => ({ estaciones: [] }))
       ]);
       setLectores(lectoresData.lectores || []);
       setDoors(doorsData?.config?.doors || []);
+      setEstaciones(Array.isArray(estData?.estaciones) ? estData.estaciones : []);
     } catch (err) {
       showError(err.message || 'No se pudieron cargar los lectores');
     } finally {
@@ -543,6 +768,14 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       doorId: row.doorId || '',
       readerId: row.readerId || '',
       direction: row.direction || 'ingreso',
+      estacionId: row.estacionId || '',
+      brandId: row.brandId || '',
+      plugin: row.plugin || '',
+      deviceHost: row.deviceHost || '',
+      devicePort: row.devicePort == null ? '' : String(row.devicePort),
+      detectUsername: 'admin',
+      detectPassword: '',
+      detectMeta: row.detectMeta || null,
       allowlistGeneratedAt: row.allowlistGeneratedAt || null,
       allowlistEntryCount: row.allowlistEntryCount ?? null,
       allowlistReportedAt: row.allowlistReportedAt || null,
@@ -577,6 +810,12 @@ function LectoresAdminSection({ pendingAction, runAction }) {
             doorId,
             readerId,
             direction,
+            estacionId: String(createForm.estacionId || '').trim() || undefined,
+            brandId: createForm.brandId || undefined,
+            plugin: createForm.plugin || undefined,
+            deviceHost: String(createForm.deviceHost || '').trim() || undefined,
+            devicePort: createForm.devicePort ? Number(createForm.devicePort) : undefined,
+            detectMeta: createForm.detectMeta || undefined,
             ...bodyFromOfflineForm(createForm)
           }
         });
@@ -619,6 +858,12 @@ function LectoresAdminSection({ pendingAction, runAction }) {
             doorId,
             readerId,
             direction,
+            estacionId: String(editDraft.estacionId || '').trim(),
+            brandId: editDraft.brandId || '',
+            plugin: editDraft.plugin || '',
+            deviceHost: String(editDraft.deviceHost || '').trim(),
+            devicePort: editDraft.devicePort ? Number(editDraft.devicePort) : null,
+            detectMeta: editDraft.detectMeta || null,
             ...bodyFromOfflineForm(editDraft)
           }
         });
@@ -784,7 +1029,9 @@ function LectoresAdminSection({ pendingAction, runAction }) {
       <EditLectorModal
         draft={editDraft}
         doors={doors}
+        estaciones={estaciones}
         pendingAction={pendingAction}
+        authToken={authToken}
         onChange={(patch) => setEditDraft((prev) => (prev ? { ...prev, ...patch } : prev))}
         onDoorChange={(nextDoorId) => setEditDraft((prev) => (prev ? applyDoorToForm(prev, nextDoorId) : prev))}
         onReaderChange={(nextReaderId) => setEditDraft((prev) => (
@@ -801,6 +1048,13 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         description="Al crear se genera la cuenta de estación de acceso. Después usá “Generar código de instalación” en la fila y corré 01-instalar-estacion.cmd en la mini PC."
       >
         <AdminFormCard onSubmit={handleCreateSubmit}>
+          <DetectBrandPanel
+            form={createForm}
+            onChange={(patch) => setCreateForm((prev) => ({ ...prev, ...patch }))}
+            estaciones={estaciones}
+            authToken={authToken}
+            disabled={Boolean(pendingAction)}
+          />
           <div className="admin-form-grid">
             <label>
               <span className="historial-meta">Nombre</span>

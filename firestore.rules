@@ -4,6 +4,14 @@ rules_version = '2';
 // El frontend NO accede directo a Firestore.
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Jobs de auto-detección de hardware (Admin → estación LAN).
+    // Pueden contener password del equipo en claro solo hasta el claim
+    // (luego se redacta; además hay cleanup programado / expireAt).
+    // Cliente NUNCA lee ni escribe: solo Cloud Functions con Admin SDK.
+    match /hardware_detect_jobs/{jobId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

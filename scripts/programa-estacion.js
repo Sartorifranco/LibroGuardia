@@ -2251,10 +2251,66 @@ const main = async () => {
   setTimeout(() => { syncFromCloud('startup'); }, 3000);
   const syncTimer = setInterval(() => { syncFromCloud('interval'); }, 45 * 1000);
 
+  const pollHardwareDetect = async () => {
+    if (!station.stationUsername || !station.stationPassword) return;
+    try {
+      const { runHardwareAutoDetect } = require('./lib/hardwareAutoDetect');
+      const token = await stationLogin();
+      const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+      const claimRes = await requestJson('POST', `${station.apiBaseUrl}/estaciones/claim-hardware-detect`, {
+        headers,
+        body: { limit: 2 },
+        timeoutMs: 15000
+      });
+      if (claimRes.status < 200 || claimRes.status >= 300) return;
+      const jobs = Array.isArray(claimRes.data?.jobs) ? claimRes.data.jobs : [];
+      for (const job of jobs) {
+        log(logCfg(), 'info', 'Auto-detect hardware: job reclamado', {
+          jobId: job.jobId,
+          host: job.host
+        });
+        let result;
+        try {
+          result = await runHardwareAutoDetect({
+            host: job.host,
+            port: job.port,
+            username: job.username,
+            password: job.password,
+            httpsPreferred: Boolean(job.httpsPreferred)
+          });
+        } catch (err) {
+          result = {
+            status: 'failed',
+            candidates: [],
+            probes: [],
+            error: err.message || 'probe_error'
+          };
+        }
+        await requestJson('POST', `${station.apiBaseUrl}/estaciones/hardware-detect-result`, {
+          headers,
+          body: {
+            jobId: job.jobId,
+            status: result.status,
+            candidates: result.candidates,
+            probes: result.probes,
+            error: result.error
+          },
+          timeoutMs: 20000
+        });
+      }
+    } catch (err) {
+      log(logCfg(), 'warn', 'poll hardware-detect diferido', { error: err.message });
+    }
+  };
+
+  const detectTimer = setInterval(() => { pollHardwareDetect(); }, 2000);
+  setTimeout(() => { pollHardwareDetect(); }, 4000);
+
   const shutdown = () => {
     if (stopping) return;
     stopping = true;
     clearInterval(syncTimer);
+    clearInterval(detectTimer);
     runtimes.forEach((rt) => {
       try { rt.stop(); } catch (_e) { /* ignore */ }
     });
