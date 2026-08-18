@@ -60,7 +60,7 @@ Catálogo de marcas homologadas: `functions/lib/accessHardwareBrands.js` (`ACCES
 - **Hikvision** — ISAPI `/ISAPI/System/deviceInfo` (confianza alta)
 - **Suprema** — solo si la IP es un **servidor BioStar 2** (login API); no terminales standalone
 - **ZKTeco** — fingerprint TCP 4370 **best-effort** (confirmá en sitio)
-Si no hay match, el alta sigue con elección manual. El password del equipo no queda persistido tras el claim del job.
+Si no hay match, el alta sigue con elección manual. El password del equipo no queda persistido tras el claim del job. Los jobs vencidos se borran con **TTL nativo de Firestore** sobre el campo `expireAt` (configurar una vez en Firebase Console → Firestore → TTL; sin cron).
 
 **Backlog aparte (no mezclar con V1):** *Integración nativa Suprema vía G-SDK* (terminales standalone) — requiere diseño y aprobación propios.
 

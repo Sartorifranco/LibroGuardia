@@ -1,7 +1,10 @@
 /**
  * Cola de auto-detección de marca de hardware (Admin → estación LAN).
  * El password del equipo vive en el doc solo hasta el claim; luego se redacta.
- * expireAt + cleanup programado borran jobs no reclamados.
+ *
+ * Limpieza de jobs vencidos: SOLO vía TTL nativo de Firestore sobre `expireAt`
+ * (Firebase Console → Firestore → TTL → colección hardware_detect_jobs).
+ * No hay cron/onSchedule de limpieza — regla de costo cero.
  */
 
 const { db, FieldValue, Timestamp } = require('../firestore');
@@ -107,7 +110,7 @@ const createHardwareDetectJob = async ({
     createdAtMs: now,
     createdAtIso: new Date(now).toISOString(),
     expiresAtIso: new Date(expiresAtMs).toISOString(),
-    // Timestamp nativo: habilita TTL policy en consola si se desea
+    // Timestamp para TTL nativo de Firestore (activar en consola, sin función programada).
     expireAt: Timestamp.fromMillis(expiresAtMs),
     expiresAt: Timestamp.fromMillis(expiresAtMs),
     createdAt: FieldValue.serverTimestamp()
@@ -228,8 +231,9 @@ const getHardwareDetectJob = async (jobId) => {
 };
 
 /**
- * Borra jobs vencidos (pending/running sin claim útil, o cualquier doc pasado expireAt).
- * Usado por el schedule en index.js — no requiere TTL nativo en consola.
+ * Helper de test / mantenimiento manual: borra docs con expireAt vencido.
+ * En producción la limpieza la hace el TTL nativo de Firestore (consola),
+ * no un onSchedule — no exportar esto como Cloud Function.
  */
 const cleanupExpiredHardwareDetectJobs = async ({ limit = 100 } = {}) => {
   const now = Timestamp.now();
