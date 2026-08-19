@@ -125,6 +125,7 @@ const installMock = () => {
         doors: [{
           id: 'puerta-p1',
           name: 'Puerta 1',
+          relayMode: 'local',
           readers: [
             { id: 'INGRESO_P1', direction: 'ingreso' },
             { id: 'EGRESO_P1', direction: 'egreso' }
@@ -133,6 +134,7 @@ const installMock = () => {
         }, {
           id: 'puerta-p2',
           name: 'Puerta 2',
+          relayMode: 'local',
           readers: [{ id: 'INGRESO_P2', direction: 'ingreso' }],
           readerIds: ['INGRESO_P2']
         }]
