@@ -44,7 +44,7 @@ describe('LectoresAdminSection — modal de edición', () => {
             connectionStatus: 'offline',
             offlineCache: true,
             offlineCacheMaxAgeHours: 24,
-            allowlistGeneratedAt: '2026-07-29T10:30:00.000Z',
+            allowlistGeneratedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             allowlistEntryCount: 17
           }]
         };
