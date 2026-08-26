@@ -4,6 +4,8 @@
  * ingreso|egreso define el estado actual del móvil.
  */
 
+const { isGpsFleetEntry } = require('./gpsProviders/entrySource');
+
 const normalizeMobileKey = (value = '') =>
   String(value || '')
     .trim()
@@ -14,7 +16,7 @@ const normalizeMobileKey = (value = '') =>
 
 const isFlotaLikeEntry = (entry = {}) => {
   if (entry.type === 'flota') return true;
-  if (entry.type === 'vehiculo' && (entry.gpsAuto || entry.entrySource === 'gps_ubika')) return true;
+  if (entry.type === 'vehiculo' && isGpsFleetEntry(entry)) return true;
   return false;
 };
 

@@ -15,6 +15,8 @@ test('clampLimit respeta default y máximo', () => {
 
 test('getEffectiveEntryType trata GPS vehiculo como flota', () => {
   assert.equal(getEffectiveEntryType({ type: 'vehiculo', gpsAuto: true }), 'flota');
+  assert.equal(getEffectiveEntryType({ type: 'vehiculo', entrySource: 'gps_ubika' }), 'flota');
+  assert.equal(getEffectiveEntryType({ type: 'vehiculo', entrySource: 'gps_otro' }), 'flota');
   assert.equal(getEffectiveEntryType({ type: 'vehiculo' }), 'vehiculo');
   assert.equal(getEffectiveEntryType({ type: 'personal' }), 'personal');
 });

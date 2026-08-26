@@ -1,5 +1,8 @@
-export const isGpsFleetEntry = (entry = {}) =>
-  Boolean(entry.gpsAuto || entry.entrySource === 'gps_ubika');
+export const isGpsFleetEntry = (entry = {}) => {
+  if (entry.gpsAuto) return true;
+  const source = String(entry.entrySource || '');
+  return source === 'gps_ubika' || source.startsWith('gps_');
+};
 
 /** Registros GPS antiguos quedaron como type vehiculo; se tratan como flota interna. */
 export const getEffectiveEntryType = (entry = {}) => {

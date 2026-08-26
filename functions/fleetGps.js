@@ -53,6 +53,13 @@ const {
   usesPolygonGeofence,
   resolveVehicleGeofence
 } = require('./lib/geofence');
+const {
+  getGpsProvider,
+  fetchFleetFromProvider,
+  extractPlate,
+  extractVehicleLabel,
+  gpsEntrySourceForProvider
+} = require('./lib/gpsProviders');
 
 const toRadians = (value) => (value * Math.PI) / 180;
 
@@ -65,32 +72,12 @@ const distanceMeters = (lat1, lng1, lat2, lng2) => {
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
-const extractPlate = (name = '') => {
-  const match = String(name).match(/\b([A-Z]{2,3}\d{3}[A-Z]{2,3}|\d{3}[A-Z]{3}|[A-Z]{3}\d{3})\b/i);
-  return match ? match[1].toUpperCase() : null;
-};
-
-const extractVehicleLabel = (name = '', plate = null) => {
-  let label = String(name || '').trim();
-  if (!label) return 'Móvil GPS';
-
-  const plateCandidates = [plate, extractPlate(label)].filter(Boolean);
-  plateCandidates.forEach((candidate) => {
-    label = label.replace(new RegExp(`\\s*[-–—|/]?\\s*\\b${candidate}\\b`, 'i'), '');
-  });
-
-  label = label.replace(/\s+/g, ' ').replace(/^[-–—|/ ]+|[-–—|/ ]+$/g, '').trim();
-
-  return label || String(name).trim() || 'Móvil GPS';
-};
-
 const normalizeFleetToken = (value = '') =>
   String(value || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9]/g, '');
 
 const resolveApiKey = (config) => {
-  const key = config?.apiKey;
-  if (key && key !== API_KEY_MASK) return key;
-  return process.env.UBIKA_API_TOKEN || '';
+  const provider = getGpsProvider(config?.provider);
+  return provider.resolveCredentials(config).apiKey || '';
 };
 
 const serializeTimestamp = (value) => {
@@ -116,24 +103,29 @@ const resolvePlantRadius = (config) => {
   return Math.max(gate * 6, DEFAULT_FLEET_GPS.plantRadiusMeters);
 };
 
-const publicFleetGpsConfig = (config) => ({
-  ...config,
-  apiKey: config.apiKey ? API_KEY_MASK : '',
-  hasApiKey: Boolean(resolveApiKey(config)),
-  geofenceMode: config.geofenceMode === 'polygon' ? 'polygon' : 'circle',
-  gatePolygons: formatGatePolygonsForApi(config.gatePolygons),
-  activeGatePolygons: sanitizeGatePolygons(config.gatePolygons).map((gate) => ({
-    ...gate,
-    points: normalizePolygonPoints(gate.points)
-  })),
-  plantPolygon: formatPlantPolygonForApi(config.plantPolygon),
-  usesPolygonGeofence: usesPolygonGeofence(config),
-  gateRadiusMeters: resolveGateRadius(config),
-  plantRadiusMeters: resolvePlantRadius(config),
-  alertRadiusMeters: resolveGateRadius(config),
-  lastSyncAt: serializeTimestamp(config.lastSyncAt),
-  updatedAt: serializeTimestamp(config.updatedAt)
-});
+const publicFleetGpsConfig = (config) => {
+  const provider = getGpsProvider(config.provider);
+  return {
+    ...config,
+    provider: provider.id,
+    providerDisplayName: provider.displayName,
+    apiKey: config.apiKey ? API_KEY_MASK : '',
+    hasApiKey: Boolean(resolveApiKey(config)),
+    geofenceMode: config.geofenceMode === 'polygon' ? 'polygon' : 'circle',
+    gatePolygons: formatGatePolygonsForApi(config.gatePolygons),
+    activeGatePolygons: sanitizeGatePolygons(config.gatePolygons).map((gate) => ({
+      ...gate,
+      points: normalizePolygonPoints(gate.points)
+    })),
+    plantPolygon: formatPlantPolygonForApi(config.plantPolygon),
+    usesPolygonGeofence: usesPolygonGeofence(config),
+    gateRadiusMeters: resolveGateRadius(config),
+    plantRadiusMeters: resolvePlantRadius(config),
+    alertRadiusMeters: resolveGateRadius(config),
+    lastSyncAt: serializeTimestamp(config.lastSyncAt),
+    updatedAt: serializeTimestamp(config.updatedAt)
+  };
+};
 
 const parseOptionalNumber = (value) => {
   if (value === null || value === '') return null;
@@ -172,11 +164,12 @@ const getFleetGpsConfig = async (db) => {
   const snap = await db.collection('settings').doc('fleetGps').get();
   const stored = snap.exists ? snap.data() : {};
   const merged = { ...DEFAULT_FLEET_GPS, ...stored };
+  const credentials = getGpsProvider(merged.provider).resolveCredentials(merged);
   if (!merged.apiKey) {
-    merged.apiKey = process.env.UBIKA_API_TOKEN || '';
+    merged.apiKey = credentials.apiKey || '';
   }
   if (!merged.apiUrl) {
-    merged.apiUrl = process.env.UBIKA_API_URL || DEFAULT_FLEET_GPS.apiUrl;
+    merged.apiUrl = credentials.apiUrl || DEFAULT_FLEET_GPS.apiUrl;
   }
   // Migración: configs viejas con radio grande (planta) → portón chico
   if (stored.gateRadiusMeters == null && Number(stored.alertRadiusMeters) > 80) {
@@ -320,64 +313,8 @@ const saveFleetGpsGeofence = async (db, FieldValue, body = {}) => {
   return getFleetGpsConfig(db);
 };
 
-const ubikaFetchJson = async (url, apiKey) => {
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    }
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = payload.message || payload.error || `HTTP ${response.status}`;
-    throw new Error(`UBIKA ${message}`);
-  }
-  return payload;
-};
-
-const fetchUbikaFleet = async (config) => {
-  const apiKey = resolveApiKey(config);
-  if (!apiKey) {
-    throw new Error('Falta token de API UBIKA');
-  }
-
-  const baseUrl = (config.apiUrl || DEFAULT_FLEET_GPS.apiUrl).replace(/\/$/, '');
-  const [devicesPayload, positionsPayload] = await Promise.all([
-    ubikaFetchJson(`${baseUrl}/api/devices`, apiKey),
-    ubikaFetchJson(`${baseUrl}/api/positions`, apiKey)
-  ]);
-
-  const devices = Array.isArray(devicesPayload) ? devicesPayload : [];
-  const positions = Array.isArray(positionsPayload) ? positionsPayload : [];
-  const deviceById = new Map(devices.map((device) => [device.id, device]));
-
-  return positions
-    .filter((position) => (
-      position
-      && position.valid !== false
-      && position.latitude != null
-      && position.longitude != null
-      && !Number.isNaN(Number(position.latitude))
-      && !Number.isNaN(Number(position.longitude))
-    ))
-    .map((position) => {
-      const device = deviceById.get(position.deviceId);
-      const name = device?.name || `Dispositivo ${position.deviceId}`;
-      return {
-        id: String(device?.uniqueId || position.deviceId),
-        deviceId: position.deviceId,
-        name,
-        plate: extractPlate(name),
-        status: device?.status || 'unknown',
-        lat: Number(position.latitude),
-        lng: Number(position.longitude),
-        speed: Number(position.speed) || 0,
-        fixTime: position.fixTime || position.deviceTime || null,
-        ignition: Boolean(position.attributes?.ignition),
-        motion: Boolean(position.attributes?.motion)
-      };
-    });
-};
+/** Retrocompat: UBIKA sigue siendo el único proveedor en producción. */
+const fetchUbikaFleet = async (config) => getGpsProvider('ubika').fetchFleet(config);
 
 const resolveZone = (distance, gateRadius, plantRadius) => {
   if (distance == null) return 'unknown';
@@ -580,6 +517,8 @@ const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta =
   const eventTime = resolveGpsEventTimeIso(vehicle, detectedAt);
   const usedGpsClock = eventTime !== detectedAt
     || Boolean(vehicle.fixTime || vehicle.deviceTime);
+  const provider = getGpsProvider(meta.providerId);
+  const providerLabel = provider.displayName || provider.id;
 
   const entryData = {
     type: 'flota',
@@ -598,7 +537,7 @@ const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta =
     authorizedStatus: details.master
       ? (details.master.authorized === false ? 'not_authorized' : 'authorized')
       : 'gps_fleet',
-    entrySource: 'gps_ubika',
+    entrySource: provider.id === 'ubika' ? 'gps_ubika' : gpsEntrySourceForProvider(provider.id),
     gpsAuto: true,
     gpsDeviceId: vehicle.deviceId,
     gpsName: vehicle.name,
@@ -607,7 +546,7 @@ const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta =
     registeredBy: meta.userId || 'sistema_gps',
     registeredByUsername: meta.username || 'GPS automático',
     timestamp: FieldValue.serverTimestamp(),
-    notes: `Movimiento GPS UBIKA (${movementType}) — ${vehicle.name}${vehicle.gateName ? ` · ${vehicle.gateName}` : ''}${usedGpsClock ? ' · hora GPS' : ' · hora detección'}`
+    notes: `Movimiento GPS ${providerLabel} (${movementType}) — ${vehicle.name}${vehicle.gateName ? ` · ${vehicle.gateName}` : ''}${usedGpsClock ? ' · hora GPS' : ' · hora detección'}`
   };
 
   const ref = await db.collection('entries').add(entryData);
@@ -657,7 +596,8 @@ const processTransit = async (db, FieldValue, vehicles, config, options = {}) =>
         try {
           const result = await registerGpsMovement(db, FieldValue, vehicle, direction, {
             ...options,
-            username: options.username
+            username: options.username,
+            providerId: config.provider
           });
           item.entryId = result.entryId;
           item.registered = true;
@@ -796,6 +736,7 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
   }
 
   if (!resolveApiKey(config)) {
+    const missing = getGpsProvider(config.provider).missingConfigMessage;
     return {
       alerts: [],
       transit: [],
@@ -803,8 +744,8 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
       inPlant: [],
       registered: [],
       config: publicFleetGpsConfig(config),
-      message: 'Configure el token de API UBIKA',
-      error: 'Configure el token de API UBIKA',
+      message: missing,
+      error: missing,
       fromCache: false
     };
   }
@@ -847,7 +788,7 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
   }
 
   try {
-    const vehicles = withDistanceAndZone(await fetchUbikaFleet(config), config);
+    const vehicles = withDistanceAndZone(await fetchFleetFromProvider(config), config);
     const gateRadius = resolveGateRadius(config);
     const plantRadius = resolvePlantRadius(config);
     const approaching = detectApproachingVehicles(vehicles, config);
@@ -950,10 +891,11 @@ const fetchFleetLiveSnapshot = async (db, options = {}) => {
   const forceRefresh = Boolean(options.forceRefresh);
 
   if (!resolveApiKey(mergedConfig)) {
+    const missing = getGpsProvider(mergedConfig.provider).missingConfigMessage;
     return {
       vehicles: [],
-      error: 'Configure el token de API UBIKA',
-      message: 'Configure el token de API UBIKA',
+      error: missing,
+      message: missing,
       config: publicFleetGpsConfig(mergedConfig),
       gateRadiusMeters: resolveGateRadius(mergedConfig),
       plantRadiusMeters: resolvePlantRadius(mergedConfig),
@@ -1016,7 +958,7 @@ const fetchFleetLiveSnapshot = async (db, options = {}) => {
   }
 
   try {
-    const vehicles = withDistanceAndZone(await fetchUbikaFleet(mergedConfig), mergedConfig);
+    const vehicles = withDistanceAndZone(await fetchFleetFromProvider(mergedConfig), mergedConfig);
     const gateRadius = resolveGateRadius(mergedConfig);
     const plantRadius = resolvePlantRadius(mergedConfig);
     const syncedAt = new Date().toISOString();
@@ -1086,6 +1028,7 @@ module.exports = {
   fetchNearbyFleetAlerts,
   fetchFleetLiveSnapshot,
   fetchUbikaFleet,
+  fetchFleetFromProvider,
   distanceMeters,
   extractPlate,
   extractVehicleLabel,

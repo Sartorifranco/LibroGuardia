@@ -43,3 +43,13 @@ test('computeFleetPresence: GPS legacy vehiculo cuenta como flota', () => {
   assert.equal(result.inside, 1);
   assert.equal(result.outside, 0);
 });
+
+test('computeFleetPresence: entrySource gps_* de otro proveedor cuenta como flota', () => {
+  const result = computeFleetPresence({
+    mobiles: [{ id: '1', name: 'Unidad Nueva' }],
+    entries: [
+      { type: 'vehiculo', entrySource: 'gps_otro', mobile: 'Unidad Nueva', movementType: 'ingreso' }
+    ]
+  });
+  assert.equal(result.inside, 1);
+});

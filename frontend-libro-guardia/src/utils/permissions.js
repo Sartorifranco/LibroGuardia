@@ -1,3 +1,5 @@
+import { DEFAULT_GPS_PROVIDER_DISPLAY_NAME } from './gpsProviderLabel';
+
 export const PERMISSION_LABELS = {
   'entries.create': 'Registrar movimientos',
   'entries.view': 'Ver registros',
@@ -19,7 +21,7 @@ export const PERMISSION_LABELS = {
   'settings.permissions': 'Configurar permisos',
   'audit.view': 'Ver auditoría administrativa',
   'notifications.config': 'Configurar alertas por email',
-  'access.control': 'Configurar GPS flota UBIKA',
+  'access.control': `Configurar GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`,
   'access.doors.manage': 'Configurar puertas, estancos y dispositivos',
   'access.manual_open': 'Abrir puerta manualmente (SR201)',
   'access.manual_override': 'Autorizar ingreso manual sin citación',

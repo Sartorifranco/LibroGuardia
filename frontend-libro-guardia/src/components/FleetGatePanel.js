@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import FleetGpsVehicleTable, { formatDistance, formatFleetTime } from './FleetGpsVehicleTable';
 import { apiFetch } from '../services/api';
+import { gpsProviderDisplayName } from '../utils/gpsProviderLabel';
 
 function FleetGatePanel({
   authToken,
@@ -77,6 +78,7 @@ function FleetGatePanel({
 
   if (!enabled) return null;
 
+  const providerLabel = gpsProviderDisplayName(config);
   const gateRadius = config?.gateRadiusMeters || 45;
   const plantRadius = config?.plantRadiusMeters || 400;
   const entrando = transit.filter((item) => item.direction === 'ingreso');
@@ -140,7 +142,7 @@ function FleetGatePanel({
     <section className={`fleet-gate-panel${hasTransit || hasApproaching ? ' fleet-gate-panel--active' : ''}`}>
       <div className="fleet-gate-panel__header">
         <div>
-          <p className="fleet-gate-panel__kicker">Flota interna · UBIKA</p>
+          <p className="fleet-gate-panel__kicker">Flota interna · {providerLabel}</p>
           <h3 className="fleet-gate-panel__title">Tránsito en portón</h3>
           <p className="fleet-gate-panel__subtitle">
             Detecta móviles en movimiento dentro de {gateRadius} m del portón.

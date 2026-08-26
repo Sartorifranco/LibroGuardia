@@ -12,12 +12,14 @@ import {
 } from '../../../components/admin/AdminUi';
 import { normalizeGatePolygonsForSave } from '../../../utils/fleetGpsGeofence';
 import { hasPermission } from '../../../utils/permissions';
+import { gpsProviderDisplayName, DEFAULT_GPS_PROVIDER_DISPLAY_NAME } from '../../../utils/gpsProviderLabel';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
 
 /**
- * Sección "GPS flota" (UBIKA) del panel de administración. El id de sección permanece 'access'.
+ * Sección GPS flota del panel de administración. El id de sección permanece 'access'.
+ * El nombre del proveedor sale de config.providerDisplayName (hoy UBIKA).
  * @param {{ pendingAction: string|null, runAction: Function }} props
  */
 function AccessGpsAdminSection({ pendingAction, runAction }) {
@@ -50,7 +52,8 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
     approachRadiusMeters: 400,
     approachRequireMotion: true,
     lastError: null,
-    lastSyncAt: null
+    lastSyncAt: null,
+    providerDisplayName: DEFAULT_GPS_PROVIDER_DISPLAY_NAME
   });
   const [fleetGpsTestResult, setFleetGpsTestResult] = useState(null);
   const [testOpen, setTestOpen] = useState(false);
@@ -83,6 +86,8 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
     };
     fetchFleetGps();
   }, [currentUser, authToken, showError]);
+
+  const providerLabel = gpsProviderDisplayName(fleetGpsConfig);
 
   const stats = useMemo(() => {
     const gates = (fleetGpsConfig.gatePolygons || []).filter((g) => (g.points || []).length >= 3).length;
@@ -144,9 +149,9 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
           guardiaLng: cfg.guardiaLng ?? '',
           apiKey: cfg.hasApiKey ? '********' : ''
         }));
-        showSuccess('Configuración GPS UBIKA guardada. Las geocercas del mapa se guardan aparte.');
+        showSuccess(`Configuración GPS ${providerLabel} guardada. Las geocercas del mapa se guardan aparte.`);
       } catch (err) {
-        showError(err.message || 'Error al guardar GPS UBIKA');
+        showError(err.message || `Error al guardar GPS ${providerLabel}`);
       }
     });
   };
@@ -163,12 +168,12 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
         if (data.error) {
           showError(data.error);
         } else {
-          showSuccess(data.message || 'Conexión UBIKA OK');
+          showSuccess(data.message || `Conexión ${providerLabel} OK`);
         }
       } catch (err) {
         setFleetGpsTestResult(null);
         setTestOpen(false);
-        showError(err.message || 'Error al probar GPS UBIKA');
+        showError(err.message || `Error al probar GPS ${providerLabel}`);
       }
     });
   };
@@ -385,10 +390,10 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
                 onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, pollIntervalSeconds: Number(e.target.value) }))}
                 className="input-field"
               />
-              <small>Solo refresca lo que ya está guardado. No consulta UBIKA.</small>
+              <small>Solo refresca lo que ya está guardado. No consulta {providerLabel}.</small>
             </label>
             <label className="access-gps-admin__field">
-              <span>Consulta UBIKA cada (min)</span>
+              <span>Consulta {providerLabel} cada (min)</span>
               <input
                 type="number"
                 min="2"
@@ -406,7 +411,7 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
               </small>
             </label>
             <label className="access-gps-admin__field">
-              <span>URL API UBIKA</span>
+              <span>URL API {providerLabel}</span>
               <input
                 type="text"
                 value={fleetGpsConfig.apiUrl}
@@ -472,14 +477,14 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
             className="admin-modal admin-modal--wide access-gps-admin__test-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="Resultado prueba UBIKA"
+            aria-label={`Resultado prueba ${providerLabel}`}
             onClick={(e) => e.stopPropagation()}
           >
             <header className="access-gps-admin__modal-head">
               <div>
                 <h3 className="admin-modal-title">Resultado de conexión</h3>
                 <p className="theme-section-desc">
-                  {fleetGpsTestResult.error || fleetGpsTestResult.message || 'Prueba UBIKA'}
+                  {fleetGpsTestResult.error || fleetGpsTestResult.message || `Prueba ${providerLabel}`}
                 </p>
               </div>
               <button

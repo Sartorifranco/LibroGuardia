@@ -1,5 +1,6 @@
 const { Timestamp } = require('../firestore');
 const { getArgentinaDateString } = require('./normalize');
+const { isGpsFleetEntry } = require('./gpsProviders/entrySource');
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -21,8 +22,7 @@ const clampLimit = (value) => {
 };
 
 const getEffectiveEntryType = (data = {}) => {
-  const isGps = Boolean(data.gpsAuto || data.entrySource === 'gps_ubika');
-  if (data.type === 'vehiculo' && isGps) return 'flota';
+  if (data.type === 'vehiculo' && isGpsFleetEntry(data)) return 'flota';
   return data.type;
 };
 

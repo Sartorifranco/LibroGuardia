@@ -117,7 +117,8 @@ router.get('/api/admin/fleet-gps', auth, requirePermission('access.control'), as
 router.put('/api/admin/fleet-gps', auth, requirePermission('access.control'), async (req, res) => {
   try {
     const config = await saveFleetGpsConfig(db, FieldValue, req.body || {});
-    res.json({ message: 'Configuración GPS UBIKA guardada', config: publicFleetGpsConfig(config) });
+    const providerName = getGpsProvider(config.provider).displayName;
+    res.json({ message: `Configuración GPS ${providerName} guardada`, config: publicFleetGpsConfig(config) });
   } catch (err) {
     res.status(500).json({ message: 'Error al guardar config GPS', error: err.message });
   }
@@ -145,7 +146,7 @@ router.post('/api/admin/fleet-gps/test', auth, requirePermission('access.control
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al probar GPS UBIKA', error: err.message });
+    res.status(500).json({ message: 'Error al probar GPS de flota', error: err.message });
   }
 });
 

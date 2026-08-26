@@ -2,6 +2,8 @@
  * Clasificación de entradas del historial y resolución doorId → nombre.
  */
 
+import { isGpsFleetEntry } from './entryDisplay';
+
 /** Acceso automático por kiosko/lector (o cualquier personal con puerta asociada). */
 export const isDoorAccessEntry = (entry = {}) => {
   if (entry.type !== 'personal') return false;
@@ -35,14 +37,14 @@ export const HISTORIAL_SECTIONS = [
     id: 'vehiculo',
     label: 'Vehículos',
     apiType: 'vehiculo',
-    match: (e) => e.type === 'vehiculo' && !(e.gpsAuto || e.entrySource === 'gps_ubika'),
+    match: (e) => e.type === 'vehiculo' && !isGpsFleetEntry(e),
     exportName: 'vehiculos'
   },
   {
     id: 'flota',
     label: 'Flota',
     apiType: 'flota',
-    match: (e) => e.type === 'flota' || (e.type === 'vehiculo' && (e.gpsAuto || e.entrySource === 'gps_ubika')),
+    match: (e) => e.type === 'flota' || (e.type === 'vehiculo' && isGpsFleetEntry(e)),
     exportName: 'flota'
   },
   {

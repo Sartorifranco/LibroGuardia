@@ -1,6 +1,8 @@
+import { DEFAULT_GPS_PROVIDER_DISPLAY_NAME } from '../../utils/gpsProviderLabel';
+
 export const ADMIN_SECTION_META = {
   users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
-  access: { title: 'GPS flota UBIKA', description: 'Conexión, reglas de tránsito y geocercas del mapa en vivo.' },
+  access: { title: `GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`, description: 'Conexión, reglas de tránsito y geocercas del mapa en vivo.' },
   equiposAcceso: {
     title: 'Equipos de acceso',
     description: 'Un solo lugar para puertas, lectores, estaciones y marcas homologadas.'
