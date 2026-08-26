@@ -19,6 +19,7 @@ import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
+import { apiFetch } from '../../../services/api';
 import { CONNECTION_STATUS_META } from '../LectoresAdmin/LectoresAdminSection';
 
 function downloadJson(filename, data) {
