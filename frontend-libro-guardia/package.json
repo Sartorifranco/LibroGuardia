@@ -23,7 +23,7 @@
   "scripts": {
     "apply-brand": "node scripts/apply-brand.js",
     "scaffold-brand": "node scripts/scaffold-brand.js",
-    "test:brand": "node --test scripts/buildBrandConfig.test.js",
+    "test:brand": "node --test scripts/buildBrandConfig.test.js scripts/scaffold-brand.test.js",
     "prestart": "node scripts/apply-brand.js",
     "prebuild": "node scripts/apply-brand.js",
     "pretest": "node scripts/apply-brand.js",

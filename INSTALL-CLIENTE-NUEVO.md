@@ -22,9 +22,11 @@ Hacerlo en una copia / rama / repo del **cliente**, no pisando la instalación d
 
 ```bash
 cd frontend-libro-guardia
-npm run scaffold-brand -- --from ../clients/<cliente>.json
+npm run scaffold-brand -- --from ../clients/<cliente>.json --force
 npm run apply-brand
 ```
+
+`--force` hace falta cuando el árbol todavía tiene otra marca (el default de este repo). Sin `--force` el script no escribe nada. El logo del JSON tiene que existir **antes** de correrlo: si falta, aborta sin tocar `brand.js`.
 
 - [ ] Reemplazar favicons en `frontend-libro-guardia/public/` (`favicon.ico`, `favicon-16.png`, `favicon-32.png`, `favicon-512.png`). Si está `sharp`, se puede usar `node scripts/generate-favicon.js` (lee `brand.logoPath`).
 - [ ] Apuntar `.firebaserc` y secrets al **proyecto del cliente** (`JWT_SECRET`, `SETUP_KEY`, `ALLOWED_ORIGINS`). Nunca reutilizar los de Bacar. Detalle en el runbook.

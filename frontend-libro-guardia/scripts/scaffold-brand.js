@@ -4,8 +4,11 @@
  * a partir de un JSON o flags. No corre en prebuild: es un paso de instalación.
  *
  *   node scripts/scaffold-brand.js --from ../clients/brand.example.json --dry-run
- *   node scripts/scaffold-brand.js --from ruta/cliente.json
- *   node scripts/scaffold-brand.js --company "Acme S.A." --color "#1d4ed8" --logo ./logo.png
+ *   node scripts/scaffold-brand.js --from ruta/cliente.json --force
+ *   node scripts/scaffold-brand.js --company "Acme S.A." --color "#1d4ed8" --logo ./logo.png --force
+ *
+ * Si ya hay un companyName distinto al nuevo, hay que pasar --force.
+ * brand.js se escribe al final: un fallo a mitad de camino no deja la marca a medio pisar.
  */
 const fs = require('fs');
 const path = require('path');
@@ -17,10 +20,10 @@ const publicDir = path.join(frontendRoot, 'public');
 
 const usage = () => `Uso:
   node scripts/scaffold-brand.js --from <archivo.json> [--dry-run] [--force]
-  node scripts/scaffold-brand.js --company "Razón social" [--color "#rrggbb"] [--logo archivo.png]
+  node scripts/scaffold-brand.js --company "Razón social" [--color "#rrggbb"] [--logo archivo.png] [--force]
 
 El JSON mínimo es { "companyName": "..." }. El resto se completa con defaults de MSS.
-No ejecutes esto sobre la instalación de Bacar salvo que quieras cambiarle la marca.
+Si brand.js ya tiene otro companyName, el script no escribe nada hasta que pases --force.
 `;
 
 const parseArgs = (argv) => {
@@ -36,6 +39,30 @@ const parseArgs = (argv) => {
     } else args._.push(token);
   }
   return args;
+};
+
+const extractCompanyName = (source) => {
+  const match = String(source || '').match(/companyName\s*:\s*(['"])([\s\S]*?)\1/);
+  return match ? match[2] : null;
+};
+
+const assertCanOverwriteBrand = ({
+  brandFileExists,
+  currentCompanyName,
+  nextCompanyName,
+  force
+}) => {
+  if (!brandFileExists) return;
+  if (force) return;
+  const current = String(currentCompanyName || '').trim();
+  const next = String(nextCompanyName || '').trim();
+  if (current && current === next) return;
+  const label = current || 'marca existente';
+  const err = new Error(
+    `Ya hay una marca configurada (${label}). Para reemplazarla por "${next}" pasá --force.`
+  );
+  err.code = 'BRAND_FORCE_REQUIRED';
+  throw err;
 };
 
 const loadFromFile = (fromPath) => {
@@ -56,15 +83,85 @@ const resolveLogoSource = (input) => {
   return path.resolve(base, logoFile);
 };
 
-const copyLogo = (source, brand, dryRun) => {
-  if (!source) return null;
-  if (!fs.existsSync(source)) {
-    throw new Error(`No existe el archivo de logo: ${source}`);
+const uniqueSuffixPath = (targetPath) => `${targetPath}.scaffold-new`;
+
+const cleanup = (io, files) => {
+  files.forEach((file) => {
+    try {
+      if (file && io.existsSync(file)) io.unlinkSync(file);
+    } catch (_err) {
+      // best-effort
+    }
+  });
+};
+
+/**
+ * Valida, copia el logo y recién al final reemplaza brand.js.
+ * Si algo falla, brand.js queda como estaba.
+ */
+const applyScaffoldWrites = ({
+  brand,
+  source,
+  logoSource,
+  brandJsPath: targetBrandPath,
+  publicDir: targetPublicDir,
+  force = false,
+  io = fs
+}) => {
+  const brandExists = io.existsSync(targetBrandPath);
+  const currentCompanyName = brandExists
+    ? extractCompanyName(io.readFileSync(targetBrandPath, 'utf8'))
+    : null;
+
+  assertCanOverwriteBrand({
+    brandFileExists: brandExists,
+    currentCompanyName,
+    nextCompanyName: brand.companyName,
+    force
+  });
+
+  if (logoSource && !io.existsSync(logoSource)) {
+    throw new Error(`No existe el archivo de logo: ${logoSource}`);
   }
-  const destName = path.basename(brand.logoPath);
-  const dest = path.join(publicDir, destName);
-  if (!dryRun) fs.copyFileSync(source, dest);
-  return dest;
+
+  const dest = path.join(targetPublicDir, path.basename(brand.logoPath));
+  const brandTmp = uniqueSuffixPath(targetBrandPath);
+  const logoTmp = logoSource ? uniqueSuffixPath(dest) : null;
+  const logoBackup = logoSource && io.existsSync(dest) ? `${dest}.scaffold-bak` : null;
+
+  try {
+    if (logoSource) {
+      if (logoBackup) io.copyFileSync(dest, logoBackup);
+      io.copyFileSync(logoSource, logoTmp);
+      io.copyFileSync(logoTmp, dest);
+    }
+    io.writeFileSync(brandTmp, source, 'utf8');
+    io.copyFileSync(brandTmp, targetBrandPath);
+  } catch (err) {
+    if (logoBackup && io.existsSync(logoBackup)) {
+      try {
+        io.copyFileSync(logoBackup, dest);
+      } catch (_restoreErr) {
+        // brand.js still original if we failed before the last copy
+      }
+    }
+    throw err;
+  } finally {
+    cleanup(io, [brandTmp, logoTmp, logoBackup]);
+  }
+
+  return { dest: logoSource ? dest : null };
+};
+
+const collectInput = (args) => {
+  let input = {};
+  if (args.from) input = loadFromFile(args.from);
+  if (args.company) input.companyName = args.company;
+  if (args.color) input.primaryColor = args.color;
+  if (args.logo) input.logoFile = args.logo;
+  if (args.title) input.appTitle = args.title;
+  if (args.origin) input.publicOrigin = args.origin;
+  return input;
 };
 
 const main = () => {
@@ -74,36 +171,41 @@ const main = () => {
     return;
   }
 
-  let input = {};
-  if (args.from) input = loadFromFile(args.from);
-  if (args.company) input.companyName = args.company;
-  if (args.color) input.primaryColor = args.color;
-  if (args.logo) input.logoFile = args.logo;
-  if (args.title) input.appTitle = args.title;
-  if (args.origin) input.publicOrigin = args.origin;
-
+  const input = collectInput(args);
   const brand = buildBrandConfig(input);
   const source = renderBrandModule(brand);
   const logoSource = resolveLogoSource(input);
+  const brandExists = fs.existsSync(brandJsPath);
+  const currentCompanyName = brandExists
+    ? extractCompanyName(fs.readFileSync(brandJsPath, 'utf8'))
+    : null;
 
   if (args.dryRun) {
+    assertCanOverwriteBrand({
+      brandFileExists: brandExists,
+      currentCompanyName,
+      nextCompanyName: brand.companyName,
+      force: args.force
+    });
+    if (logoSource && !fs.existsSync(logoSource)) {
+      throw new Error(`No existe el archivo de logo: ${logoSource}`);
+    }
     process.stdout.write(`${source}\n`);
     if (logoSource) process.stdout.write(`# copiaría logo ${logoSource} → public${brand.logoPath}\n`);
     process.stdout.write(`# escribiría ${brandJsPath}\n`);
     return;
   }
 
-  if (fs.existsSync(brandJsPath) && !args.force) {
-    const current = fs.readFileSync(brandJsPath, 'utf8');
-    if (current.includes("companyName: 'Manager Sistem Security'") && !args.from && !args.company) {
-      throw new Error('Refusó pisar la marca actual. Pasá --from o --company (y --force si hace falta).');
-    }
-  }
-
-  fs.writeFileSync(brandJsPath, source, 'utf8');
-  const copied = copyLogo(logoSource, brand, false);
+  const written = applyScaffoldWrites({
+    brand,
+    source,
+    logoSource,
+    brandJsPath,
+    publicDir,
+    force: args.force
+  });
   process.stdout.write(`[scaffold-brand] escrito ${path.relative(frontendRoot, brandJsPath)}\n`);
-  if (copied) {
+  if (written.dest) {
     process.stdout.write(`[scaffold-brand] logo copiado a public${brand.logoPath}\n`);
   }
   process.stdout.write('[scaffold-brand] favicons: reemplazá a mano en public/ o corré scripts/generate-favicon.js si tenés sharp.\n');
@@ -118,4 +220,10 @@ if (require.main === module) {
   }
 }
 
-module.exports = { parseArgs, resolveLogoSource };
+module.exports = {
+  parseArgs,
+  resolveLogoSource,
+  extractCompanyName,
+  assertCanOverwriteBrand,
+  applyScaffoldWrites
+};

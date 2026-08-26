@@ -53,11 +53,11 @@ Desde `frontend-libro-guardia/`:
 
 ```powershell
 npm run test:brand
-npm run scaffold-brand -- --from ..\clients\<cliente>.json
+npm run scaffold-brand -- --from ..\clients\<cliente>.json --force
 npm run apply-brand
 ```
 
-`--dry-run` imprime `brand.js` sin escribir. Favicons no los genera el scaffold (dependen de `sharp`, que no es dependencia del frontend).
+Sin `--force` no pisa un `companyName` distinto al actual. `--dry-run` no escribe; si la marca actual es otra, sumá `--force` para ver el preview. El archivo de `logoFile` tiene que existir o el comando aborta sin tocar `brand.js`. Favicons no los genera el scaffold (dependen de `sharp`, que no es dependencia del frontend).
 
 ## 4. Verificación antes de desplegar
 
@@ -124,6 +124,6 @@ La app en Firebase no habla TCP con el relé: hace falta PC local + puente HTTP.
 ## 8. Lo que no hay que hacer
 
 - Reusar Firestore, reglas o secrets de otra instalación.
-- Correr `scaffold-brand` sobre el árbol de Bacar “para probar”.
+- Correr `scaffold-brand` sobre el árbol de Bacar “para probar” (sin `--force` ahora aborta; con `--force` sí pisa).
 - Dejar el API Node+Mongo de `legacy/` — está descartado.
 - Prometer Citados o un GPS que no sea UBIKA como “ya incluido” sin el conector.
