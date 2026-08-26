@@ -538,6 +538,15 @@ const emptyStats = () => ({
   errors: []
 });
 
+/**
+ * Límites operativos del job. Mantener micro-lotes es una protección contra el
+ * timeout de ~60 s del proxy de Hosting, no una preferencia de performance.
+ */
+const normalizeImportStepOptions = ({ batchSize = 5, concurrency = 2 } = {}) => ({
+  batchSize: Math.max(1, Math.min(10, Number(batchSize) || 5)),
+  concurrency: Math.max(1, Math.min(3, Number(concurrency) || 2))
+});
+
 const createNominaImportJob = async (rows = [], meta = {}) => {
   const list = Array.isArray(rows) ? rows : [];
   const keepLegajos = [
@@ -638,7 +647,8 @@ const processNominaImportStep = async (jobId, { batchSize = 5, concurrency = 2 }
     };
   }
 
-  const size = Math.max(1, Math.min(10, Number(batchSize) || 5));
+  const options = normalizeImportStepOptions({ batchSize, concurrency });
+  const size = options.batchSize;
   const slice = rows.slice(cursor, cursor + size);
   if (!slice.length) {
     await ref.set({ status: 'finalizing' }, { merge: true });
@@ -655,7 +665,7 @@ const processNominaImportStep = async (jobId, { batchSize = 5, concurrency = 2 }
   const caches = await loadImportCaches();
   await ref.set({ status: 'processing' }, { merge: true });
 
-  const outcomes = await mapPool(slice, Math.max(1, Math.min(3, Number(concurrency) || 2)), async (row, index) => {
+  const outcomes = await mapPool(slice, options.concurrency, async (row, index) => {
     const parsed = parseNominaRow(trimNominaRowPayload(row));
     if (!parsed.valid) {
       return {
@@ -786,5 +796,6 @@ module.exports = {
   saveNominaEmployee,
   deactivateNominaEmployee,
   deactivateMissingNomina,
-  buildMasterPayload
+  buildMasterPayload,
+  normalizeImportStepOptions
 };

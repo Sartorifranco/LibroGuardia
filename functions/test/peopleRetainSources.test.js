@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const {
   hasBiostarSignal,
   hasNominaSignal,
-  shouldKeepPerson
+  shouldKeepPerson,
+  buildNominaIndexFromDocs
 } = require('../lib/peopleRetainSources');
 
 describe('peopleRetainSources', () => {
@@ -12,9 +13,20 @@ describe('peopleRetainSources', () => {
     assert.equal(shouldKeepPerson({ biometricExternalId: '99', origen: 'import' }, 'x', new Set()), true);
   });
 
+  it('keep por señales BioStar alternativas ya soportadas', () => {
+    assert.equal(hasBiostarSignal({ biostarUserId: 'bio-99' }), true);
+    assert.equal(hasBiostarSignal({ source: 'biostar_link' }), true);
+    assert.equal(hasBiostarSignal({ biometricBrand: 'SUPREMA' }), true);
+  });
+
   it('keep por origen nómina', () => {
     assert.equal(hasNominaSignal({ origen: 'nomina' }, 'a', new Set()), true);
     assert.equal(shouldKeepPerson({ origen: 'nomina' }, 'a', new Set()), true);
+  });
+
+  it('keep por source nómina aunque no tenga origen', () => {
+    assert.equal(hasNominaSignal({ source: 'nomina' }, 'a', new Set()), true);
+    assert.equal(shouldKeepPerson({ source: 'nomina' }, 'a', new Set()), true);
   });
 
   it('keep por personalMaster link', () => {
@@ -60,5 +72,26 @@ describe('peopleRetainSources', () => {
       assert.equal(shouldKeepPerson({ origen: 'import' }, 'p1', new Set(['p1'])), true);
       assert.equal(shouldKeepPerson({ origen: 'import', legajoNormalized: '261' }, 'p9', new Set(['p1'])), false);
     });
+  });
+
+  it('índice real conserva solo vínculos activos y normaliza legajos', () => {
+    const index = buildNominaIndexFromDocs([
+      { data: () => ({ active: true, personId: 'p-261', legajoNormalized: '000261' }) },
+      { data: () => ({ personId: '', legajo: '2946' }) },
+      { data: () => ({ active: false, personId: 'p-baja', legajo: '9999' }) }
+    ]);
+
+    assert.deepEqual([...index.personIds], ['p-261']);
+    assert.deepEqual([...index.legajos], ['261', '2946']);
+    assert.equal(shouldKeepPerson(
+      { origen: 'import', legajoNormalized: '000261' },
+      'sin-link',
+      index
+    ), true);
+    assert.equal(shouldKeepPerson(
+      { origen: 'import', legajoNormalized: '9999' },
+      'p-baja',
+      index
+    ), false);
   });
 });
