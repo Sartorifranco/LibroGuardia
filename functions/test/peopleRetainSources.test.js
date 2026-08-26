@@ -13,9 +13,20 @@ describe('peopleRetainSources', () => {
     assert.equal(shouldKeepPerson({ biometricExternalId: '99', origen: 'import' }, 'x', new Set()), true);
   });
 
+  it('keep por señales BioStar alternativas ya soportadas', () => {
+    assert.equal(hasBiostarSignal({ biostarUserId: 'bio-99' }), true);
+    assert.equal(hasBiostarSignal({ source: 'biostar_link' }), true);
+    assert.equal(hasBiostarSignal({ biometricBrand: 'SUPREMA' }), true);
+  });
+
   it('keep por origen nómina', () => {
     assert.equal(hasNominaSignal({ origen: 'nomina' }, 'a', new Set()), true);
     assert.equal(shouldKeepPerson({ origen: 'nomina' }, 'a', new Set()), true);
+  });
+
+  it('keep por source nómina aunque no tenga origen', () => {
+    assert.equal(hasNominaSignal({ source: 'nomina' }, 'a', new Set()), true);
+    assert.equal(shouldKeepPerson({ source: 'nomina' }, 'a', new Set()), true);
   });
 
   it('keep por personalMaster link', () => {

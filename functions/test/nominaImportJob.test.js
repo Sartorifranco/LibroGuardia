@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const firestorePath = require.resolve('../firestore');
 const nominaImportPath = require.resolve('../nominaImport');
+const authorizationsPath = require.resolve('../authorizations');
 
 const installJobMock = (initial) => {
   const state = { ...initial };
@@ -45,15 +46,19 @@ const installJobMock = (initial) => {
 
 describe('nominaImport job: regresiones de timeout Hosting', () => {
   let originalFirestore;
+  let originalAuthorizations;
 
   beforeEach(() => {
     originalFirestore = require.cache[firestorePath];
+    originalAuthorizations = require.cache[authorizationsPath];
   });
 
   afterEach(() => {
     delete require.cache[nominaImportPath];
     if (originalFirestore) require.cache[firestorePath] = originalFirestore;
     else delete require.cache[firestorePath];
+    if (originalAuthorizations) require.cache[authorizationsPath] = originalAuthorizations;
+    else delete require.cache[authorizationsPath];
   });
 
   it('mantiene defaults de 5 filas/2 workers y topes 10/3', () => {
@@ -104,5 +109,70 @@ describe('nominaImport job: regresiones de timeout Hosting', () => {
     assert.equal(result.done, true);
     assert.equal(result.imported, 3);
     assert.equal(mock.writes.length, 0);
+  });
+
+  it('autorización usa nomina-perm-{personId} sin query previa', async () => {
+    const writes = [];
+    require.cache[firestorePath] = {
+      id: firestorePath,
+      filename: firestorePath,
+      loaded: true,
+      exports: {
+        db: {
+          collection(name) {
+            assert.equal(name, 'authorizations');
+            return {
+              // No se implementa where(): si vuelve la query costosa, el test falla.
+              doc(id) {
+                return {
+                  id,
+                  async set(payload, options) {
+                    writes.push({ id, payload, options });
+                  }
+                };
+              }
+            };
+          }
+        },
+        FieldValue: { serverTimestamp: () => 'SERVER_TIMESTAMP' }
+      }
+    };
+    require.cache[authorizationsPath] = {
+      id: authorizationsPath,
+      filename: authorizationsPath,
+      loaded: true,
+      exports: {
+        buildAuthorizationRecord: (record) => ({ ...record }),
+        buildNameTokens: (name) => String(name || '').toLowerCase()
+      }
+    };
+    delete require.cache[nominaImportPath];
+    const { syncNominaAuthorization } = require('../nominaImport');
+
+    const id = await syncNominaAuthorization(
+      { id: 'person-26' },
+      {
+        createPermanent: true,
+        name: 'SOSA Franco',
+        idNumberNormalized: '23796878',
+        legajoNormalized: '26',
+        centroCosto: 'Sistemas',
+        area: 'Sistemas',
+        role: 'Técnico',
+        puesto: 'Técnico',
+        authorizationPolicy: 'permanent_shift',
+        shiftSchedule: {
+          daysOfWeek: ['Lu'],
+          timeWindow: { from: '08:00', to: '17:00' }
+        }
+      }
+    );
+
+    assert.equal(id, 'nomina-perm-person-26');
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].id, 'nomina-perm-person-26');
+    assert.equal(writes[0].payload.source, 'nomina');
+    assert.equal(writes[0].payload.active, true);
+    assert.deepEqual(writes[0].options, { merge: true });
   });
 });
