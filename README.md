@@ -17,6 +17,7 @@ El frontend **no** habla con Firestore directamente (`firestore.rules` lo bloque
 
 **GuÃ­a setup:** [FIREBASE-SETUP.md](./FIREBASE-SETUP.md)  
 **InstalaciÃ³n cliente nuevo:** [INSTALL-CLIENTE-NUEVO.md](./INSTALL-CLIENTE-NUEVO.md)  
+**Runbook tÃ©cnico (equipo):** [docs/RUNBOOK-INSTALACION.md](./docs/RUNBOOK-INSTALACION.md)  
 **Puente SR201:** [docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md)  
 **Lector puerta desatendida:** [docs/INSTALACION-LECTOR-PUERTA.md](./docs/INSTALACION-LECTOR-PUERTA.md)  
 **Puente citaciones:** [docs/CITACIONES-FOLDER-BRIDGE.md](./docs/CITACIONES-FOLDER-BRIDGE.md)  

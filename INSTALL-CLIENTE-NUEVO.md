@@ -1,95 +1,62 @@
 # Checklist — instalación cliente nuevo
 
-Instalación dedicada (un proyecto Firebase por cliente). Seguí estos pasos en orden.
+Alguien del equipo que no escribió el producto debería poder completar esto
+sin preguntar por chat. Un Firebase por cliente; no es multi-tenant.
 
-## 1. Marca (branding)
+Material que **no** ve el cliente: [docs/RUNBOOK-INSTALACION.md](./docs/RUNBOOK-INSTALACION.md)
+(comandos Firebase, secrets, PowerShell).
 
-- [ ] Editar `frontend-libro-guardia/src/config/brand.js`:
-  - [ ] `companyName`
-  - [ ] `appTitle`
-  - [ ] `loginTitle`
-  - [ ] `logoPath` (nombre del archivo en `/public`)
-  - [ ] `logoAlt`
-  - [ ] `primaryColor` (ej. `#dc2626`)
-  - [ ] `primaryColorHover`
-  - [ ] `backgroundColor`
-  - [ ] `loginSubtitle`
-  - [ ] `headerSubtitle`
-  - [ ] `kioskTitle`
-  - [ ] `kioskSubtitle`
-  - [ ] `footerText`
-  - [ ] `pdfReportTitle` (PDF del Historial)
-  - [ ] `pdfSummaryReportTitle` (PDF del panel Reportes gerenciales)
-  - [ ] `metaDescription`
-  - [ ] `shortName`
-  - [ ] `themeStorageKey` (único por cliente, ej. `acme-theme`)
-  - [ ] `loginUsernamePlaceholder`
-- [ ] Reemplazar el logo en `frontend-libro-guardia/public/` con el mismo nombre que `logoPath` (hoy: `B roja.png`), o poner el archivo nuevo y actualizar `logoPath`.
+Material que **sí** se puede mandar al cliente antes de la visita:
+[docs/CLIENTE-DIA-INSTALACION.md](./docs/CLIENTE-DIA-INSTALACION.md).
 
-## 2. Favicons (manual — no los genera brand.js)
+---
 
-Reemplazar en `frontend-libro-guardia/public/`:
+## A. Antes de la visita (equipo técnico)
 
-- [ ] `favicon.ico`
-- [ ] `favicon-16.png`
-- [ ] `favicon-32.png`
-- [ ] `favicon-512.png` (también apple-touch-icon)
-- [ ] Opcional: `logo192.png`, `logo512.png` (si se usan en PWA / assets viejos)
+Hacerlo en una copia / rama / repo del **cliente**, no pisando la instalación de Bacar.
 
-## 3. Firebase del cliente
-
-- [ ] Crear proyecto Firebase nuevo (Hosting + Functions + Firestore).
-- [ ] Actualizar `.firebaserc` con el `project_id` del cliente (y el target de hosting si aplica).
-- [ ] Revisar `firebase.json` / `frontend-libro-guardia/firebase.json` (target de hosting).
-- [ ] Configurar variables de entorno / secrets de Cloud Functions para ese proyecto (no compartir los de otro cliente):
-  - [ ] `JWT_SECRET` (obligatorio)
-  - [ ] `SETUP_KEY` (bootstrap de usuarios iniciales; cambiar el default)
-  - [ ] `ALLOWED_ORIGINS` (orígenes del frontend del cliente)
-- [ ] En frontend, para prod dejar `REACT_APP_API_BASE_URL=/api` (`.env.production`).
-- [ ] En desarrollo, apuntar `.env.development` a la API del cliente nuevo (no a Bacar).
-- [ ] Crear secret `FIREBASE_SERVICE_ACCOUNT` en el repo de GitHub del cliente (JSON de cuenta de servicio con Firebase Admin). Ver sección *GitHub Actions* en [README.md](./README.md).
-
-## 4. Build y verificación
+- [ ] Pedir al cliente: razón social, color primario (hex), logo PNG transparente, URL de Hosting prevista si ya la tienen, y cuáles módulos contrata (puertas, kiosko, flota GPS, Citados, BioStar).
+- [ ] Crear el proyecto Firebase (Hosting + Functions + Firestore, plan Blaze). Pasos concretos en el runbook.
+- [ ] Copiar `clients/brand.example.json`, completar `companyName` / `primaryColor` / `publicOrigin` / `logoFile`.
+- [ ] Generar marca (no editar `brand.js` campo por campo):
 
 ```bash
 cd frontend-libro-guardia
-npm install
-npm test -- --watchAll=false
-npm run build
+npm run scaffold-brand -- --from ../clients/<cliente>.json
+npm run apply-brand
 ```
 
-```bash
-cd functions
-npm install
-npm test
-```
+- [ ] Reemplazar favicons en `frontend-libro-guardia/public/` (`favicon.ico`, `favicon-16.png`, `favicon-32.png`, `favicon-512.png`). Si está `sharp`, se puede usar `node scripts/generate-favicon.js` (lee `brand.logoPath`).
+- [ ] Apuntar `.firebaserc` y secrets al **proyecto del cliente** (`JWT_SECRET`, `SETUP_KEY`, `ALLOWED_ORIGINS`). Nunca reutilizar los de Bacar. Detalle en el runbook.
+- [ ] Frontend prod: `REACT_APP_API_BASE_URL=/api`. Desarrollo: `.env.development` del cliente, no de Bacar.
+- [ ] Secret de GitHub `FIREBASE_SERVICE_ACCOUNT` en el repo de **ese** cliente.
+- [ ] Correr tests y build en local (runbook § verificación).
+- [ ] Confirmar módulos opcionales:
+  - Flota GPS: solo si el cliente ya tiene proveedor; guía de cotización en [docs/GPS-PROVEEDOR.md](./docs/GPS-PROVEEDOR.md). Hoy el conector listo es UBIKA.
+  - Citados (planilla de personal esperado): no darlo por validado en un cliente nuevo hasta confirmar en Bacar que el puente sigue en uso (hallazgo operativo 4.11, aparte de este checklist).
+  - BioStar / estaciones / SR201: hardware y PCs de planta se dejan para el día en sitio.
 
-- [ ] Confirmar que el build regeneró `public/index.html` y `public/manifest.json` con los textos/colores del cliente (`prebuild` = `apply-brand`).
-- [ ] Abrir la app en local (`npm start`) y chequear: login, header, kiosko, colores, logo.
-- [ ] Confirmar suites en verde (frontend + functions) antes de desplegar.
+## B. En sitio con el cliente
 
-## 5. Deploy
+- [ ] Deploy Hosting + Functions al proyecto del cliente (runbook § deploy).
+- [ ] Bootstrap del usuario admin (`SETUP_KEY` o `create-admin.js`) y login.
+- [ ] El admin cambia la contraseña en el primer ingreso.
+- [ ] Verificar login, header, kiosko, logo y color (no alcanza con el build).
+- [ ] Instalar puente de puertas en la PC de planta que va a quedar siempre encendida ([docs/INSTALACION-SR201.md](./docs/INSTALACION-SR201.md)). Driver por puerta: Admin → Puertas (`sr201` o `generic_http`).
+- [ ] Si hay lector desatendido: [docs/INSTALACION-LECTOR-PUERTA.md](./docs/INSTALACION-LECTOR-PUERTA.md).
+- [ ] Probar un pulso real de puerta / un escaneo de kiosko. Sin eso la visita no está cerrada.
+- [ ] (Opcional) SMTP en Admin → Notificaciones, con el buzón que preparó el cliente.
+- [ ] Entregar al encargado: URL de Hosting, usuario admin ya con password propia, y [docs/CLIENTE-DIA-INSTALACION.md](./docs/CLIENTE-DIA-INSTALACION.md) no aplica post-visita — dejar claro a quién avisar si una PC de planta se apaga.
 
-**Opción A — GitHub Actions:** push a `main` (o *Actions → CI → Run workflow*). Requiere el secret del paso 3.
+## C. Post-instalación
 
-**Opción B — Manual** desde la raíz del repo (`LG/`):
+- [ ] Importar nómina / personas cuando el cliente entregue la planilla (Admin). No reutilizar datos de otra instalación.
+- [ ] Cargar puertas, destinos y usuarios de guardia con los roles reales.
+- [ ] Si hay flota: geocercas y credenciales GPS en Admin, no en el frontend.
+- [ ] Confirmar que el puente local arranca solo al reiniciar Windows (servicio / PM2 / tarea, según el runbook del hardware).
+- [ ] Anotar en el expediente interno: `project_id`, URL de Hosting, PCs de planta, módulos activos. Eso no se publica al cliente.
+- [ ] No dejar `SETUP_KEY` de default ni `serviceAccountKey.json` en discos de la visita.
 
-```bash
-cd functions
-npm install
-cd ..
-firebase use <project_id_del_cliente>
-firebase deploy --only "hosting,functions"
-```
+### Criterio de “instalado”
 
-- [ ] Si el target de hosting no es `bacarguard`, usar el target definido en `.firebaserc` del cliente.
-- [ ] Verificar URL de Hosting del cliente (login + kiosko + un escaneo de prueba).
-- [ ] Puente SR201: `.\scripts\deploy-sr201-bridge.ps1` desde la PC de planta (no desde Actions). El driver por puerta se configura en Admin → Puertas (`device.driver`: `sr201` o `generic_http`).
-
-## 6. Post-deploy
-
-- [ ] Bootstrap de usuarios: `POST /api/setup/initial-users` con header/body `x-setup-key` / `setupKey` (valor de `SETUP_KEY`), o crear admin con `functions/create-admin.js`.
-- [ ] Entrar como admin y cambiar la contraseña (flujo `mustChangePassword` / “Mi contraseña”).
-- [ ] (Opcional) Admin → Notificaciones: SMTP y eventos (ingresos excepcionales, denegaciones repetidas, fallo de relay, acciones sensibles).
-- [ ] (Opcional) Verificar Admin → Auditoría y el menú Reportes (permiso `reports.export`).
-- [ ] No reutilizar datos, reglas ni secrets de otra instalación.
+Un compañero que no participó del desarrollo puede seguir A→B→C y dejar el sistema usable el mismo día, sin pasos ocultos en el chat del equipo.

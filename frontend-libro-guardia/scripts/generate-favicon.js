@@ -4,9 +4,14 @@ const path = require('path');
 async function main() {
   const sharp = require('sharp');
   const pngToIco = (await import('png-to-ico')).default;
+  const brand = require('../src/config/brand');
 
   const publicDir = path.join(__dirname, '..', 'public');
-  const source = path.join(publicDir, 'B roja.png');
+  const logoName = String(brand.logoPath || 'mss-logo.png').replace(/^\//, '');
+  const source = path.join(publicDir, logoName);
+  if (!fs.existsSync(source)) {
+    throw new Error(`No está el logo de marca en public/${logoName} (brand.logoPath)`);
+  }
   const square512 = path.join(publicDir, 'favicon-512.png');
   const square32 = path.join(publicDir, 'favicon-32.png');
   const square16 = path.join(publicDir, 'favicon-16.png');
