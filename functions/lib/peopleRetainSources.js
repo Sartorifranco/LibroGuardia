@@ -57,14 +57,11 @@ const shouldKeepPerson = (data = {}, personId = '', nominaIndex = emptyNominaInd
   hasBiostarSignal(data) || hasNominaSignal(data, personId, nominaIndex)
 );
 
-const loadNominaIndex = async () => {
-  const snap = await db.collection('personalMaster')
-    .where('source', '==', 'nomina')
-    .get();
+const buildNominaIndexFromDocs = (docs = []) => {
   const personIds = new Set();
   const legajos = new Set();
-  snap.docs.forEach((doc) => {
-    const data = doc.data() || {};
+  docs.forEach((doc) => {
+    const data = typeof doc?.data === 'function' ? (doc.data() || {}) : (doc || {});
     if (data.active === false) return;
     const personId = String(data.personId || '').trim();
     if (personId) personIds.add(personId);
@@ -72,6 +69,13 @@ const loadNominaIndex = async () => {
     if (legajo) legajos.add(legajo);
   });
   return { personIds, legajos };
+};
+
+const loadNominaIndex = async () => {
+  const snap = await db.collection('personalMaster')
+    .where('source', '==', 'nomina')
+    .get();
+  return buildNominaIndexFromDocs(snap.docs);
 };
 
 const loadNominaPersonIds = async () => (await loadNominaIndex()).personIds;
@@ -215,6 +219,7 @@ module.exports = {
   hasBiostarSignal,
   hasNominaSignal,
   shouldKeepPerson,
+  buildNominaIndexFromDocs,
   loadNominaIndex,
   loadNominaPersonIds,
   buildRetainSourcesPlan,

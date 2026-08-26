@@ -20,25 +20,11 @@ const {
 } = require('./lib/transportCsvParser');
 
 const keyPath = path.join(__dirname, 'serviceAccountKey.json');
-
-if (!fs.existsSync(keyPath)) {
-  console.error('Falta functions/serviceAccountKey.json');
-  process.exit(1);
-}
-
 const write = process.argv.includes('--apply') && !process.argv.includes('--dry-run');
 
-if (!admin.apps.length) {
-  const serviceAccount = require(keyPath);
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    projectId: serviceAccount.project_id
-  });
-}
-
-const db = admin.firestore();
-const FieldValue = admin.firestore.FieldValue;
+let db = null;
 const BATCH_LIMIT = 400;
+const serverTimestamp = () => admin.firestore.FieldValue.serverTimestamp();
 
 const toMillis = (value) => {
   if (!value) return 0;
@@ -273,8 +259,8 @@ const planMigration = (peopleSnap, authSnap) => {
             legajoNormalized: legajo,
             name: winnerName || auth.name || null,
             dedupedFromPersonId: loser.id,
-            dedupedAt: FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp()
+            dedupedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
           }
         });
       });
@@ -295,8 +281,8 @@ const planMigration = (peopleSnap, authSnap) => {
     const winnerPatch = {
       legajo,
       legajoNormalized: legajo,
-      dedupedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp()
+      dedupedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     };
     if (isCleanName(winnerName)) {
       winnerPatch.nombre = winnerName;
@@ -354,6 +340,20 @@ const planMigration = (peopleSnap, authSnap) => {
 };
 
 const main = async () => {
+  if (!fs.existsSync(keyPath)) {
+    console.error('Falta functions/serviceAccountKey.json');
+    process.exitCode = 1;
+    return;
+  }
+  if (!admin.apps.length) {
+    const serviceAccount = require(keyPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      projectId: serviceAccount.project_id
+    });
+  }
+  db = admin.firestore();
+
   console.log(write
     ? '=== APPLY dedupe people (ESCRITURA REAL) ===\n'
     : '=== DRY-RUN dedupe people (sin escrituras) ===\n');
@@ -486,7 +486,22 @@ const main = async () => {
   console.log('\nApply completado OK.');
 };
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  toMillis,
+  displayName,
+  isCleanName,
+  isCleanLegajoField,
+  hasDoorIds,
+  extractRealLegajo,
+  scoreWinner,
+  pickWinner,
+  findAmbiguityInGroup,
+  planMigration
+};

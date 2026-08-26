@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const {
   hasBiostarSignal,
   hasNominaSignal,
-  shouldKeepPerson
+  shouldKeepPerson,
+  buildNominaIndexFromDocs
 } = require('../lib/peopleRetainSources');
 
 describe('peopleRetainSources', () => {
@@ -60,5 +61,26 @@ describe('peopleRetainSources', () => {
       assert.equal(shouldKeepPerson({ origen: 'import' }, 'p1', new Set(['p1'])), true);
       assert.equal(shouldKeepPerson({ origen: 'import', legajoNormalized: '261' }, 'p9', new Set(['p1'])), false);
     });
+  });
+
+  it('índice real conserva solo vínculos activos y normaliza legajos', () => {
+    const index = buildNominaIndexFromDocs([
+      { data: () => ({ active: true, personId: 'p-261', legajoNormalized: '000261' }) },
+      { data: () => ({ personId: '', legajo: '2946' }) },
+      { data: () => ({ active: false, personId: 'p-baja', legajo: '9999' }) }
+    ]);
+
+    assert.deepEqual([...index.personIds], ['p-261']);
+    assert.deepEqual([...index.legajos], ['261', '2946']);
+    assert.equal(shouldKeepPerson(
+      { origen: 'import', legajoNormalized: '000261' },
+      'sin-link',
+      index
+    ), true);
+    assert.equal(shouldKeepPerson(
+      { origen: 'import', legajoNormalized: '9999' },
+      'p-baja',
+      index
+    ), false);
   });
 });
