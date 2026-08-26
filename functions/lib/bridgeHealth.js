@@ -91,10 +91,12 @@ const checkAndNotifyStaleBridges = async () => {
     }
   }
 
-  await db.collection('settings').doc(ALERTS_DOC).set({
-    byId: nextById,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  if (JSON.stringify(nextById) !== JSON.stringify(prevAll)) {
+    await db.collection('settings').doc(ALERTS_DOC).set({
+      byId: nextById,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
 
   return { rows, notified };
 };
