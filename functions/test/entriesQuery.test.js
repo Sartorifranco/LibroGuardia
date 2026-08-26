@@ -21,6 +21,24 @@ test('getEffectiveEntryType trata GPS vehiculo como flota', () => {
   assert.equal(getEffectiveEntryType({ type: 'personal' }), 'personal');
 });
 
+test('entry de producción gps_ubika sigue clasificando como flota', () => {
+  const { isGpsFleetEntry } = require('../lib/gpsProviders/entrySource');
+  const productionLike = {
+    type: 'flota',
+    movementType: 'ingreso',
+    entrySource: 'gps_ubika',
+    gpsAuto: true,
+    plate: 'AF973GW',
+    mobile: 'Camión 568',
+    gpsName: 'Camión 568 - AF973GW',
+    gpsDeviceId: 9
+  };
+  assert.equal(isGpsFleetEntry(productionLike), true);
+  assert.equal(getEffectiveEntryType(productionLike), 'flota');
+  assert.equal(matchesTypeFilter(productionLike, 'flota'), true);
+  assert.equal(matchesTypeFilter(productionLike, 'vehiculo'), false);
+});
+
 test('matchesTypeFilter y matchesSearch', () => {
   assert.equal(matchesTypeFilter({ type: 'novedad' }, 'todos'), true);
   assert.equal(matchesTypeFilter({ type: 'novedad' }, 'novedad'), true);

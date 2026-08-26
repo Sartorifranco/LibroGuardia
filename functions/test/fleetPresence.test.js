@@ -33,6 +33,22 @@ test('computeFleetPresence: último ingreso = adentro, egreso = afuera', () => {
   assert.equal(c.state, 'outside');
 });
 
+test('computeFleetPresence: entry de producción gps_ubika cuenta como flota', () => {
+  const result = computeFleetPresence({
+    mobiles: [{ id: '1', name: 'Camión 568' }],
+    entries: [{
+      type: 'flota',
+      entrySource: 'gps_ubika',
+      gpsAuto: true,
+      mobile: 'Camión 568',
+      plate: 'AF973GW',
+      movementType: 'ingreso',
+      timestamp: '2026-08-01T12:00:00Z'
+    }]
+  });
+  assert.equal(result.inside, 1);
+});
+
 test('computeFleetPresence: GPS legacy vehiculo cuenta como flota', () => {
   const result = computeFleetPresence({
     mobiles: [{ id: '1', name: 'Blindado 1' }],
