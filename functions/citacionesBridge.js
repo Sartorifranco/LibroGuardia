@@ -26,6 +26,7 @@ const DEFAULT_CITACIONES_BRIDGE = {
   bridgeSecret: '',
   watchFolderHint: 'C:\\usr',
   lastSyncAt: null,
+  lastHeartbeatAt: null,
   lastSyncFile: null,
   lastSyncCount: 0,
   lastSyncError: null
@@ -38,13 +39,24 @@ const getCitacionesBridgeConfig = async () => {
   return {
     ...DEFAULT_CITACIONES_BRIDGE,
     ...data,
-    lastSyncAt: data.lastSyncAt?.toDate ? data.lastSyncAt.toDate().toISOString() : data.lastSyncAt || null
+    lastSyncAt: data.lastSyncAt?.toDate ? data.lastSyncAt.toDate().toISOString() : data.lastSyncAt || null,
+    lastHeartbeatAt: data.lastHeartbeatAt?.toDate
+      ? data.lastHeartbeatAt.toDate().toISOString()
+      : data.lastHeartbeatAt || null
   };
 };
 
 const saveCitacionesBridgeConfig = async (updates) => {
   const payload = { ...updates, updatedAt: FieldValue.serverTimestamp() };
   await db.collection('settings').doc('citacionesBridge').set(payload, { merge: true });
+  return getCitacionesBridgeConfig();
+};
+
+const touchCitacionesHeartbeat = async () => {
+  await db.collection('settings').doc('citacionesBridge').set({
+    lastHeartbeatAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
   return getCitacionesBridgeConfig();
 };
 
@@ -497,6 +509,7 @@ const syncAuthorizationsFromBridge = async (payload = {}) => {
   const total = result.created + result.updated;
   await saveCitacionesBridgeConfig({
     lastSyncAt: FieldValue.serverTimestamp(),
+    lastHeartbeatAt: FieldValue.serverTimestamp(),
     lastSyncFile: sourceFile || null,
     lastSyncCount: total,
     lastSyncError: result.errors.length
@@ -523,6 +536,7 @@ module.exports = {
   DEFAULT_CITACIONES_BRIDGE,
   getCitacionesBridgeConfig,
   saveCitacionesBridgeConfig,
+  touchCitacionesHeartbeat,
   verifyCitacionesBridgeRequest,
   syncAuthorizationsFromBridge,
   relinkCitacionesWithNomina,

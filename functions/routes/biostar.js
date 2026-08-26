@@ -6,6 +6,7 @@ const express = require('express');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 const { logAdminAction } = require('../lib/auditLog');
 const { importBiostarUsers, importBiostarEvents } = require('../lib/biostarImport');
+const { touchBiostarHeartbeat, getBiostarBridgeStatus } = require('../lib/biostarBridgeStatus');
 
 const router = express.Router();
 
@@ -65,6 +66,28 @@ router.post('/api/admin/biostar/import-events', auth, canManage, async (req, res
       message: err.message || 'Error al importar eventos BioStar',
       code: err.code
     });
+  }
+});
+
+router.post('/api/admin/biostar/heartbeat', auth, canManage, async (req, res) => {
+  try {
+    const status = await touchBiostarHeartbeat({
+      lastError: req.body?.lastError || null
+    });
+    res.json({ ok: true, ...status });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error en heartbeat BioStar'
+    });
+  }
+});
+
+router.get('/api/admin/biostar/status', auth, canManage, async (_req, res) => {
+  try {
+    const status = await getBiostarBridgeStatus();
+    res.json({ status });
+  } catch (err) {
+    res.status(500).json({ message: err.message || 'Error al leer estado BioStar' });
   }
 });
 

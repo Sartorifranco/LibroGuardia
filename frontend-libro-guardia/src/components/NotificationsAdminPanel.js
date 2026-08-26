@@ -21,6 +21,11 @@ const EVENT_META = [
     hint: 'Timeout o error al disparar SR201 o relé HTTP.'
   },
   {
+    key: 'bridge_offline',
+    label: 'Puente local sin señal',
+    hint: 'La PC de planta (estación, citados o BioStar) no reportó heartbeat en ~30 minutos.'
+  },
+  {
     key: 'admin_sensitive',
     label: 'Cambios admin sensibles',
     hint: 'Borrado de usuario/rol, cambio de permisos (vía auditoría).'
@@ -42,7 +47,8 @@ const DEFAULT_CONFIG = {
     exceptional_entry: { enabled: true, recipients: [] },
     repeated_denials: { enabled: true, recipients: [], threshold: 3, windowMinutes: 10 },
     door_relay_failure: { enabled: true, recipients: [] },
-    admin_sensitive: { enabled: true, recipients: [] }
+    admin_sensitive: { enabled: true, recipients: [] },
+    bridge_offline: { enabled: true, recipients: [] }
   }
 };
 

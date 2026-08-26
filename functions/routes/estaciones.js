@@ -5,7 +5,7 @@
 const express = require('express');
 const { auth, requirePermission } = require('../middleware/auth');
 const { logAdminAction } = require('../lib/auditLog');
-const { resolveApiBaseUrl } = require('../lib/lectores');
+const { resolveConnectionStatus, resolveAuthUsername, resolveApiBaseUrl } = require('../lib/lectores');
 const {
   listEstaciones,
   getEstacionById,
@@ -14,7 +14,8 @@ const {
   deleteEstacion,
   listLectoresDeEstacion,
   setLectoresDeEstacion,
-  buildStationConfigForDownload
+  buildStationConfigForDownload,
+  touchEstacionHeartbeat
 } = require('../lib/estaciones');
 
 const router = express.Router();
@@ -26,7 +27,12 @@ router.get('/api/admin/estaciones', auth, requirePermission('lectores.manage'), 
       const lectores = await listLectoresDeEstacion(e.id);
       return { ...e, lectoresCount: lectores.length, lectorIds: lectores.map((l) => l.id) };
     }));
-    res.json({ estaciones: withCounts });
+    res.json({
+      estaciones: withCounts.map((e) => ({
+        ...e,
+        connectionStatus: resolveConnectionStatus(e.ultimaConexion)
+      }))
+    });
   } catch (err) {
     res.status(500).json({ message: err.message || 'Error al listar estaciones' });
   }
@@ -165,5 +171,30 @@ router.get(
     }
   }
 );
+
+/**
+ * Heartbeat de programa-estacion.js (usuario kiosk de un lector de esa estación).
+ */
+router.post('/api/estaciones/heartbeat', auth, async (req, res) => {
+  try {
+    const username = resolveAuthUsername(req.user);
+    const estacion = await touchEstacionHeartbeat({
+      username,
+      discoveredPorts: req.body?.discoveredPorts,
+      configVersionAck: req.body?.configVersionAck
+    });
+    res.json({
+      ok: true,
+      estacionId: estacion.id,
+      ultimaConexion: estacion.ultimaConexion,
+      connectionStatus: resolveConnectionStatus(estacion.ultimaConexion)
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({
+      message: err.message || 'Error en heartbeat de estación',
+      code: err.code
+    });
+  }
+});
 
 module.exports = router;

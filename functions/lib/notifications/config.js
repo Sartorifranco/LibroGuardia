@@ -6,7 +6,8 @@ const EVENT_TYPES = [
   'exceptional_entry',
   'repeated_denials',
   'door_relay_failure',
-  'admin_sensitive'
+  'admin_sensitive',
+  'bridge_offline'
 ];
 
 const DEFAULT_EVENT = () => ({
@@ -34,7 +35,8 @@ const DEFAULT_CONFIG = {
       windowMinutes: 10
     },
     door_relay_failure: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
-    admin_sensitive: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
+    admin_sensitive: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
+    bridge_offline: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
   }
 };
 

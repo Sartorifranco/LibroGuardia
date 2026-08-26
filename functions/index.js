@@ -2,6 +2,7 @@ const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { db, FieldValue } = require('./firestore');
 const { fetchNearbyFleetAlerts, getFleetGpsConfig } = require('./fleetGps');
+const { checkAndNotifyStaleBridges } = require('./lib/bridgeHealth');
 const app = require('./app');
 
 exports.api = onRequest(
@@ -36,5 +37,21 @@ exports.fleetGpsAutoPoll = onSchedule(
       forceUbika: true,
       preferCache: false
     });
+  }
+);
+
+/**
+ * Revisa heartbeats de puentes locales y avisa por SMTP si alguno quedó mudo.
+ */
+exports.bridgeHealthPoll = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    region: 'southamerica-east1',
+    timeZone: 'America/Argentina/Buenos_Aires',
+    timeoutSeconds: 60,
+    memory: '256MiB'
+  },
+  async () => {
+    await checkAndNotifyStaleBridges();
   }
 );
