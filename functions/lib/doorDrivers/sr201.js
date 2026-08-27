@@ -1,4 +1,5 @@
 const net = require('net');
+const { signRelayRequest } = require('../relayHmac');
 
 const DEFAULT_PORT = 6722;
 const DEFAULT_TIMEOUT_MS = 4000;
@@ -195,6 +196,11 @@ const sendViaBridge = async (bridgeUrl, payload, bridgeSecret = '') => {
     throw new Error('Falta la URL del puente SR201 (bridgeUrl). Configurala en Admin → Puertas.');
   }
 
+  const rawBody = JSON.stringify(payload);
+  const hmac = bridgeSecret
+    ? signRelayRequest({ secret: bridgeSecret, method: 'POST', path: '/pulse', body: rawBody })
+    : { headers: {} };
+
   // Timed: el bridge responde tras confirmar ON (OFF async). No hace falta
   // presupuestar pulseSeconds en el AbortController de Cloud Functions.
   const waitBudgetSec = 20;
@@ -209,9 +215,10 @@ const sendViaBridge = async (bridgeUrl, payload, bridgeSecret = '') => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(bridgeSecret ? { Authorization: `Bearer ${bridgeSecret}` } : {})
+        ...(bridgeSecret ? { Authorization: `Bearer ${bridgeSecret}` } : {}),
+        ...hmac.headers
       },
-      body: JSON.stringify(payload),
+      body: rawBody,
       signal: controller?.signal
     });
   } catch (err) {

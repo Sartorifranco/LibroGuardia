@@ -121,6 +121,14 @@ Entrar y cambiar la contraseña (`mustChangePassword` / “Mi contraseña”).
 
 La app en Firebase no habla TCP con el relé: hace falta PC local + puente HTTP.
 
+En la PC de garita que corre `programa-apertura-internet.js`, dejar **sincronización automática de hora de Windows** activada. Si el reloj se desfasa más de 60 s respecto de la nube, las aperturas legítimas se rechazan (HMAC de `POST /pulse`).
+
+HMAC `/pulse` — orden de despliegue (mismo día, no invertir):
+
+1. Copiar/reiniciar el puente en la garita (`programa-apertura-internet.js`).
+2. Recién ahí desplegar Cloud Functions.
+3. Nunca Functions antes que la garita: el puente nuevo **exige** HMAC si hay `bridgeSecret`; Functions viejo no firma y deja de abrir.
+
 ## 8. Lo que no hay que hacer
 
 - Reusar Firestore, reglas o secrets de otra instalación.

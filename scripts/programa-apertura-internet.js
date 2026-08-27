@@ -18,6 +18,9 @@ const {
   buildPulseCommand,
   queryRelayStatusTcp
 } = require('../functions/sr201');
+const { authorizePulseRequest, createNonceStore } = require('../functions/lib/relayHmac');
+
+const pulseNonces = createNonceStore();
 
 const loadFileConfig = () => {
   const candidates = [
@@ -112,10 +115,6 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 404, { message: 'Ruta no encontrada' });
   }
 
-  if (!isAuthorized(req)) {
-    return sendJson(res, 401, { message: 'No autorizado' });
-  }
-
   let body = '';
   req.on('data', (chunk) => {
     body += chunk;
@@ -123,6 +122,21 @@ const server = http.createServer(async (req, res) => {
 
   req.on('end', async () => {
     try {
+      let pulseAuth;
+      try {
+        pulseAuth = authorizePulseRequest({
+          secret: BRIDGE_SECRET,
+          headers: req.headers,
+          rawBody: body,
+          seenNonces: pulseNonces
+        });
+      } catch (_err) {
+        return sendJson(res, 401, { message: 'No autorizado' });
+      }
+      if (!pulseAuth.ok) {
+        return sendJson(res, 401, { message: 'No autorizado' });
+      }
+
       const payload = body ? JSON.parse(body) : {};
       const channel = Number(payload.channel) || 1;
       const mode = payload.mode === 'timed' || payload.softwareTimed ? 'timed' : (payload.mode || 'jog');

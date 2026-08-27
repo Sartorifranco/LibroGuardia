@@ -32,8 +32,10 @@ describe('sr201', () => {
   it('triggerRelay timed vía bridge resuelve al aceptar /pulse (sin esperar pulseSeconds)', async () => {
     const originalFetch = global.fetch;
     let fetchCalls = 0;
-    global.fetch = mock.fn(async () => {
+    let lastHeaders = null;
+    global.fetch = mock.fn(async (_url, options = {}) => {
       fetchCalls += 1;
+      lastHeaders = options.headers || {};
       return {
         ok: true,
         status: 200,
@@ -63,6 +65,10 @@ describe('sr201', () => {
       assert.equal(result.triggered, true);
       assert.equal(result.via, 'bridge');
       assert.equal(fetchCalls, 1);
+      assert.ok(lastHeaders['X-Mss-Signature']);
+      assert.ok(lastHeaders['X-Mss-Timestamp']);
+      assert.ok(lastHeaders['X-Mss-Nonce']);
+      assert.equal(lastHeaders.Authorization, 'Bearer secret');
       assert.ok(elapsed < 2000, `esperaba respuesta rápida, tardó ${elapsed}ms`);
     } finally {
       global.fetch = originalFetch;
