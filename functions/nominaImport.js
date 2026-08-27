@@ -467,9 +467,9 @@ const resolvePersonCached = async (parsed, caches) => {
       && existing.source !== 'biostar'
       && existing.biometricBrand !== 'suprema') {
       enrich.active = false;
-    } else {
+    } else if (parsed.active !== false) {
       Object.assign(enrich, buildReactivationFields(existing, {
-        wantActive: true,
+        wantActive: parsed.active !== false,
         via: 'nomina',
         timestamp: FieldValue.serverTimestamp()
       }));

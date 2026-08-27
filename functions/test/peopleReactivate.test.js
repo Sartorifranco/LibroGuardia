@@ -105,6 +105,32 @@ describe('buildReactivationFields', () => {
       { active: false }
     );
   });
+
+  it('BioStar/Suprema inactiva + fila de nómina inactiva no se reactiva', () => {
+    const existing = {
+      active: false,
+      source: 'biostar',
+      biometricBrand: 'suprema'
+    };
+    const parsed = { active: false };
+    const enrich = {};
+    if (parsed.active === false
+      && !existing.biometricExternalId
+      && existing.source !== 'biostar'
+      && existing.biometricBrand !== 'suprema') {
+      enrich.active = false;
+    } else if (parsed.active !== false) {
+      Object.assign(enrich, buildReactivationFields(existing, {
+        wantActive: parsed.active !== false,
+        via: 'nomina',
+        timestamp: 'TS'
+      }));
+    }
+    const result = { ...existing, ...enrich };
+    assert.equal(result.active, false);
+    assert.equal(Object.hasOwn(enrich, 'reactivatedAt'), false);
+    assert.equal(Object.hasOwn(enrich, 'reactivatedVia'), false);
+  });
 });
 
 describe('findPersonForAccess no reactiva inactivos', () => {
