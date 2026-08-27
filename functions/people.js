@@ -1,6 +1,11 @@
 const { db, FieldValue } = require('./firestore');
 const { normalizeIdNumber } = require('./dniParser');
 const { normalizePersonName, buildNameTokens } = require('./authorizations');
+const {
+  pickUpsertCandidate,
+  buildReactivationFields,
+  ambiguousPersonError
+} = require('./lib/peopleUpsertMatch');
 
 const findPersonDoc = async (field, value) => {
   if (!value) return null;
@@ -20,6 +25,27 @@ const findPersonByNameKey = (nameKey) =>
 
 const findPersonByDni = (dniNormalized) =>
   findPersonDoc('dniNormalized', dniNormalized);
+
+const loadPeopleByField = async (field, value) => {
+  if (!value) return [];
+  const snap = await db.collection('people').where(field, '==', value).get();
+  return snap.docs;
+};
+
+const findPersonForUpsert = async ({ legajoNormalized, dniNormalized } = {}) => {
+  let docs = [];
+  if (legajoNormalized) {
+    docs = await loadPeopleByField('legajoNormalized', legajoNormalized);
+  }
+  if (!docs.length && dniNormalized) {
+    const byIdNum = await loadPeopleByField('idNumberNormalized', dniNormalized);
+    const byDni = await loadPeopleByField('dniNormalized', dniNormalized);
+    const byId = new Map();
+    [...byIdNum, ...byDni].forEach((d) => byId.set(d.id, d));
+    docs = [...byId.values()];
+  }
+  return pickUpsertCandidate(docs, { legajoNormalized, dniNormalized });
+};
 
 const buildPersonPayload = ({
   name,
@@ -135,14 +161,21 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
   const dniNormalized = normalizeIdNumber(record.idNumberNormalized || record.idNumber);
 
   let personDoc = null;
-  if (legajoNormalized) {
-    personDoc = await findPersonByLegajo(legajoNormalized);
+  if (legajoNormalized || dniNormalized) {
+    const picked = await findPersonForUpsert({ legajoNormalized, dniNormalized });
+    if (picked.status === 'ambiguous') {
+      throw ambiguousPersonError(picked.reason);
+    }
+    if (picked.status === 'hit') {
+      personDoc = {
+        id: picked.candidate.id,
+        ref: picked.candidate.ref,
+        data: () => picked.candidate.data
+      };
+    }
   }
   if (!personDoc && nameKey) {
     personDoc = await findPersonByNameKey(nameKey);
-  }
-  if (!personDoc && dniNormalized) {
-    personDoc = await findPersonByDni(dniNormalized);
   }
 
   const basePayload = buildPersonPayload({
@@ -157,6 +190,11 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
 
   if (personDoc) {
     const existing = personDoc.data();
+    const reactivation = buildReactivationFields(existing, {
+      wantActive: true,
+      via: origen === 'nomina' ? 'nomina' : 'import',
+      timestamp: FieldValue.serverTimestamp()
+    });
     const merged = {
       ...basePayload,
       dni: dniNormalized || existing.dni || null,
@@ -165,7 +203,8 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
       idNumberNormalized: dniNormalized || existing.idNumberNormalized || '',
       legajo: legajoNormalized || existing.legajo || null,
       legajoNormalized: legajoNormalized || existing.legajoNormalized || null,
-      origen: existing.origen || origen
+      origen: existing.origen || origen,
+      ...reactivation
     };
     await personDoc.ref.set(merged, { merge: true });
     const person = { id: personDoc.id, ...merged };
@@ -208,6 +247,7 @@ module.exports = {
   findPersonByNameKey,
   findPersonByDni,
   findPersonForAccess,
+  findPersonForUpsert,
   resolveOrCreatePerson,
   syncPersonalMaster
 };
