@@ -208,3 +208,19 @@ filtro sobre los datos ya cargados en el frontend.
 
 **Criterio de cierre:** escribir en el buscador filtra el listado en tiempo
 real por nombre o código; no afecta el guardado ni la edición de puertas.
+
+### 4.19 — Rama `feat/hardware-auto-detect-v1` sin mergear — decidir destino
+
+**Estado:** hallazgo, sin decidir. Código funcional (auto-detección de
+marca de hardware vía LAN), 2 commits del 18/08, basada en un main
+anterior a heartbeat/HMAC/GPS actuales. No pasó por el proceso de
+diseño→aprobación. No se mergea ni se borra hasta que Franco decida
+si esa feature sigue en el roadmap.
+
+**Riesgo:** ninguno mientras quede sin tocar en el remoto.
+
+**Alcance sugerido:** ninguno todavía — es una decisión de negocio, no
+técnica.
+
+**Criterio de cierre:** decisión explícita (retomar con diseño nuevo, o
+borrar la rama).
