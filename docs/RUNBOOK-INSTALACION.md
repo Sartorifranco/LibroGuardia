@@ -129,7 +129,75 @@ HMAC `/pulse` — orden de despliegue (mismo día, no invertir):
 2. Recién ahí desplegar Cloud Functions.
 3. Nunca Functions antes que la garita: el puente nuevo **exige** HMAC si hay `bridgeSecret`; Functions viejo no firma y deja de abrir.
 
-## 8. Lo que no hay que hacer
+## 8. Watchdog de los daemons de garita
+
+Los puentes SR201 y BioStar se ejecutan como tareas programadas de Windows,
+no con PM2 ni NSSM:
+
+- SR201: tarea `BacarGuard-SR201-Bridge`, wrapper
+  `scripts\arrancar-apertura-internet-servicio.cmd`, log
+  `scripts\apertura-internet.service.log`.
+- BioStar: tarea `MSSGuard-BioStar-Bridge`, wrapper
+  `scripts\arrancar-biostar-servicio.cmd`, log
+  `scripts\biostar.service.log`.
+
+Cada tarea arranca con Windows, reintenta hasta 3 veces con intervalo de
+1 minuto, no tiene límite de duración y tiene un segundo trigger diario a
+las 04:00. Ese trigger permite un nuevo intento si ya se agotaron los tres
+reinicios; no genera un proceso duplicado cuando la tarea sigue corriendo.
+Cada ejecución deja fecha y hora de inicio en el log.
+
+El watchdog recupera un proceso que **terminó**. El heartbeat de 4.2 es otra
+capa: informa por mail cuando el puente deja de reportar, incluso si quedó
+colgado sin terminar. Los reinicios no reemplazan esa señal.
+
+### Instalar, verificar y rearmar
+
+Los instaladores verifican obligatoriamente la configuración leída desde
+Windows, el estado `Ready`/`Running`, el principal `SYSTEM`, el wrapper, el
+proceso `node.exe` correcto y:
+
+- SR201: `GET http://127.0.0.1:5022/health`.
+- BioStar: líneas nuevas en `biostar.service.log` después del arranque.
+
+Si una verificación falla, PowerShell termina con código distinto de cero.
+Para inspeccionar manualmente:
+
+```powershell
+Get-ScheduledTask -TaskName BacarGuard-SR201-Bridge
+Get-ScheduledTask -TaskName MSSGuard-BioStar-Bridge
+Get-ScheduledTaskInfo -TaskName BacarGuard-SR201-Bridge
+Get-ScheduledTaskInfo -TaskName MSSGuard-BioStar-Bridge
+```
+
+Si se agotaron los tres reinicios o se cambió una configuración, rearmar con:
+
+```powershell
+.\scripts\_interno\reiniciar-apertura-internet.ps1
+.\scripts\_interno\reiniciar-biostar.ps1
+```
+
+No abrir una CMD manual con el mismo `.js`: puede duplicar BioStar u ocupar
+el puerto 5022 e impedir que arranque la tarea SR201.
+
+### Prueba de recuperación, solo en PC/VM de laboratorio
+
+No matar procesos ni registrar tareas de prueba en la garita real. El fixture
+`scripts\_interno\watchdog-crash-fixture.js` escucha en localhost y termina
+intencionalmente con código 1:
+
+```powershell
+node .\scripts\_interno\watchdog-crash-fixture.js 15022 5000
+```
+
+En una tarea descartable de laboratorio, usar ese comando como acción y los
+mismos settings (`RestartCount=3`, `RestartInterval=1 minuto`,
+`ExecutionTimeLimit=0`). Confirmar que vuelve a escuchar en menos de 70 s
+después de cada caída y que, agotados los tres reinicios, deja de relanzarse.
+Eliminar la tarea descartable al terminar. Nunca usar los nombres de tarea,
+puertos ni configuraciones productivas para esta prueba.
+
+## 9. Lo que no hay que hacer
 
 - Reusar Firestore, reglas o secrets de otra instalación.
 - Correr `scaffold-brand` sobre el árbol de Bacar “para probar” (sin `--force` ahora aborta; con `--force` sí pisa).

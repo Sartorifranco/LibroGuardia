@@ -11,10 +11,12 @@ if (-not $isAdmin) {
 }
 
 $scriptsDir = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "watchdog-common.ps1")
 $bridgeJs = Join-Path $scriptsDir "programa-apertura-internet.js"
 $configJson = Join-Path $scriptsDir "configuracion-apertura-internet.json"
 $node = (Get-Command node -ErrorAction Stop).Source
 $taskName = "BacarGuard-SR201-Bridge"
+$wrapper = Join-Path $scriptsDir "arrancar-apertura-internet-servicio.cmd"
 
 Write-Host "Deteniendo tarea programada (si existe)..." -ForegroundColor Cyan
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -55,6 +57,11 @@ $cfg = Get-Content $configJson -Raw | ConvertFrom-Json
 $body = @{ host = $cfg.sr201Host; port = $cfg.sr201Port } | ConvertTo-Json
 $status = Invoke-RestMethod -Uri "http://127.0.0.1:5022/status" -Method POST -ContentType "application/json" -Headers @{ Authorization = "Bearer $($cfg.bridgeSecret)" } -Body $body -TimeoutSec 8
 Write-Host ("Status OK: " + ($status | ConvertTo-Json -Compress)) -ForegroundColor Green
+Assert-BridgeWatchdog `
+  -TaskName $taskName `
+  -WrapperPath $wrapper `
+  -BridgePath $bridgeJs `
+  -HealthUri "http://127.0.0.1:5022/health" | Out-Null
 Write-Host ""
 Write-Host "Listo. Recarga Admin -> Puertas. El estado fisico deberia actualizarse cada ~1.5 s." -ForegroundColor Green
 Write-Host "Si usas Cloudflare Tunnel, asegurate de que apunte a http://127.0.0.1:5022" -ForegroundColor Cyan

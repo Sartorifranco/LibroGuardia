@@ -16,6 +16,7 @@ if (-not $isAdmin) {
 }
 
 $scriptsDir = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "watchdog-common.ps1")
 $bridgeJs = Join-Path $scriptsDir "programa-biostar.js"
 $configJson = Join-Path $scriptsDir "configuracion-biostar.json"
 $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
@@ -60,6 +61,7 @@ if errorlevel 1 (
   echo No se encontro node en el PATH.
   exit /b 1
 )
+echo [%date% %time%] Iniciando programa-biostar.js >> "$logFile"
 "$node" "$bridgeJs" >> "$logFile" 2>&1
 "@
 Set-Content -Path $wrapper -Value $wrapperText -Encoding ASCII
@@ -72,27 +74,36 @@ if ($existing) {
 }
 
 $action = New-ScheduledTaskAction -Execute $wrapper
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$triggers = @(
+  New-ScheduledTaskTrigger -AtStartup
+  New-ScheduledTaskTrigger -Daily -At "04:00"
+)
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
   -RestartCount 3 `
   -RestartInterval (New-TimeSpan -Minutes 1) `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) `
   -StartWhenAvailable
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
 Register-ScheduledTask `
   -TaskName $taskName `
   -Action $action `
-  -Trigger $trigger `
+  -Trigger $triggers `
   -Settings $settings `
   -Principal $principal `
   -Description "Puente BioStar 2 a MSS Guard (usuarios y eventos)" `
   -Force | Out-Null
 
+$logOffset = Get-WatchdogLogLength -Path $logFile
 Start-ScheduledTask -TaskName $taskName
-Start-Sleep -Seconds 3
-
+$verified = Assert-BridgeWatchdog `
+  -TaskName $taskName `
+  -WrapperPath $wrapper `
+  -BridgePath $bridgeJs `
+  -LogPath $logFile `
+  -LogOffset $logOffset
 $info = Get-ScheduledTaskInfo -TaskName $taskName
 Write-Host ""
 Write-Host "Listo. El puente queda permanente." -ForegroundColor Green
@@ -107,8 +118,4 @@ Write-Host "Para reiniciar despues de cambiar la config: 05b-reiniciar-servicio-
 Write-Host ("Desinstalar: Unregister-ScheduledTask -TaskName {0} -Confirm:`$false" -f $taskName)
 Write-Host ""
 Write-Host "Revisa las ultimas lineas del log:" -ForegroundColor Cyan
-if (Test-Path $logFile) {
-  Get-Content $logFile -Tail 12 | ForEach-Object { Write-Host "  $_" }
-} else {
-  Write-Host "  (todavia no hay log; espera unos segundos y abri biostar.service.log)" -ForegroundColor Yellow
-}
+Get-Content $logFile -Tail 12 | ForEach-Object { Write-Host "  $_" }

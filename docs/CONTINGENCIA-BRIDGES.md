@@ -28,7 +28,7 @@ Apertura manual de emergencia (llave / bypass físico del molinete) queda a crit
 |---|---|---|
 | Lectores + relé SR201 en planta | `programa-estacion.js` (PM2) | Equipos → Lectores y Estaciones |
 | Citados (Excel/CSV) | `citaciones-folder-bridge.js` (PM2) | Autorizaciones → puente de carpeta |
-| BioStar 2 | `programa-biostar.js` (PM2) | Heartbeat en nube (evento mail si se cae) |
+| BioStar 2 | `programa-biostar.js` (tarea programada de Windows) | Heartbeat en nube (evento mail si se cae) |
 
 El bridge SR201 viejo (`scripts/archivo-viejo/sr201-bridge.js`) quedó archivado: la apertura en planta pasa por la estación.
 
