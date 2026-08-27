@@ -3,6 +3,11 @@ const { parseNominaRow, buildNominaRowFromFields } = require('./lib/nominaParser
 const { buildAuthorizationRecord } = require('./authorizations');
 const { resolveOrCreatePerson } = require('./people');
 const { buildNameTokens } = require('./authorizations');
+const {
+  pickUpsertCandidate,
+  buildReactivationFields,
+  ambiguousPersonError
+} = require('./lib/peopleUpsertMatch');
 
 const buildMasterPayload = (personId, parsed, { active = true } = {}) => ({
   name: parsed.name,
@@ -387,29 +392,38 @@ const findPeopleDoc = async (parsed, caches) => {
     return caches.peopleByDni.get(parsed.idNumberNormalized);
   }
 
-  let snap = null;
-  if (parsed.legajoNormalized) {
-    snap = await db.collection('people')
-      .where('legajoNormalized', '==', parsed.legajoNormalized)
-      .limit(1)
-      .get();
-  }
-  if ((!snap || snap.empty) && parsed.idNumberNormalized) {
-    snap = await db.collection('people')
-      .where('idNumberNormalized', '==', parsed.idNumberNormalized)
-      .limit(1)
-      .get();
-  }
-  if ((!snap || snap.empty) && parsed.idNumberNormalized) {
-    snap = await db.collection('people')
-      .where('dniNormalized', '==', parsed.idNumberNormalized)
-      .limit(1)
-      .get();
-  }
-  if (!snap || snap.empty) return null;
+  const loadByField = async (field, value) => {
+    if (!value) return [];
+    const snap = await db.collection('people').where(field, '==', value).get();
+    return snap.docs;
+  };
 
-  const doc = snap.docs[0];
-  const row = { id: doc.id, ref: doc.ref, data: doc.data() || {} };
+  let docs = [];
+  if (parsed.legajoNormalized) {
+    docs = await loadByField('legajoNormalized', parsed.legajoNormalized);
+  }
+  if (!docs.length && parsed.idNumberNormalized) {
+    const byIdNum = await loadByField('idNumberNormalized', parsed.idNumberNormalized);
+    const byDni = await loadByField('dniNormalized', parsed.idNumberNormalized);
+    const byId = new Map();
+    [...byIdNum, ...byDni].forEach((d) => byId.set(d.id, d));
+    docs = [...byId.values()];
+  }
+
+  const picked = pickUpsertCandidate(docs, {
+    legajoNormalized: parsed.legajoNormalized,
+    dniNormalized: parsed.idNumberNormalized
+  });
+  if (picked.status === 'ambiguous') {
+    throw ambiguousPersonError(picked.reason);
+  }
+  if (picked.status === 'none') return null;
+
+  const row = {
+    id: picked.candidate.id,
+    ref: picked.candidate.ref,
+    data: picked.candidate.data
+  };
   if (parsed.legajoNormalized) caches.peopleByLegajo.set(parsed.legajoNormalized, row);
   if (parsed.idNumberNormalized) caches.peopleByDni.set(parsed.idNumberNormalized, row);
   return row;
@@ -453,6 +467,12 @@ const resolvePersonCached = async (parsed, caches) => {
       && existing.source !== 'biostar'
       && existing.biometricBrand !== 'suprema') {
       enrich.active = false;
+    } else if (parsed.active !== false) {
+      Object.assign(enrich, buildReactivationFields(existing, {
+        wantActive: parsed.active !== false,
+        via: 'nomina',
+        timestamp: FieldValue.serverTimestamp()
+      }));
     }
     if (existing.origen && existing.origen !== 'nomina') enrich.origen = existing.origen;
     if (existing.source) enrich.source = existing.source;
@@ -797,5 +817,6 @@ module.exports = {
   deactivateNominaEmployee,
   deactivateMissingNomina,
   buildMasterPayload,
-  normalizeImportStepOptions
+  normalizeImportStepOptions,
+  resolvePersonCached
 };
