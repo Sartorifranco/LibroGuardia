@@ -166,6 +166,22 @@ const postBridgeSync = async (config, body, maxAttempts = 4) => {
   throw lastError || new Error('Error desconocido al sincronizar');
 };
 
+const postBridgeHeartbeat = async (config) => {
+  const url = `${config.apiBaseUrl.replace(/\/$/, '')}/bridge/citaciones/heartbeat`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.bridgeSecret}`
+    },
+    body: '{}'
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.message || `HTTP ${response.status}`);
+  }
+};
+
 const syncFile = async (filePath, config, state) => {
   const stats = fs.statSync(filePath);
   const signature = fileSignature(filePath, stats);
@@ -313,6 +329,17 @@ async function main() {
   }
   log(`API: ${config.apiBaseUrl}`, config);
   log(`Estado local: http://127.0.0.1:${config.statusPort || 5023}`, config);
+
+  const pingMs = Number(config.heartbeatMs) || 2 * 60 * 1000;
+  const ping = async () => {
+    try {
+      await postBridgeHeartbeat(config);
+    } catch (err) {
+      log(`Heartbeat falló: ${err.message}`, config);
+    }
+  };
+  ping().catch(() => {});
+  setInterval(() => { ping().catch(() => {}); }, pingMs);
 }
 
 main().catch((err) => {

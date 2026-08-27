@@ -14,6 +14,7 @@ const { parseImportRows } = require('../citacionesImport');
 const {
   getCitacionesBridgeConfig,
   saveCitacionesBridgeConfig,
+  touchCitacionesHeartbeat,
   verifyCitacionesBridgeRequest,
   syncAuthorizationsFromBridge,
   relinkCitacionesWithNomina,
@@ -287,12 +288,26 @@ router.get('/api/bridge/citaciones/health', async (_req, res) => {
       service: 'citaciones-folder-bridge',
       enabled: config.enabled,
       lastSyncAt: config.lastSyncAt,
+      lastHeartbeatAt: config.lastHeartbeatAt,
       lastSyncFile: config.lastSyncFile,
       lastSyncCount: config.lastSyncCount,
       lastSyncError: config.lastSyncError
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+router.post('/api/bridge/citaciones/heartbeat', async (req, res) => {
+  try {
+    await verifyCitacionesBridgeRequest(req);
+    const config = await touchCitacionesHeartbeat();
+    res.json({
+      ok: true,
+      lastHeartbeatAt: config.lastHeartbeatAt
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message || 'Error en heartbeat de citados' });
   }
 });
 

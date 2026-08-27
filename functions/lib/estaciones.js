@@ -34,7 +34,8 @@ const toEstacionJson = (doc) => {
     secretoLocal: data.secretoLocal || '',
     activa: data.activa !== false,
     createdAt: data.createdAt || null,
-    updatedAt: data.updatedAt || null
+    updatedAt: data.updatedAt || null,
+    ultimaConexion: data.ultimaConexion || null
   };
 };
 
@@ -306,6 +307,41 @@ const buildStationConfigForDownload = async (
   };
 };
 
+const resolveEstacionForAgentUser = async (username) => {
+  const login = String(username || '').trim().toLowerCase();
+  if (!login) {
+    throw httpError(401, 'Usuario de estación no identificado');
+  }
+  const all = await listLectores();
+  const mine = all.filter((l) => String(l.usuarioSistemaId || '').trim().toLowerCase() === login);
+  const withStation = mine.find((l) => String(l.estacionId || '').trim());
+  if (!withStation) {
+    throw httpError(
+      404,
+      'Este usuario no está asociado a una estación. Asigná el lector a una estación en Admin → Equipos de acceso.'
+    );
+  }
+  return getEstacionById(withStation.estacionId);
+};
+
+const touchEstacionHeartbeat = async ({ username, discoveredPorts = null, configVersionAck = null } = {}) => {
+  const estacion = await resolveEstacionForAgentUser(username);
+  const patch = {
+    ultimaConexion: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp()
+  };
+  if (Array.isArray(discoveredPorts)) {
+    patch.discoveredPorts = discoveredPorts.slice(0, 40).map((p) => String(p || '').slice(0, 80));
+  }
+  if (configVersionAck != null && configVersionAck !== '') {
+    const n = Number(configVersionAck);
+    if (Number.isFinite(n)) patch.configVersionAck = n;
+  }
+  await db.collection(ESTACIONES).doc(estacion.id).set(patch, { merge: true });
+  const after = await getEstacionById(estacion.id);
+  return after;
+};
+
 module.exports = {
   ESTACIONES,
   generateStationSecret,
@@ -321,5 +357,7 @@ module.exports = {
   buildReaderEntryForStation,
   localServerFieldsFromEstacion,
   enrichConfigWithEstacion,
-  buildStationConfigForDownload
+  buildStationConfigForDownload,
+  resolveEstacionForAgentUser,
+  touchEstacionHeartbeat
 };

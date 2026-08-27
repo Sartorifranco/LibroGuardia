@@ -57,6 +57,18 @@ const buildMessage = (eventType, payload = {}) => {
           `Operador: ${payload.username || '—'}`
         ].join('\n')
       };
+    case 'bridge_offline':
+      return {
+        subject: `${brand}: puente local sin señal`,
+        text: [
+          'Un proceso de planta dejó de reportar heartbeat.',
+          `Qué: ${payload.name || payload.kind || '—'}`,
+          `Id: ${payload.id || '—'}`,
+          `Tipo: ${payload.kind || '—'}`,
+          `Última señal: ${payload.lastAt || '—'}`,
+          'Si la PC de planta está apagada, encenderla y verificar PM2 (ver docs/CONTINGENCIA-BRIDGES.md).'
+        ].join('\n')
+      };
     case 'admin_sensitive':
       return {
         subject: `${brand}: cambio administrativo sensible`,

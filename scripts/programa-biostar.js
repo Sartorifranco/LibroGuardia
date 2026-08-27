@@ -124,7 +124,8 @@ const createMssClient = ({ apiBaseUrl, username, password }) => {
 
   return {
     importUsers: (payload) => authorized('POST', '/admin/biostar/import-users', payload),
-    importEvents: (payload) => authorized('POST', '/admin/biostar/import-events', payload)
+    importEvents: (payload) => authorized('POST', '/admin/biostar/import-events', payload),
+    heartbeat: (payload) => authorized('POST', '/admin/biostar/heartbeat', payload || {})
   };
 };
 
@@ -227,6 +228,10 @@ async function main() {
 
   setInterval(() => { syncUsers().catch(() => {}); }, cfg.pollUsersMs);
   setInterval(() => { syncEvents().catch(() => {}); }, cfg.pollEventsMs);
+  setInterval(() => {
+    mss.heartbeat().catch((err) => log('warn', 'Heartbeat MSS falló', { error: err.message }));
+  }, 2 * 60 * 1000);
+  mss.heartbeat().catch(() => {});
 
   log('info', 'Puente en marcha', {
     pollUsersMin: Math.round(cfg.pollUsersMs / 60000),

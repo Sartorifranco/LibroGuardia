@@ -20,6 +20,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
+import { CONNECTION_STATUS_META } from '../LectoresAdmin/LectoresAdminSection';
 
 function downloadJson(filename, data) {
   const blob = new Blob([`${JSON.stringify(data, null, 2)}\n`], { type: 'application/json' });
@@ -370,6 +371,7 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
                 <th>Red</th>
                 <th>Lectores</th>
                 <th>Estado</th>
+                <th>Conexión</th>
                 <th className="estaciones-admin__th-actions">Acciones</th>
               </tr>
             </thead>
@@ -411,6 +413,16 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
                       <span className={`estaciones-admin__status${row.activa !== false ? ' is-on' : ' is-off'}`}>
                         {row.activa !== false ? 'Activa' : 'Inactiva'}
                       </span>
+                    </td>
+                    <td>
+                      {(() => {
+                        const conn = CONNECTION_STATUS_META[row.connectionStatus] || CONNECTION_STATUS_META.offline;
+                        return (
+                          <span className={conn.className} title={conn.hint}>
+                            {conn.label}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td>
                       <div className="estaciones-admin__actions">

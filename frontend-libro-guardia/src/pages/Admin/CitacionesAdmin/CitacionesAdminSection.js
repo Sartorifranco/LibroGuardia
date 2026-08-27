@@ -49,6 +49,7 @@ function CitacionesAdminSection({ pendingAction, runAction, setPendingAction, au
     bridgeSecret: '',
     watchFolderHint: 'C:\\usr',
     lastSyncAt: null,
+    lastHeartbeatAt: null,
     lastSyncFile: null,
     lastSyncCount: 0,
     lastSyncError: null
@@ -506,6 +507,7 @@ function CitacionesAdminSection({ pendingAction, runAction, setPendingAction, au
 
             <div className="admin-auth-sync-grid">
               <p><strong>Última sync:</strong> {citacionesBridgeConfig.lastSyncAt ? new Date(citacionesBridgeConfig.lastSyncAt).toLocaleString('es-AR') : '—'}</p>
+              <p><strong>Último heartbeat:</strong> {citacionesBridgeConfig.lastHeartbeatAt ? new Date(citacionesBridgeConfig.lastHeartbeatAt).toLocaleString('es-AR') : '—'}</p>
               <p><strong>Archivo:</strong> {citacionesBridgeConfig.lastSyncFile || '—'}</p>
               <p><strong>Registros:</strong> {citacionesBridgeConfig.lastSyncCount ?? 0}</p>
               {citacionesBridgeConfig.lastSyncError && (
