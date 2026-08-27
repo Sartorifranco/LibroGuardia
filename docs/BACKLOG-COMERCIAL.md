@@ -124,3 +124,87 @@ interna de los puentes.
 y confirmar que se reinicia solo en menos de X segundos, sin intervención
 manual; documentar el comando/servicio de supervisión en
 `docs/RUNBOOK-INSTALACION.md` (no en el checklist que ve el cliente).
+
+### 4.15 — Aviso al asignar un permiso técnico a un rol
+
+**Estado:** pendiente, sin empezar. Detectado en análisis técnico externo del
+repo, verificado contra el código real antes de sumarlo.
+
+**Problema:** `frontend-libro-guardia/src/utils/permissions.js` ya define
+`TECHNICAL_PERMISSIONS` (incluye `access.doors.manage`, `settings.permissions`,
+`roles.manage`), pero esa lista no se usa en ninguna pantalla. Hoy, al tildar
+un permiso en Roles (`RolesAdminPanel.js`), no hay ninguna distinción visual
+entre un permiso simple (por ejemplo, ver reportes) y uno que le abre a esa
+persona una pantalla técnica de configuración de hardware (IP de placa,
+canal, tokens de equipos).
+
+**Riesgo:** si se le da un rol con `access.doors.manage` a alguien no técnico
+del lado del cliente, esa persona termina frente a una pantalla de
+configuración de hardware sin ningún aviso de que está entrando a un terreno
+distinto del resto del sistema.
+
+**Alcance sugerido (a confirmar antes de codear):** al lado de cada permiso
+marcado en `TECHNICAL_PERMISSIONS`, un ícono o etiqueta corta ("técnico") con
+un tooltip breve explicando qué implica. Sin bloquear la asignación — solo
+avisar antes de guardar.
+
+**Criterio de cierre:** un permiso técnico se distingue visualmente en la
+pantalla de Roles; test que confirme que `TECHNICAL_PERMISSIONS` efectivamente
+se usa en el render, no solo que exista la constante.
+
+### 4.16 — Confirmaciones inconsistentes en Puertas (diálogo nativo vs. modal propio)
+
+**Estado:** pendiente, sin empezar. Detectado en análisis técnico externo del
+repo, verificado contra el código real antes de sumarlo.
+
+**Problema:** `DoorsAdminPanel.js` usa `window.confirm()` (el cuadro nativo y
+gris del navegador) para confirmar borrado o descarte de cambios. Las
+pantallas de Estaciones y Lectores usan en cambio el modal propio de la app
+(`useConfirm()` de `ConfirmContext`), con el mismo diseño que el resto del
+sistema.
+
+**Riesgo:** ninguno funcional — es una inconsistencia visual. El usuario ve
+un cuadro de confirmación distinto (feo, del navegador) justo en la pantalla
+más técnica del sistema, mientras el resto usa el modal propio.
+
+**Alcance sugerido:** reemplazar los tres usos de `window.confirm()` en
+`DoorsAdminPanel.js` por `useConfirm()`, igual que en Estaciones y Lectores.
+No cambia ningún comportamiento, solo el componente visual.
+
+**Criterio de cierre:** las tres confirmaciones (eliminar puerta, descartar
+cambios de una puerta, descartar cambios al crear otra) usan el modal propio
+de la app; tests existentes de `DoorsAdminPanel` siguen en verde.
+
+### 4.17 — Sin indicador de carga en Puertas
+
+**Estado:** pendiente, sin empezar. Detectado en análisis técnico externo del
+repo, verificado contra el código real antes de sumarlo.
+
+**Problema:** `DoorsAdminPanel.js` no muestra ningún indicador mientras trae
+la configuración inicial (puertas, conexión a planta). En una conexión lenta,
+la pantalla puede parecer trabada unos segundos. Estaciones y Lectores sí
+muestran un indicador de carga.
+
+**Alcance sugerido:** agregar el mismo patrón de loading que ya usan
+Estaciones/Lectores (mismo componente, sin inventar uno nuevo).
+
+**Criterio de cierre:** al entrar a Puertas con red lenta simulada, se ve un
+indicador de carga hasta que llegan los datos, igual que en Estaciones.
+
+### 4.18 — Buscador en el listado de puertas
+
+**Estado:** pendiente, sin empezar. Detectado en análisis técnico externo del
+repo, verificado contra el código real antes de sumarlo.
+
+**Problema:** el listado de puertas no tiene buscador ni filtro. Con las ~20
+puertas previstas para el próximo cliente, encontrar una puntual implica
+desplazarse por toda la lista. No es grave a esa escala, pero conviene
+resolverlo antes de que un cliente con más puertas lo sienta como fricción
+real.
+
+**Alcance sugerido:** campo de búsqueda simple por nombre/código de puerta,
+mismo patrón visual que el resto del panel. No requiere backend nuevo, es
+filtro sobre los datos ya cargados en el frontend.
+
+**Criterio de cierre:** escribir en el buscador filtra el listado en tiempo
+real por nombre o código; no afecta el guardado ni la edición de puertas.
