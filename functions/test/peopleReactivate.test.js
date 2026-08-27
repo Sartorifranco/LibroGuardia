@@ -105,31 +105,79 @@ describe('buildReactivationFields', () => {
       { active: false }
     );
   });
+});
 
-  it('BioStar/Suprema inactiva + fila de nómina inactiva no se reactiva', () => {
-    const existing = {
+describe('resolvePersonCached no reactiva BioStar/Suprema si la fila está inactiva', () => {
+  const { createMockFirestore } = require('./helpers/mockFirestore');
+  const firestorePath = require.resolve('../firestore');
+  const nominaImportPath = require.resolve('../nominaImport');
+  const authorizationsPath = require.resolve('../authorizations');
+  const peoplePath = require.resolve('../people');
+  let originalFirestore;
+  let originalAuthorizations;
+  let originalPeople;
+
+  beforeEach(() => {
+    originalFirestore = require.cache[firestorePath];
+    originalAuthorizations = require.cache[authorizationsPath];
+    originalPeople = require.cache[peoplePath];
+  });
+
+  afterEach(() => {
+    delete require.cache[nominaImportPath];
+    delete require.cache[peoplePath];
+    delete require.cache[authorizationsPath];
+    if (originalPeople) require.cache[peoplePath] = originalPeople;
+    if (originalAuthorizations) require.cache[authorizationsPath] = originalAuthorizations;
+    else delete require.cache[authorizationsPath];
+    if (originalFirestore) require.cache[firestorePath] = originalFirestore;
+    else delete require.cache[firestorePath];
+  });
+
+  it('BioStar/Suprema inactiva + fila de nómina inactiva no se reactiva', async () => {
+    const people = [{
+      id: 'p-bio',
       active: false,
       source: 'biostar',
-      biometricBrand: 'suprema'
+      biometricBrand: 'suprema',
+      legajoNormalized: '26',
+      name: 'Juan Perez'
+    }];
+    const mock = createMockFirestore({ people });
+    people[0].ref.set = async (payload) => {
+      Object.assign(people[0], payload);
     };
-    const parsed = { active: false };
-    const enrich = {};
-    if (parsed.active === false
-      && !existing.biometricExternalId
-      && existing.source !== 'biostar'
-      && existing.biometricBrand !== 'suprema') {
-      enrich.active = false;
-    } else if (parsed.active !== false) {
-      Object.assign(enrich, buildReactivationFields(existing, {
-        wantActive: parsed.active !== false,
-        via: 'nomina',
-        timestamp: 'TS'
-      }));
-    }
-    const result = { ...existing, ...enrich };
+
+    require.cache[firestorePath] = {
+      id: firestorePath,
+      filename: firestorePath,
+      loaded: true,
+      exports: mock
+    };
+    delete require.cache[authorizationsPath];
+    delete require.cache[peoplePath];
+    delete require.cache[nominaImportPath];
+    const { resolvePersonCached } = require('../nominaImport');
+
+    const result = await resolvePersonCached(
+      {
+        name: 'Juan Perez',
+        legajoNormalized: '26',
+        idNumberNormalized: '',
+        active: false
+      },
+      {
+        peopleByLegajo: new Map(),
+        peopleByDni: new Map()
+      }
+    );
+
     assert.equal(result.active, false);
-    assert.equal(Object.hasOwn(enrich, 'reactivatedAt'), false);
-    assert.equal(Object.hasOwn(enrich, 'reactivatedVia'), false);
+    assert.equal(Object.hasOwn(result, 'reactivatedAt'), false);
+    assert.equal(Object.hasOwn(result, 'reactivatedVia'), false);
+    assert.equal(people[0].active, false);
+    assert.equal(Object.hasOwn(people[0], 'reactivatedAt'), false);
+    assert.equal(Object.hasOwn(people[0], 'reactivatedVia'), false);
   });
 });
 

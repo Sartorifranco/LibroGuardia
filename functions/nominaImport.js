@@ -817,5 +817,6 @@ module.exports = {
   deactivateNominaEmployee,
   deactivateMissingNomina,
   buildMasterPayload,
-  normalizeImportStepOptions
+  normalizeImportStepOptions,
+  resolvePersonCached
 };
