@@ -39,6 +39,32 @@ operativo validado a un cliente nuevo hasta cerrar la causa.
 `scripts/`, servicio con arranque automático y una sincronización real
 verificada desde Bacar.
 
+### 4.13 — Firma HMAC en el puente SR-201 (`/pulse`) — replay attack en LAN de garita
+
+**Estado:** pendiente, sin empezar. Detectado en análisis técnico externo del
+repo, verificado contra el código real antes de sumarlo.
+
+**Problema:** el endpoint HTTP local del puente (`scripts/programa-apertura-internet.js`,
+que escucha en la garita y despacha comandos TCP a la placa de relé SR-201,
+puerto 6722) no valida firma criptográfica en las peticiones que recibe. Un
+dispositivo en la misma red LAN de la garita podría capturar y reenviar
+(replay) una petición válida de apertura sin pasar por la autorización real.
+
+**Riesgo:** es un riesgo de seguridad física, no solo de datos — el puente
+controla la apertura de molinetes/barreras. Para un sistema de control de
+accesos, este es el tipo de hallazgo que conviene cerrar antes de escalar a
+más clientes, no después.
+
+**Alcance sugerido (a confirmar antes de codear):** firma HMAC-SHA256 con
+timestamp en las peticiones Cloud → puente (`/pulse`), rechazando peticiones
+fuera de una ventana de tiempo corta y firmas repetidas. No implica agregar
+infraestructura nueva ni servicios pagos.
+
+**Criterio de cierre:** el puente rechaza peticiones sin firma válida o con
+timestamp fuera de ventana; test que confirme el rechazo de un replay; no
+afecta la apertura legítima en el flujo normal (medir latencia antes/después,
+el SLA de apertura no puede degradarse).
+
 ## Prioridad Media
 
 ### 4.10 — Completar `GET /estaciones/runtime-config`
@@ -72,3 +98,29 @@ mueva más.
 legajo o DNI reactiva la ficha existente (sin duplicar) en ambos caminos, con
 test de regresión que falle si se vuelve a filtrar solo activos o a dejar
 `active: false` en el reimport.
+
+### 4.14 — Watchdog en daemons de garita (`programa-apertura-internet.js`, `programa-biostar.js`)
+
+**Estado:** pendiente, sin empezar. Detectado en análisis técnico externo del
+repo, verificado contra el código real antes de sumarlo.
+
+**Problema:** los daemons que corren en la PC de garita (puente SR-201 y
+puente BioStar 2) son procesos Node sueltos, sin supervisión. Si el proceso
+se cae, no hay reinicio automático ni aviso — es el mismo patrón que causó
+4.11 (Citados sin sincronizar durante un mes sin que nadie lo notara), pero
+a nivel del daemon en sí, no solo del dato que deja de llegar.
+
+**Relación con 4.2 (heartbeat, ya en main):** el heartbeat avisa por mail
+cuando un puente deja de reportar, pero no reinicia nada — solo informa.
+Este ítem es el complemento: que el proceso se recupere solo, no solo que se
+avise que está caído.
+
+**Alcance sugerido (a confirmar antes de codear):** envolver los daemons con
+un supervisor de proceso (ejemplo: PM2 con `--restart` o el propio Servicio
+de Windows con recuperación automática configurada), sin cambiar la lógica
+interna de los puentes.
+
+**Criterio de cierre:** matar el proceso manualmente en un entorno de prueba
+y confirmar que se reinicia solo en menos de X segundos, sin intervención
+manual; documentar el comando/servicio de supervisión en
+`docs/RUNBOOK-INSTALACION.md` (no en el checklist que ve el cliente).
