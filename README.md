@@ -13,7 +13,9 @@ con control de acceso (molinete/puertas) vÃ­a SR201.
 | Molinete / puertas | `scripts/sr201-bridge.js` en PC de planta (HTTP â†’ TCP SR201) â€” **mantener** |
 | Citaciones Excel | `scripts/citaciones-folder-bridge.js` â€” **en uso, mantener** |
 
-El frontend **no** habla con Firestore directamente (`firestore.rules` lo bloquea): todo pasa por Cloud Functions.
+El frontend **no** habla con Firestore directamente: todo pasa por Cloud Functions.
+
+**Reglas de Firestore:** este repo **no** las despliega. En `legajosonline-959f6` las reglas son compartidas por todas las apps del proyecto y se administran solo desde el repo de BacarPass (`firestore.rules`); desplegarlas desde acá pisaría las de las demás apps. En instalaciones de otros clientes, Firestore se crea en modo producción (todo bloqueado), que es lo que necesita el Libro de Guardia.
 
 **GuÃ­a setup:** [FIREBASE-SETUP.md](./FIREBASE-SETUP.md)  
 **InstalaciÃ³n cliente nuevo:** [INSTALL-CLIENTE-NUEVO.md](./INSTALL-CLIENTE-NUEVO.md)  
@@ -52,7 +54,7 @@ El puente SR201 **no** se despliega desde Actions (la PC de planta no es alcanza
 ### Manual (fallback PowerShell)
 
 ```powershell
-# Frontend + Functions + Firestore rules/indexes
+# Frontend + Functions + índices de Firestore
 .\scripts\deploy-firebase.ps1
 
 # Solo frontend
