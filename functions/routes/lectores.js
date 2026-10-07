@@ -76,7 +76,7 @@ router.post('/api/admin/lectores', auth, requirePermission('lectores.manage'), a
 
 router.put('/api/admin/lectores/:id', auth, requirePermission('lectores.manage'), async (req, res) => {
   try {
-    const { before, lector } = await updateLector(req.params.id, req.body || {});
+    const { before, lector, previousEstacionId, warning } = await updateLector(req.params.id, req.body || {});
     logAdminAction({
       req,
       action: 'lector.update',
@@ -90,7 +90,8 @@ router.put('/api/admin/lectores/:id', auth, requirePermission('lectores.manage')
       lector: {
         ...lector,
         connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
-      }
+      },
+      ...(previousEstacionId ? { previousEstacionId, warning } : {})
     });
   } catch (err) {
     res.status(err.status || 500).json({
@@ -135,7 +136,10 @@ router.post(
         message: 'Credenciales regeneradas. La contraseña anterior ya no sirve. Guardá la nueva: no se volverá a mostrar.',
         lector: result.lector,
         password: result.password,
-        config: result.config
+        config: result.config,
+        ...(result.previousEstacionId
+          ? { previousEstacionId: result.previousEstacionId, warning: result.warning }
+          : {})
       });
     } catch (err) {
       res.status(err.status || 500).json({ message: err.message || 'Error al regenerar credenciales' });

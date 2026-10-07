@@ -181,3 +181,17 @@ describe('claimPendingLocalOpens (lib)', () => {
     assert.deepEqual(deleted, []);
   });
 });
+
+describe('describeEstacionRebind', () => {
+  it('avisa explícitamente si el lector estaba vinculado a otra estación', () => {
+    setupApp({});
+    const { describeEstacionRebind } = require('../lib/lectores');
+    const r = describeEstacionRebind('est-A', 'est-B', { doorId: 'puerta-p1' });
+    assert.equal(r.previousEstacionId, 'est-A');
+    assert.match(r.warning, /estaba vinculada a la estación est-A; esa estación dejará de funcionar/);
+    assert.equal(describeEstacionRebind('est-A', 'est-A'), null);
+    assert.equal(describeEstacionRebind('', 'est-B'), null);
+    // Regenerar / emparejar (nueva estación desconocida) también avisa.
+    assert.equal(describeEstacionRebind('est-A', null).previousEstacionId, 'est-A');
+  });
+});
