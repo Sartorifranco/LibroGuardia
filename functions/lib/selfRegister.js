@@ -107,6 +107,11 @@ const selfRegisterEmployee = async ({ email, password, nombre }) => {
     empresaId: empresa.id,
     nombre: name,
     email: emailNorm,
+    // Las visitas de usuarios autoregistrados siempre quedan pendientes de aprobación
+    // (ver isSelfRegisteredUser / routes/empleado.js).
+    selfRegistered: true,
+    // TODO(seguridad): verificar el email (link de confirmación) antes de habilitar la cuenta.
+    // Hoy cualquiera que conozca un dominio habilitado puede crear una cuenta.
     permissions: [],
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp()
@@ -125,8 +130,21 @@ const selfRegisterEmployee = async ({ email, password, nombre }) => {
   };
 };
 
+/**
+ * true si el usuario se creó por autoregistro.
+ * Legacy (sin flag): solo el autoregistro guarda `email` en users/{id}; un admin
+ * puede marcar selfRegistered:false para confiar en la cuenta.
+ */
+const isSelfRegisteredUser = (user = {}) => {
+  if (!user || typeof user !== 'object') return false;
+  if (user.selfRegistered === true) return true;
+  if (user.selfRegistered === false) return false;
+  return Boolean(user.email);
+};
+
 module.exports = {
   EMPLEADO_ROLE,
+  isSelfRegisteredUser,
   findEmpresaByEmailDomain,
   selfRegisterEmployee
 };

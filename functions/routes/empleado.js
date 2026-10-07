@@ -7,8 +7,15 @@
 const crypto = require('crypto');
 const express = require('express');
 const { db, FieldValue, Timestamp } = require('../firestore');
-const { auth, requirePermission, requireAnyPermission } = require('../middleware/auth');
+const {
+  auth,
+  requirePermission,
+  requireAnyPermission,
+  sendServerError,
+  sendRouteError
+} = require('../middleware/auth');
 const { normalizeDni } = require('../lib/normalize');
+const { isSelfRegisteredUser } = require('../lib/selfRegister');
 const { validateDestinationDoorIds } = require('../lib/empresasDestinos');
 const { getDoorsConfig } = require('../lib/doorsConfig');
 const { filterOwnVisitas } = require('../lib/visitasAccess');
@@ -53,7 +60,7 @@ router.get(
         .map((d) => ({ id: d.id, nombre: d.nombre, doorIds: d.doorIds || [] }));
       res.json({ destinos });
     } catch (err) {
-      res.status(500).json({ message: err.message || 'Error al listar destinos' });
+      sendServerError(res, err, 'Error al listar destinos');
     }
   }
 );
@@ -82,7 +89,7 @@ router.get('/api/empleado/visitas', auth, requirePermission('visitas.view.own'),
 
     res.json({ visitas });
   } catch (err) {
-    res.status(500).json({ message: err.message || 'Error al listar visitas' });
+    sendServerError(res, err, 'Error al listar visitas');
   }
 });
 
@@ -144,9 +151,11 @@ router.post(
       const allowedDoorIds = validateDestinationDoorIds(destino.doorIds || [], doorsConfig);
 
       const dniVisitanteNormalized = normalizeDni(dniVisitante);
-      // create gana sobre request si tiene ambos
-      const estado = canCreate ? 'autorizada' : 'pendiente_aprobacion';
-      const inviteToken = canCreate ? newInviteToken() : null;
+      // create gana sobre request si tiene ambos, salvo usuarios autoregistrados:
+      // sus visitas siempre quedan pendientes de aprobación (admin/supervisor).
+      const autoAuthorize = canCreate && !isSelfRegisteredUser(user);
+      const estado = autoAuthorize ? 'autorizada' : 'pendiente_aprobacion';
+      const inviteToken = autoAuthorize ? newInviteToken() : null;
       const { normalizePhotoDataUrl } = require('../lib/personPhoto');
       let photoDataUrl = null;
       if (req.body?.photoDataUrl) {
@@ -179,7 +188,7 @@ router.post(
       await ref.set(doc);
 
       res.status(201).json({
-        message: canCreate
+        message: autoAuthorize
           ? 'Visita registrada y autorizada'
           : 'Solicitud de visita enviada. Queda pendiente de aprobación.',
         visita: {
@@ -190,7 +199,7 @@ router.post(
         }
       });
     } catch (err) {
-      res.status(err.status || 500).json({ message: err.message || 'Error al crear visita', code: err.code });
+      sendRouteError(res, err, 'Error al crear visita');
     }
   }
 );
@@ -227,7 +236,7 @@ router.post(
         visita: serializeVisita({ id: snap.id, ...data, inviteToken })
       });
     } catch (err) {
-      res.status(500).json({ message: err.message || 'Error al preparar invitación' });
+      sendServerError(res, err, 'Error al preparar invitación');
     }
   }
 );
@@ -267,7 +276,7 @@ router.get('/api/public/visita-invite/:token', async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ message: err.message || 'Error al cargar invitación' });
+    sendServerError(res, err, 'Error al cargar invitación');
   }
 });
 
