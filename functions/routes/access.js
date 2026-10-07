@@ -55,6 +55,7 @@ const {
   sendServerError,
   sendRouteError
 } = require('../middleware/auth');
+const { resolveAuthUsername } = require('../lib/lectores');
 
 const router = express.Router();
 
@@ -576,7 +577,8 @@ router.post(
     try {
       const events = req.body?.events || req.body?.entries || [];
       const result = await ingestOfflineEntries(events, {
-        actorId: req.user?.id || req.user?.username || null
+        actorId: req.user?.id || req.user?.username || null,
+        username: resolveAuthUsername(req.user)
       });
       res.json({
         ok: true,

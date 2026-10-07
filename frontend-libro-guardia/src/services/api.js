@@ -164,7 +164,10 @@ export async function apiFetch(path, options = {}) {
     // Solo 401 cierra la sesión. 403 es falta de permiso, aunque no venga allowForbidden.
     if (status === 401 && !skipExpiry) {
       triggerSessionExpired();
-      const err = new Error(SESSION_EXPIRED_MESSAGE);
+      // Cuenta deshabilitada: mostrar el motivo real, no "sesión expirada".
+      const err = new Error(
+        data?.code === 'USER_INACTIVE' && data?.message ? data.message : SESSION_EXPIRED_MESSAGE
+      );
       err.status = status;
       err.isSessionExpired = true;
       err.data = data;

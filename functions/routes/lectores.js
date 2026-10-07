@@ -29,6 +29,35 @@ const {
 } = require('../lib/lectores');
 const { createPairingCode } = require('../lib/lectorPairing');
 
+/**
+ * Si el lector ya está en una estación, avisar antes de instalarlo en otra:
+ * el canje regenera la contraseña y la estación anterior deja de funcionar.
+ */
+const describePairingRebind = async (lectorId) => {
+  try {
+    const lector = await getLectorById(lectorId);
+    const previousEstacionId = String(lector?.estacionId || '').trim();
+    if (!previousEstacionId) return null;
+    let nombre = previousEstacionId;
+    try {
+      const { getEstacionById } = require('../lib/estaciones');
+      const estacion = await getEstacionById(previousEstacionId);
+      if (estacion?.nombre) nombre = estacion.nombre;
+    } catch (_err) {
+      // sin nombre: se usa el id
+    }
+    return {
+      previousEstacionId,
+      previousEstacionNombre: nombre,
+      warning: `Esta puerta ya está instalada en la estación "${nombre}". `
+        + 'Si usás este código en otra PC, esa estación deja de abrir esta puerta.'
+    };
+  } catch (err) {
+    console.error('[lectores] No se pudo verificar la estación previa', err?.message || err);
+    return null;
+  }
+};
+
 const router = express.Router();
 
 router.get('/api/admin/lectores', auth, requirePermission('lectores.manage'), async (_req, res) => {
@@ -172,6 +201,7 @@ router.post(
   async (req, res) => {
     try {
       const result = await createPairingCode(req.params.id);
+      const rebind = await describePairingRebind(req.params.id);
       logAdminAction({
         req,
         action: 'lector.pairing_code',
@@ -181,7 +211,8 @@ router.post(
       }).catch(() => {});
       res.json({
         message: 'Código generado. Válido 10 minutos, un solo uso.',
-        ...result
+        ...result,
+        ...(rebind || {})
       });
     } catch (err) {
       res.status(err.status || 500).json({

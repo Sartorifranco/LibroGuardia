@@ -159,7 +159,9 @@ const exchangePairingCode = async (rawCode, { apiBaseUrl } = {}) => {
     message: 'Emparejamiento OK. Guardá el JSON: la contraseña no se volverá a mostrar.',
     lector: result.lector,
     password: result.password,
-    config
+    config,
+    ...(result.previousEstacionId ? { previousEstacionId: result.previousEstacionId } : {}),
+    ...(result.warning ? { warning: result.warning } : {})
   };
 };
 

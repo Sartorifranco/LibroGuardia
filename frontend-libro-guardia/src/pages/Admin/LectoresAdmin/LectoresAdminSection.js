@@ -227,6 +227,13 @@ function PairingCodeModal({ pairing, onClose }) {
           {' '}
           y es de un solo uso.
         </p>
+        {pairing.warning ? (
+          <p className="admin-alert admin-alert--warning" role="alert" style={{ marginBottom: '0.75rem' }}>
+            <strong>Atención:</strong>
+            {' '}
+            {pairing.warning}
+          </p>
+        ) : null}
         {pairing.lectorNombre ? (
           <p className="historial-meta" style={{ marginBottom: '0.75rem' }}>
             {pairing.lectorNombre}
@@ -709,7 +716,8 @@ function LectoresAdminSection({ pendingAction, runAction }) {
           expiresAt: data.expiresAt,
           lectorNombre: data.lectorNombre || row.nombre,
           doorId: data.doorId || row.doorId,
-          readerId: data.readerId || row.readerId
+          readerId: data.readerId || row.readerId,
+          warning: data.warning || ''
         });
         showSuccess('Código de instalación generado (válido 10 minutos)');
       } catch (err) {

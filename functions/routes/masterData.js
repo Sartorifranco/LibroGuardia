@@ -4,7 +4,8 @@ const { normalizeIdNumber, normalizePlate } = require('../permissions');
 const { normalizeExpiryYmd } = require('../lib/documentExpiry');
 const {
   buildAuthorizationRecord,
-  listAuthorizationsByDate
+  listAuthorizationsByDate,
+  todayDateString
 } = require('../authorizations');
 const { checkAccessStatus } = require('../guard');
 const { logActivity } = require('../lib/activityLog');
@@ -17,7 +18,6 @@ const {
 
 const router = express.Router();
 
-const todayDateString = () => new Date().toISOString().slice(0, 10);
 
 const mergeOptionalExpiry = (target, body, key) => {
   if (!Object.prototype.hasOwnProperty.call(body || {}, key)) return;

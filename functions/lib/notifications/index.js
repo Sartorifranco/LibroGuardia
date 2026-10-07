@@ -66,7 +66,7 @@ const buildMessage = (eventType, payload = {}) => {
           `Id: ${payload.id || '—'}`,
           `Tipo: ${payload.kind || '—'}`,
           `Última señal: ${payload.lastAt || '—'}`,
-          'Si la PC de planta está apagada, encenderla y verificar PM2 (ver docs/CONTINGENCIA-BRIDGES.md).'
+          'Si la PC de planta está apagada, encenderla. Si está encendida, correr scripts/02-reiniciar-estacion.cmd como administrador (ver docs/CONTINGENCIA-BRIDGES.md).'
         ].join('\n')
       };
     case 'admin_sensitive':
