@@ -6,7 +6,12 @@ const { notifySafe } = require('../lib/notifications');
 const { queryEntriesPage } = require('../lib/entriesQuery');
 const { triggerAccessIfAuthorized } = require('../accessControl');
 const {
-  auth
+  auth,
+  requirePermission,
+  requireAnyPermission,
+  userHasAnyPermission,
+  sendServerError,
+  sendRouteError
 } = require('../middleware/auth');
 
 const router = express.Router();
@@ -48,7 +53,7 @@ const validateEntryPayload = (type, body) => {
   return null;
 };
 
-router.post('/api/entries', auth, async (req, res) => {
+router.post('/api/entries', auth, requirePermission('entries.create'), async (req, res) => {
   try {
     const {
       type, movementType, eventTime, name, idNumber, company, destination,
@@ -98,23 +103,25 @@ router.post('/api/entries', auth, async (req, res) => {
 
     let accessResult = null;
     if (type === 'personal') {
-      const userSnap = await db.collection('users').doc(req.user.id).get();
-      const userPermissions = userSnap.exists ? await getUserPermissions(userSnap.data()) : [];
-      const manualOverrideAllowed = userPermissions.includes('access.manual_override') || req.user.role === 'admin';
-      const exceptionalAllowed = userPermissions.includes('access.exceptional_entry') || req.user.role === 'admin';
+      // Permisos resueltos desde Firestore (admin: todos). Nunca confiar en flags del body.
+      const manualOverrideAllowed = await userHasAnyPermission(req, ['access.manual_override']);
+      const exceptionalAllowed = await userHasAnyPermission(req, ['access.exceptional_entry']);
       const useExceptional = Boolean(exceptionalReason?.trim()) && exceptionalAllowed;
+      // allowAccessOverride del body solo se honra con permiso de override/ingreso excepcional.
+      const overrideFromBody = allowAccessOverride === true
+        && (manualOverrideAllowed || exceptionalAllowed);
 
-    accessResult = await triggerAccessIfAuthorized({
-      movementType,
-      idNumber,
-      name,
-      entrySource: entrySource || 'manual',
-      entryId: ref.id,
-      username: req.user.id,
-      allowManualOverride: useExceptional
-        ? true
-        : (allowAccessOverride === true ? true : (entrySource === 'manual' ? manualOverrideAllowed : null))
-    });
+      accessResult = await triggerAccessIfAuthorized({
+        movementType,
+        idNumber,
+        name,
+        entrySource: entrySource || 'manual',
+        entryId: ref.id,
+        username: req.user.id,
+        allowManualOverride: useExceptional
+          ? true
+          : (overrideFromBody ? true : (entrySource === 'manual' ? manualOverrideAllowed : null))
+      });
 
       const accessPatch = {
         accessAuthorized: useExceptional ? true : accessResult.authorized,
@@ -142,11 +149,12 @@ router.post('/api/entries', auth, async (req, res) => {
       ...(accessResult ? { access: accessResult } : {})
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al crear entrada', error: err.message });
+    sendServerError(res, err, 'Error al crear entrada', 'POST /api/entries');
   }
 });
 
-router.get('/api/entries', auth, async (req, res) => {
+// Libro de guardia: solo roles operativos (no empleados autoregistrados).
+router.get('/api/entries', auth, requireAnyPermission(['entries.view', 'reports.export']), async (req, res) => {
   try {
     const {
       startDate,
@@ -196,11 +204,7 @@ router.get('/api/entries', auth, async (req, res) => {
       }
     });
   } catch (err) {
-    const status = err.status || 500;
-    res.status(status).json({
-      message: err.message || 'Error al obtener entradas',
-      error: err.message
-    });
+    sendRouteError(res, err, 'Error al obtener entradas');
   }
 });
 
