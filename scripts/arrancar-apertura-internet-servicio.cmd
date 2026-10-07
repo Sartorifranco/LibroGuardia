@@ -6,4 +6,5 @@ if errorlevel 1 (
   echo No se encontro node en el PATH.
   exit /b 1
 )
+echo [%date% %time%] Iniciando programa-apertura-internet.js >> "%~dp0apertura-internet.service.log"
 node "%~dp0programa-apertura-internet.js" >> "%~dp0apertura-internet.service.log" 2>&1

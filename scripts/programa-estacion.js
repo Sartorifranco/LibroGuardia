@@ -39,7 +39,10 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const { URL } = require('url');
+const { writeJsonFileAtomic } = require('./lib/atomicJson');
+const { installFatalHandlers } = require('./lib/fatalHandlers');
 
 // Driver SR201 (sÃ³lo usa 'net', sin Firebase) â€” reusado del mismo mÃ³dulo que
 // producciÃ³n y que scripts/test-lector-rele.js (framing/TCP ya validado).
@@ -90,16 +93,29 @@ const DEFAULTS = {
   /** Puerto HTTP local (0 = deshabilitado). Solo LAN; sin tÃºnel. */
   localServerPort: 0,
   localServerHost: '0.0.0.0',
-  localServerSecret: ''
+  localServerSecret: '',
+  /** Tope de la cola offline. Al pasarlo se descartan primero los denegados viejos. */
+  offlineQueueMax: 5000
 };
 
 /**
  * VersiÃ³n del proceso door-reader-bridge (semver de scripts).
  * Bump cuando cambie el contrato del servidor local o el framing.
  */
-const BRIDGE_VERSION = '1.6.1';
+const BRIDGE_VERSION = '1.7.0';
 /** API del servidor HTTP local (status/open/CORS). Subir si cambia el contrato. */
-const LOCAL_STATION_API_VERSION = 3;
+const LOCAL_STATION_API_VERSION = 4;
+/** El servidor rechaza lotes de más de 500; enviamos de a 200. */
+const OFFLINE_QUEUE_BATCH_SIZE = 200;
+const DEFAULT_OFFLINE_QUEUE_MAX = 5000;
+const LOGIN_RETRY_MIN_MS = 5000;
+const LOGIN_RETRY_MAX_MS = 5 * 60 * 1000;
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const LOG_MAX_FILES = 5;
+const SENSITIVE_LOG_KEYS = new Set([
+  'httpAuthToken', 'secret', 'password', 'localServerSecret', 'bridgeSecret',
+  'biostarPassword', 'mssPassword'
+]);
 
 /** OrÃ­genes del panel (HTTPS pÃºblico) autorizados a hablar con la estaciÃ³n LAN. */
 const DEFAULT_CORS_ORIGINS = [
@@ -199,6 +215,10 @@ const normalizeReaderConfig = (raw = {}, shared = {}) => {
     ).trim(),
     onlineScanTimeoutMs: Number(raw.onlineScanTimeoutMs) || DEFAULTS.onlineScanTimeoutMs,
     allowlistTimeoutMs: Number(raw.allowlistTimeoutMs) || DEFAULTS.allowlistTimeoutMs,
+    offlineQueueMax: Math.max(
+      1,
+      Number(raw.offlineQueueMax || shared.offlineQueueMax) || DEFAULT_OFFLINE_QUEUE_MAX
+    ),
     // Relé opcional en config (fallback si aún no hubo allowlist/kiosk-scan).
     localRelay: sanitizeLocalRelay(raw.localRelay || raw.relay || null),
     configPath
@@ -224,6 +244,7 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
     reconnectMaxMs: Number(env.RECONNECT_MAX_MS || fileCfg.reconnectMaxMs || DEFAULTS.reconnectMaxMs),
     idleMs: Number(env.IDLE_MS || fileCfg.idleMs || DEFAULTS.idleMs) || DEFAULTS.idleMs,
     inputMode: String(env.INPUT_MODE || fileCfg.inputMode || DEFAULTS.inputMode).trim().toLowerCase(),
+    offlineQueueMax: Number(env.OFFLINE_QUEUE_MAX || fileCfg.offlineQueueMax) || DEFAULT_OFFLINE_QUEUE_MAX,
     configPath: resolvedPath
   };
 
@@ -360,10 +381,12 @@ const loadConfig = () => {
 };
 
 const log = (cfg, level, message, extra) => {
-  const line = `${new Date().toISOString()} [${level}] ${message}${extra ? ` ${JSON.stringify(extra)}` : ''}`;
+  const safeExtra = extra === undefined ? undefined : redactForLog(extra);
+  const line = `${new Date().toISOString()} [${level}] ${message}${safeExtra ? ` ${JSON.stringify(safeExtra)}` : ''}`;
   console.log(line);
-  if (cfg.logFile) {
+  if (cfg && cfg.logFile) {
     try {
+      rotateLogFile(cfg.logFile);
       fs.appendFileSync(cfg.logFile, `${line}\n`, 'utf8');
     } catch (_err) {
       // no romper el servicio por fallo de log a disco
@@ -551,12 +574,245 @@ const readJsonFile = (filePath, fallback) => {
   }
 };
 
-const writeJsonFile = (filePath, data) => {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-  fs.renameSync(tmp, filePath);
+const writeJsonFile = (filePath, data) => writeJsonFileAtomic(filePath, data);
+
+const isCredentialFailure = (err) => {
+  if (!err) return false;
+  if (err.credentialError) return true;
+  const status = Number(err.status);
+  return status === 401 || status === 403;
+};
+
+const credentialFailureMessage = (cfg = {}) => {
+  const who = cfg.readerId || cfg.doorId || 'desconocido';
+  return `Usuario o clave del lector ${who} incorrectos: re-vincular con 01-instalar-estacion.cmd`;
+};
+
+const nextLoginBackoffMs = (currentMs) => {
+  const current = Number(currentMs);
+  const base = Number.isFinite(current) && current >= LOGIN_RETRY_MIN_MS
+    ? current
+    : LOGIN_RETRY_MIN_MS;
+  return Math.min(LOGIN_RETRY_MAX_MS, Math.floor(base * 1.8));
+};
+
+/**
+ * Reintenta el login sin frenar al resto de la estación.
+ * El primer espera es 5 s y crece hasta 5 min. No lanza: el caller sigue.
+ */
+const startBackgroundLogin = ({
+  login,
+  sleep: sleepFn = sleep,
+  log: logFn = () => {},
+  shouldStop = () => false,
+  isReady = () => false,
+  onState = () => {},
+  labelCfg = {}
+}) => {
+  let stopped = false;
+  let wake = null;
+  let backoff = LOGIN_RETRY_MIN_MS;
+  const state = { ok: false, credentialError: false, message: null, status: 0 };
+
+  const publish = (next) => {
+    Object.assign(state, next);
+    try { onState({ ...state }); } catch (_err) { /* el estado igual queda en getState */ }
+  };
+
+  const cancellableSleep = async (ms) => {
+    if (sleepFn !== sleep) {
+      await sleepFn(ms);
+      return;
+    }
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        wake = null;
+        resolve();
+      }, ms);
+      wake = () => {
+        clearTimeout(timer);
+        wake = null;
+        resolve();
+      };
+    });
+  };
+
+  const loop = (async () => {
+    while (!stopped && !shouldStop()) {
+      if (isReady()) {
+        await cancellableSleep(LOGIN_RETRY_MIN_MS);
+        continue;
+      }
+      try {
+        await login();
+        publish({ ok: true, credentialError: false, message: null, status: 200 });
+        backoff = LOGIN_RETRY_MIN_MS;
+      } catch (err) {
+        if (stopped || shouldStop()) break;
+        const credential = isCredentialFailure(err);
+        const message = credential
+          ? credentialFailureMessage(labelCfg)
+          : (err.message || 'Login falló');
+        publish({
+          ok: false,
+          credentialError: credential,
+          message,
+          status: Number(err.status) || 0
+        });
+        const wait = Math.max(backoff, Number(err.retryAfterMs) || 0);
+        if (!credential) {
+          logFn('warn', 'login falló, reintento', { error: err.message, waitMs: wait });
+        }
+        await cancellableSleep(wait);
+        backoff = nextLoginBackoffMs(backoff);
+      }
+    }
+  })();
+
+  loop.catch((err) => {
+    logFn('error', 'Loop de login detenido', { error: err.message });
+  });
+
+  return {
+    stop: () => {
+      stopped = true;
+      if (wake) wake();
+    },
+    getState: () => ({ ...state }),
+    done: loop
+  };
+};
+
+const isDeniedOfflineEvent = (event) => Boolean(event) && event.authorized === false;
+
+/**
+ * Si la cola pasa el tope, tira primero los DENEGADOS más viejos.
+ * Los autorizados no se tiran: si solo quedan esos, se conservan y se avisa.
+ */
+const applyOfflineQueueCap = (queue, max = DEFAULT_OFFLINE_QUEUE_MAX) => {
+  const limit = Math.max(1, Number(max) || DEFAULT_OFFLINE_QUEUE_MAX);
+  const events = Array.isArray(queue) ? [...queue] : [];
+  let droppedDenied = 0;
+  while (events.length > limit) {
+    const idx = events.findIndex(isDeniedOfflineEvent);
+    if (idx === -1) {
+      return { queue: events, droppedDenied, authorizedOverflow: true };
+    }
+    events.splice(idx, 1);
+    droppedDenied += 1;
+  }
+  return { queue: events, droppedDenied, authorizedOverflow: false };
+};
+
+const splitOfflineBatches = (queue, batchSize = OFFLINE_QUEUE_BATCH_SIZE) => {
+  const size = Math.max(
+    1,
+    Math.min(OFFLINE_QUEUE_BATCH_SIZE, Number(batchSize) || OFFLINE_QUEUE_BATCH_SIZE)
+  );
+  const list = Array.isArray(queue) ? queue : [];
+  const batches = [];
+  for (let i = 0; i < list.length; i += size) {
+    batches.push(list.slice(i, i + size));
+  }
+  return batches;
+};
+
+const maskIdNumber = (value) => {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 3) return digits;
+  return `${'*'.repeat(digits.length - 3)}${digits.slice(-3)}`;
+};
+
+const maskDocumentDigits = (value) => String(value ?? '').replace(
+  /\d{7,}/g,
+  (run) => maskIdNumber(run)
+);
+
+const FRAME_LOG_KEYS = new Set(['pretty', 'hex', 'preview', 'rawData', 'raw', 'text']);
+
+const redactForLog = (value, depth = 0, key = '') => {
+  if (value == null || depth > 8) return value;
+  if (typeof value === 'string') {
+    return FRAME_LOG_KEYS.has(key) ? maskDocumentDigits(value) : value;
+  }
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((item) => redactForLog(item, depth + 1, key));
+  const out = {};
+  Object.entries(value).forEach(([childKey, item]) => {
+    if (SENSITIVE_LOG_KEYS.has(childKey)) return;
+    out[childKey] = redactForLog(item, depth + 1, childKey);
+  });
+  return out;
+};
+
+const summarizeScanForLog = (text, extra = {}) => {
+  const identity = extractScanIdentity(text);
+  return {
+    ...extra,
+    dni: identity.dniNormalized ? maskIdNumber(identity.dniNormalized) : undefined,
+    format: identity.format
+  };
+};
+
+const rotateLogFile = (
+  logFile,
+  {
+    maxBytes = LOG_MAX_BYTES,
+    keep = LOG_MAX_FILES,
+    statSync = fs.statSync,
+    renameSync = fs.renameSync,
+    existsSync = fs.existsSync,
+    unlinkSync = fs.unlinkSync
+  } = {}
+) => {
+  let size = 0;
+  try {
+    size = statSync(logFile).size;
+  } catch (_err) {
+    return false;
+  }
+  if (size < maxBytes) return false;
+  const oldest = `${logFile}.${keep}`;
+  if (existsSync(oldest)) unlinkSync(oldest);
+  for (let i = keep - 1; i >= 1; i -= 1) {
+    const src = `${logFile}.${i}`;
+    if (existsSync(src)) renameSync(src, `${logFile}.${i + 1}`);
+  }
+  renameSync(logFile, `${logFile}.1`);
+  return true;
+};
+
+const secretsMatch = (provided, expected) => {
+  const left = Buffer.from(String(provided ?? ''), 'utf8');
+  const right = Buffer.from(String(expected ?? ''), 'utf8');
+  if (left.length === 0 || right.length === 0 || left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+};
+
+/** El body de /open solo puede pedir un canal. Host, puerto y URL se ignoran. */
+const openRelayRequestFromBody = (body) => {
+  if (!body || typeof body !== 'object') return null;
+  const raw = body.localRelay || body.relay || null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const requested = Number(raw.channel);
+  if (requested === 1 || requested === 2) return { channel: requested };
+  return null;
+};
+
+/**
+ * Usa el relé ya configurado para la puerta.
+ * El canal del pedido solo vale si es el mismo que figura en esa config.
+ */
+const restrictOpenRelayRequest = (configured, requestRelay) => {
+  const base = sanitizeLocalRelay(configured);
+  if (!base) return null;
+  if (!requestRelay || typeof requestRelay !== 'object') return { ...base };
+  const requested = Number(requestRelay.channel);
+  if ((requested === 1 || requested === 2) && requested === Number(base.channel)) {
+    return { ...base, channel: requested };
+  }
+  return { ...base };
 };
 
 const createOfflineLocalId = () =>
@@ -603,39 +859,86 @@ const canDecideLocalFirst = (cfg = {}, allowlist = null, nowMs = Date.now()) =>
   && Boolean(cfg.localFirstMode)
   && isAllowlistFresh(allowlist, cfg.offlineCacheMaxAgeHours, nowMs);
 
-const createApiClient = (cfg) => {
+const createApiClient = (cfg, deps = {}) => {
+  const doRequest = deps.requestJson || requestJson;
+  const sleepFn = deps.sleep || sleep;
   let token = null;
   let networkBackoffMs = cfg.reconnectMinMs;
+  let authState = { ok: false, credentialError: false, message: null, status: 0 };
+  let loginInFlight = null;
+  let loginLoopStop = null;
 
   const login = async () => {
-    const res = await requestJson('POST', `${cfg.apiBaseUrl}/auth/login`, {
-      body: { username: cfg.username, password: cfg.password }
-    });
-    if (res.status === 429) {
-      const wait = Number(res.data.retryAfterSeconds || 15) * 1000;
-      throw Object.assign(new Error(res.data.message || 'Rate limit login'), { retryAfterMs: wait });
-    }
-    if (res.status < 200 || res.status >= 300 || !res.data.token) {
-      throw new Error(res.data.message || `Login fallÃ³ (${res.status})`);
-    }
-    token = res.data.token;
-    networkBackoffMs = cfg.reconnectMinMs;
-    log(cfg, 'info', 'SesiÃ³n kiosk OK', {
-      username: cfg.username,
-      expiresIn: '8h'
-    });
-    return token;
+    if (token) return token;
+    if (loginInFlight) return loginInFlight;
+    loginInFlight = (async () => {
+      try {
+        const res = await doRequest('POST', `${cfg.apiBaseUrl}/auth/login`, {
+          body: { username: cfg.username, password: cfg.password }
+        });
+        if (res.status === 429) {
+          const wait = Number(res.data.retryAfterSeconds || 15) * 1000;
+          throw Object.assign(new Error(res.data.message || 'Rate limit login'), {
+            retryAfterMs: wait,
+            status: 429
+          });
+        }
+        if (res.status === 401 || res.status === 403) {
+          token = null;
+          const message = credentialFailureMessage(cfg);
+          authState = { ok: false, credentialError: true, message, status: res.status };
+          log(cfg, 'error', message);
+          throw Object.assign(new Error(res.data.message || message), {
+            status: res.status,
+            credentialError: true
+          });
+        }
+        if (res.status < 200 || res.status >= 300 || !res.data.token) {
+          token = null;
+          const message = res.data.message || `Login falló (${res.status})`;
+          authState = { ok: false, credentialError: false, message, status: res.status };
+          throw Object.assign(new Error(message), { status: res.status });
+        }
+        token = res.data.token;
+        networkBackoffMs = cfg.reconnectMinMs;
+        authState = { ok: true, credentialError: false, message: null, status: 200 };
+        log(cfg, 'info', 'Sesión kiosk OK', {
+          username: cfg.username,
+          expiresIn: '8h'
+        });
+        return token;
+      } catch (err) {
+        if (!authState.credentialError && !token) {
+          authState = {
+            ok: false,
+            credentialError: isCredentialFailure(err),
+            message: isCredentialFailure(err) ? credentialFailureMessage(cfg) : (err.message || 'Login falló'),
+            status: Number(err.status) || 0
+          };
+        }
+        throw err;
+      } finally {
+        loginInFlight = null;
+      }
+    })();
+    return loginInFlight;
   };
 
   const ensureToken = async () => {
-    if (!token) await login();
-    return token;
+    if (token) return token;
+    if (authState.credentialError) {
+      throw Object.assign(new Error(authState.message || credentialFailureMessage(cfg)), {
+        status: authState.status || 401,
+        credentialError: true
+      });
+    }
+    return login();
   };
 
   const authorizedRequest = async (method, pathSuffix, { body, timeoutMs } = {}) => {
     const doCall = async () => {
       const bearer = await ensureToken();
-      return requestJson(method, `${cfg.apiBaseUrl}${pathSuffix}`, {
+      return doRequest(method, `${cfg.apiBaseUrl}${pathSuffix}`, {
         headers: { Authorization: `Bearer ${bearer}` },
         body,
         timeoutMs
@@ -733,18 +1036,37 @@ const createApiClient = (cfg) => {
         networkBackoffMs = cfg.reconnectMinMs;
         return result;
       } catch (err) {
+        if (isCredentialFailure(err)) {
+          log(cfg, 'error', authState.message || credentialFailureMessage(cfg));
+          throw err;
+        }
         const wait = err.retryAfterMs || networkBackoffMs;
-        log(cfg, 'warn', `${label} fallÃ³, reintento`, {
+        log(cfg, 'warn', `${label} falló, reintento`, {
           error: err.message,
           waitMs: wait
         });
-        await sleep(wait);
+        await sleepFn(wait);
         networkBackoffMs = Math.min(
           cfg.reconnectMaxMs,
           Math.floor(networkBackoffMs * 1.8)
         );
       }
     }
+  };
+
+  const beginBackgroundLogin = ({ shouldStop } = {}) => {
+    if (loginLoopStop) return loginLoopStop;
+    const supervisor = startBackgroundLogin({
+      login,
+      sleep: sleepFn,
+      log: (level, message, extra) => log(cfg, level, message, extra),
+      shouldStop,
+      isReady: () => Boolean(token),
+      labelCfg: cfg,
+      onState: (next) => { authState = next; }
+    });
+    loginLoopStop = supervisor.stop;
+    return loginLoopStop;
   };
 
   return {
@@ -756,7 +1078,9 @@ const createApiClient = (cfg) => {
     claimPendingOpens,
     fetchDoorAllowlist,
     postOfflineEntries,
-    withNetworkRetry
+    withNetworkRetry,
+    startBackgroundLogin: beginBackgroundLogin,
+    getAuthState: () => ({ ...authState })
   };
 };
 
@@ -1085,22 +1409,12 @@ const buildLocalTestPageHtml = () => `<!DOCTYPE html>
     <p>Abrí esta página desde la red de la planta. No uses el admin HTTPS para esta prueba.</p>
     <label for="secret">Secreto de estación</label>
     <input id="secret" type="password" autocomplete="off" placeholder="el de Admin → Estaciones" />
-    <label for="relayHost">IP del módulo de relé (SR-201)</label>
-    <input id="relayHost" type="text" placeholder="ej. 192.168.0.38" />
-    <p class="hint">Es la misma IP que en Admin → Puertas → Host del relé.</p>
-    <div class="row">
-      <div>
-        <label for="relayChannel">Canal</label>
-        <select id="relayChannel">
-          <option value="1">1</option>
-          <option value="2">2</option>
-        </select>
-      </div>
-      <div>
-        <label for="pulseSeconds">Segundos</label>
-        <input id="pulseSeconds" type="number" min="1" max="99" value="3" />
-      </div>
-    </div>
+    <p class="hint">Se usa el relé ya configurado para la puerta. Esta página no puede cambiar la IP ni el puerto.</p>
+    <label for="relayChannel">Canal (solo si es el de la configuración)</label>
+    <select id="relayChannel">
+      <option value="1">1</option>
+      <option value="2">2</option>
+    </select>
     <button type="button" id="load">1) Cargar puertas</button>
     <div id="doors"></div>
     <div id="msg"></div>
@@ -1109,23 +1423,17 @@ const buildLocalTestPageHtml = () => `<!DOCTYPE html>
     const msg = document.getElementById('msg');
     const doorsEl = document.getElementById('doors');
     const secretEl = document.getElementById('secret');
-    const hostEl = document.getElementById('relayHost');
     const channelEl = document.getElementById('relayChannel');
-    const pulseEl = document.getElementById('pulseSeconds');
     try {
       const saved = JSON.parse(localStorage.getItem('lg.station.test') || '{}');
       if (saved.secret) secretEl.value = saved.secret;
-      if (saved.host) hostEl.value = saved.host;
       if (saved.channel) channelEl.value = String(saved.channel);
-      if (saved.pulse) pulseEl.value = String(saved.pulse);
     } catch (_e) {}
     const persist = () => {
       try {
         localStorage.setItem('lg.station.test', JSON.stringify({
           secret: secretEl.value,
-          host: hostEl.value,
-          channel: Number(channelEl.value) || 1,
-          pulse: Number(pulseEl.value) || 3
+          channel: Number(channelEl.value) || 1
         }));
       } catch (_e) {}
     };
@@ -1137,19 +1445,11 @@ const buildLocalTestPageHtml = () => `<!DOCTYPE html>
       Accept: 'application/json',
       Authorization: 'Bearer ' + String(secretEl.value || '').trim()
     });
-    const relayBody = () => {
-      const host = String(hostEl.value || '').trim();
-      if (!host) return {};
-      return {
-        localRelay: {
-          host,
-          port: 6722,
-          channel: Number(channelEl.value) === 2 ? 2 : 1,
-          pulseMode: 'timed',
-          pulseSeconds: Math.max(1, Math.min(99, Number(pulseEl.value) || 3))
-        }
-      };
-    };
+    const relayBody = () => ({
+      localRelay: {
+        channel: Number(channelEl.value) === 2 ? 2 : 1
+      }
+    });
     document.getElementById('load').onclick = async () => {
       persist();
       setMsg('Consultando…', true);
@@ -1171,10 +1471,6 @@ const buildLocalTestPageHtml = () => `<!DOCTYPE html>
           btn.onclick = async () => {
             persist();
             const body = relayBody();
-            if (!body.localRelay) {
-              setMsg('Completá la IP del módulo de relé antes de abrir.', false);
-              return;
-            }
             btn.disabled = true;
             setMsg('Abriendo ' + id + '…', true);
             try {
@@ -1209,7 +1505,8 @@ const buildLocalTestPageHtml = () => `<!DOCTYPE html>
  * Servidor HTTP local de la estación (solo LAN). Endpoints:
  *   GET  /                página HTML de prueba (sin Mixed Content)
  *   GET  /status
- *   POST /open/:doorId    body opcional: { localRelay: { host, port, channel, pulseSeconds } }
+ *   POST /open/:doorId    body opcional: { localRelay: { channel } }
+ *                         host, puerto y URL del body se ignoran: se usa el relé configurado
  *   OPTIONS (preflight CORS / PNA) — sin auth
  *
  * CORS habilita que https://mss-guard.web.app lea la respuesta en el navegador.
@@ -1260,7 +1557,7 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
   };
 
   const requireAuth = (req, res) => {
-    if (extractStationSecret(req) !== secret) {
+    if (!secretsMatch(extractStationSecret(req), secret)) {
       sendJson(res, 401, { ok: false, message: 'Secreto de estación inválido' }, req);
       return false;
     }
@@ -1306,10 +1603,8 @@ const createLocalStationServer = (opts) => new Promise((resolve, reject) => {
         if (!requireAuth(req, res)) return;
         const doorId = decodeURIComponent(openMatch[1]);
         const body = await readJsonBody(req);
-        const relayOverride = sanitizeLocalRelay(
-          body.localRelay || body.relay || (body.host ? body : null)
-        );
-        const result = await Promise.resolve(handlers.openDoor(doorId, relayOverride));
+        const relayRequest = openRelayRequestFromBody(body);
+        const result = await Promise.resolve(handlers.openDoor(doorId, relayRequest));
         if (result && result.notFound) {
           sendJson(res, 404, {
             ok: false,
@@ -1406,8 +1701,13 @@ const startStdinReader = (cfg, onFrame) => {
  * Runtime independiente por lector (serie, login, cachÃ©, cola, heartbeat).
  * @returns {Promise<{ stop: () => void, cfg: object, getStatus: () => object, openLocal: () => Promise<object> }>}
  */
-const startReaderRuntime = async (cfg, { shouldStop }) => {
-  const api = createApiClient(cfg);
+const startReaderRuntime = async (cfg, options = {}) => {
+  const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
+  const skipHardware = Boolean(options.skipHardware);
+  const api = createApiClient(cfg, {
+    requestJson: options.requestJson,
+    sleep: options.sleep
+  });
   const cleanups = [];
 
   let cachedAllowlist = cfg.offlineCache
@@ -1417,6 +1717,9 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     ? readJsonFile(cfg.offlineQueueFile, [])
     : [];
   if (!Array.isArray(offlineQueue)) offlineQueue = [];
+  let offlineQueueWarning = null;
+  const initialCap = applyOfflineQueueCap(offlineQueue, cfg.offlineQueueMax);
+  offlineQueue = initialCap.queue;
 
   let serialConnected = cfg.inputMode === 'stdin';
   let lastScanAt = null;
@@ -1427,6 +1730,31 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     writeJsonFile(cfg.offlineQueueFile, offlineQueue);
   };
 
+  const noteQueueCap = (result) => {
+    const max = cfg.offlineQueueMax || DEFAULT_OFFLINE_QUEUE_MAX;
+    if (result.droppedDenied > 0) {
+      log(cfg, 'warn', 'Cola offline superó el tope: se descartaron accesos denegados viejos', {
+        droppedDenied: result.droppedDenied,
+        remaining: result.queue.length,
+        max
+      });
+    }
+    if (result.authorizedOverflow) {
+      offlineQueueWarning = 'La cola supera el tope y solo quedan eventos autorizados: no se descartan.';
+      log(cfg, 'warn', offlineQueueWarning, {
+        remaining: result.queue.length,
+        max
+      });
+    } else {
+      offlineQueueWarning = null;
+    }
+  };
+
+  if (cfg.offlineCache && (initialCap.droppedDenied > 0 || initialCap.authorizedOverflow)) {
+    noteQueueCap(initialCap);
+    if (initialCap.droppedDenied > 0) persistQueue();
+  }
+
   const persistAllowlist = (data) => {
     cachedAllowlist = data;
     if (data?.localRelay?.host || data?.localRelay?.httpUrl) lastLocalRelay = data.localRelay;
@@ -1435,6 +1763,10 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
 
   const enqueueOfflineEvent = (event) => {
     offlineQueue.push(event);
+    const capped = applyOfflineQueueCap(offlineQueue, cfg.offlineQueueMax);
+    offlineQueue = capped.queue;
+    if (capped.droppedDenied > 0 || capped.authorizedOverflow) noteQueueCap(capped);
+    else offlineQueueWarning = null;
     persistQueue();
   };
 
@@ -1473,29 +1805,33 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
 
   const flushOfflineQueue = async () => {
     if (!cfg.offlineCache || offlineQueue.length === 0) return;
-    const batch = [...offlineQueue];
-    const res = await api.postOfflineEntries(batch);
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(res.data?.message || `offline-entries HTTP ${res.status}`);
-    }
-    const failed = (res.data?.results || []).filter((r) => r.status === 'error');
-    if (failed.length) {
-      const failedIds = new Set(failed.map((f) => f.offlineLocalId).filter(Boolean));
-      offlineQueue = batch.filter((e) => failedIds.has(e.offlineLocalId));
+    let accepted = 0;
+    let skipped = 0;
+    while (offlineQueue.length > 0) {
+      const batch = offlineQueue.slice(0, OFFLINE_QUEUE_BATCH_SIZE);
+      const res = await api.postOfflineEntries(batch);
+      if (res.status < 200 || res.status >= 300) {
+        throw new Error(res.data?.message || `offline-entries HTTP ${res.status}`);
+      }
+      accepted += Number(res.data?.accepted) || 0;
+      skipped += Number(res.data?.skipped) || 0;
+      const failed = (res.data?.results || []).filter((r) => r.status === 'error');
+      if (failed.length) {
+        const failedIds = new Set(failed.map((f) => f.offlineLocalId).filter(Boolean));
+        const kept = batch.filter((e) => failedIds.has(e.offlineLocalId));
+        offlineQueue = [...kept, ...offlineQueue.slice(batch.length)];
+        persistQueue();
+        log(cfg, 'warn', 'Cola offline parcialmente sincronizada', {
+          accepted,
+          skipped,
+          remaining: offlineQueue.length
+        });
+        return;
+      }
+      offlineQueue = offlineQueue.slice(batch.length);
       persistQueue();
-      log(cfg, 'warn', 'Cola offline parcialmente sincronizada', {
-        accepted: res.data?.accepted,
-        skipped: res.data?.skipped,
-        remaining: offlineQueue.length
-      });
-      return;
     }
-    offlineQueue = [];
-    persistQueue();
-    log(cfg, 'info', 'Cola offline sincronizada', {
-      accepted: res.data?.accepted,
-      skipped: res.data?.skipped
-    });
+    log(cfg, 'info', 'Cola offline sincronizada', { accepted, skipped });
   };
 
   const decideFromCache = async (rawData, {
@@ -1614,7 +1950,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     localFirstMode: cfg.localFirstMode
   });
 
-  await api.withNetworkRetry(() => api.login(), 'login');
+  cleanups.push(api.startBackgroundLogin({ shouldStop }));
 
   // No bloquear el arranque (ni el HTTP local :8787) con la allowlist.
   // Si falla, se usa la caché en disco; el timer/heartbeat reintentan.
@@ -1813,33 +2149,36 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     }
   };
 
-  sendHeartbeat();
-  const heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS);
-  cleanups.push(() => clearInterval(heartbeatTimer));
+  if (!skipHardware) {
+    sendHeartbeat();
+    const heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_MS);
+    cleanups.push(() => clearInterval(heartbeatTimer));
 
-  const openPollTimer = setInterval(pollPendingOpens, OPEN_POLL_MS);
-  cleanups.push(() => clearInterval(openPollTimer));
-  // Primer poll pronto (sin esperar 2s) para que el admin sienta ~1 clic.
-  setTimeout(() => { pollPendingOpens().catch(() => {}); }, 500);
+    const openPollTimer = setInterval(pollPendingOpens, OPEN_POLL_MS);
+    cleanups.push(() => clearInterval(openPollTimer));
+    // Primer poll pronto (sin esperar 2s) para que el admin sienta ~1 clic.
+    const firstPoll = setTimeout(() => { pollPendingOpens().catch(() => {}); }, 500);
+    cleanups.push(() => clearTimeout(firstPoll));
 
-  if (cfg.offlineCache) {
-    allowlistTimer = setInterval(() => {
-      refreshAllowlist('interval').catch((err) => {
-        log(cfg, 'warn', 'Refresh periódico de allowlist falló', { error: err.message });
-      });
-    }, cfg.offlineCacheRefreshMs);
-    cleanups.push(() => clearInterval(allowlistTimer));
+    if (cfg.offlineCache) {
+      allowlistTimer = setInterval(() => {
+        refreshAllowlist('interval').catch((err) => {
+          log(cfg, 'warn', 'Refresh periódico de allowlist falló', { error: err.message });
+        });
+      }, cfg.offlineCacheRefreshMs);
+      cleanups.push(() => clearInterval(allowlistTimer));
+    }
   }
 
   let busy = false;
-  const handleFrame = async ({ text, pretty, hex, reason }) => {
+  const handleFrame = async ({ text, reason }) => {
     if (!text) {
-      log(cfg, 'warn', 'Frame vacÃ­o tras limpiar CR/LF', { reason, pretty });
+      log(cfg, 'warn', 'Frame vacío tras limpiar CR/LF', { reason });
       return;
     }
     if (busy) {
-      log(cfg, 'warn', 'Lectura ignorada (aÃºn procesando la anterior)', {
-        preview: text.slice(0, 80)
+      log(cfg, 'warn', 'Lectura ignorada (aún procesando la anterior)', {
+        length: text.length
       });
       return;
     }
@@ -1848,14 +2187,11 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     lastScanAt = new Date().toISOString();
     const t0 = Date.now();
     try {
-      log(cfg, 'info', 'Escaneo recibido', {
+      log(cfg, 'info', 'Escaneo recibido', summarizeScanForLog(text, {
         doorId: cfg.doorId,
         readerId: cfg.readerId,
-        reason,
-        pretty: pretty.slice(0, 160),
-        hex: hex.slice(0, 120),
-        preview: text.slice(0, 80)
-      });
+        reason
+      }));
 
       let res;
       let usedOffline = false;
@@ -1946,31 +2282,38 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     }
   };
 
-  const getStatus = () => ({
-    doorId: cfg.doorId,
-    readerId: cfg.readerId,
-    serialPort: cfg.serialPort,
-    connected: Boolean(serialConnected),
-    lastScanAt,
-    offlineCacheEnabled: Boolean(cfg.offlineCache),
-    allowlistFresh: cfg.offlineCache
-      ? Boolean(cachedAllowlist)
-        && isAllowlistFresh(cachedAllowlist, cfg.offlineCacheMaxAgeHours)
-      : null,
-    allowlistGeneratedAt: cachedAllowlist?.generatedAt || null
-  });
+  const getStatus = () => {
+    const auth = typeof api.getAuthState === 'function' ? api.getAuthState() : {};
+    return {
+      doorId: cfg.doorId,
+      readerId: cfg.readerId,
+      serialPort: cfg.serialPort,
+      connected: Boolean(serialConnected),
+      lastScanAt,
+      offlineCacheEnabled: Boolean(cfg.offlineCache),
+      allowlistFresh: cfg.offlineCache
+        ? Boolean(cachedAllowlist)
+          && isAllowlistFresh(cachedAllowlist, cfg.offlineCacheMaxAgeHours)
+        : null,
+      allowlistGeneratedAt: cachedAllowlist?.generatedAt || null,
+      offlineQueueLength: cfg.offlineCache ? offlineQueue.length : 0,
+      offlineQueueWarning,
+      loginOk: Boolean(auth.ok),
+      loginError: auth.ok ? null : (auth.message || null),
+      loginCredentialError: Boolean(auth.credentialError)
+    };
+  };
 
-  const openLocal = async (overrideRelay = null) => {
-    const relay = sanitizeLocalRelay(overrideRelay)
-      || lastLocalRelay
+  const openLocal = async (requestRelay = null) => {
+    const configured = sanitizeLocalRelay(lastLocalRelay)
       || sanitizeLocalRelay(cachedAllowlist?.localRelay)
       || sanitizeLocalRelay(cfg.localRelay)
       || null;
+    const relay = restrictOpenRelayRequest(configured, requestRelay);
     if (!relay?.host && !relay?.httpUrl) {
       throw new Error(
         `Sin datos de relé local para ${cfg.doorId}. `
-        + 'Pasá host/canal o httpUrl en el POST /open, o configurá localRelay en door-reader.config.json, '
-        + 'o habilitá offlineCache para cachear la allowlist.'
+        + 'Configurá localRelay en la estación o habilitá offlineCache para cachear la allowlist.'
       );
     }
     const result = await fireLocalRelay(cfg, relay);
@@ -1980,9 +2323,7 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
       host: relay.host || null,
       httpUrl: relay.httpUrl || null,
       channel: relay.channel,
-      source: (overrideRelay?.host || overrideRelay?.httpUrl)
-        ? 'request'
-        : (lastLocalRelay ? 'cache' : 'config')
+      source: lastLocalRelay ? 'cache' : 'config'
     });
     return result;
   };
@@ -1993,19 +2334,20 @@ const startReaderRuntime = async (cfg, { shouldStop }) => {
     });
   };
 
-  if (cfg.inputMode === 'stdin') {
-    const destroy = startStdinReader(cfg, handleFrame);
-    cleanups.push(destroy);
-    return { stop, cfg, getStatus, openLocal };
+  if (!skipHardware) {
+    if (cfg.inputMode === 'stdin') {
+      const destroy = startStdinReader(cfg, handleFrame);
+      cleanups.push(destroy);
+    } else {
+      // Serie: loop en background (no bloquea otros lectores de la estación).
+      runSerialLoop(cfg, handleFrame, shouldStop, {
+        onConnected: () => { serialConnected = true; },
+        onDisconnected: () => { serialConnected = false; }
+      }).catch((err) => {
+        log(cfg, 'error', 'Loop serie terminó con error', { error: err.message });
+      });
+    }
   }
-
-  // Serie: loop en background (no bloquea otros lectores de la estaciÃ³n).
-  runSerialLoop(cfg, handleFrame, shouldStop, {
-    onConnected: () => { serialConnected = true; },
-    onDisconnected: () => { serialConnected = false; }
-  }).catch((err) => {
-    log(cfg, 'error', 'Loop serie terminÃ³ con error', { error: err.message });
-  });
 
   return { stop, cfg, getStatus, openLocal };
 };
@@ -2058,7 +2400,7 @@ const persistStationConfigCache = (configPath, stationMeta, cloudConfig) => {
     };
     if (!cloudConfig.password && prev.password) next.password = prev.password;
     if (!cloudConfig.username && prev.username) next.username = prev.username;
-    fs.writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+    writeJsonFile(configPath, next);
   } catch (_err) {
     // no romper el servicio por fallo de caché
   }
@@ -2112,23 +2454,27 @@ const main = async () => {
     }
 
     const keptFp = new Set(kept.map((r) => r.fingerprint));
-    for (const item of desired) {
-      if (keptFp.has(item.fingerprint)) continue;
+    const pending = desired.filter((item) => !keptFp.has(item.fingerprint));
+    const started = await Promise.all(pending.map(async (item) => {
       try {
         const runtime = await startReaderRuntime(item.cfg, { shouldStop });
-        kept.push({ ...runtime, fingerprint: item.fingerprint });
         log(logCfg(), 'info', 'Lector iniciado (sync Admin)', {
           doorId: item.cfg.doorId,
           readerId: item.cfg.readerId,
           serialPort: item.cfg.serialPort
         });
+        return { ...runtime, fingerprint: item.fingerprint };
       } catch (err) {
         log(logCfg(), 'error', 'No se pudo iniciar lector', {
           doorId: item.cfg.doorId,
           error: err.message
         });
+        return null;
       }
-    }
+    }));
+    started.forEach((runtime) => {
+      if (runtime) kept.push(runtime);
+    });
 
     runtimes = kept;
     rebuildLocalServerHandlers();
@@ -2271,6 +2617,9 @@ const main = async () => {
 };
 
 if (require.main === module) {
+  installFatalHandlers((level, message, extra) => {
+    log({ logFile: process.env.LOG_FILE || '' }, level, message, extra);
+  });
   main().catch((err) => {
     console.error(err.message || err);
     process.exit(1);
@@ -2295,6 +2644,25 @@ module.exports = {
   buildStationLocalHandlers,
   sanitizeLocalRelay,
   fireLocalRelay,
+  writeJsonFile,
+  applyOfflineQueueCap,
+  splitOfflineBatches,
+  maskIdNumber,
+  summarizeScanForLog,
+  redactForLog,
+  rotateLogFile,
+  secretsMatch,
+  openRelayRequestFromBody,
+  restrictOpenRelayRequest,
+  startBackgroundLogin,
+  startReaderRuntime,
+  nextLoginBackoffMs,
+  credentialFailureMessage,
+  isCredentialFailure,
+  OFFLINE_QUEUE_BATCH_SIZE,
+  DEFAULT_OFFLINE_QUEUE_MAX,
+  LOGIN_RETRY_MIN_MS,
+  LOGIN_RETRY_MAX_MS,
   parseReaderFrame,
   resolvePluginId,
   BRIDGE_VERSION,

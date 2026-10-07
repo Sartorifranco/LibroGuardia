@@ -34,6 +34,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot "watchdog-common.ps1")
 $ScriptsDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $ConfigPath = Join-Path $ScriptsDir 'configuracion-estacion.json'
 $BridgeJs = Join-Path $ScriptsDir 'programa-estacion.js'
@@ -294,4 +295,7 @@ Install-DoorReaderService `
   -BridgePath $BridgeJs `
   -AppDir $ScriptsDir `
   -ConfigFile $ConfigPath
+
+Write-Step "Registrando control por si el programa queda colgado"
+Register-EstacionHealthWatch -ScriptsDir $ScriptsDir
 

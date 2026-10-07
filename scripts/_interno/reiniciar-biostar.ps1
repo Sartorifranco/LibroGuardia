@@ -15,7 +15,10 @@ if (-not $isAdmin) {
 }
 
 $scriptsDir = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "watchdog-common.ps1")
 $taskName = "MSSGuard-BioStar-Bridge"
+$bridgeJs = Join-Path $scriptsDir "programa-biostar.js"
+$wrapper = Join-Path $scriptsDir "arrancar-biostar-servicio.cmd"
 $logFile = Join-Path $scriptsDir "biostar.service.log"
 $installScript = Join-Path $PSScriptRoot "instalar-biostar.ps1"
 
@@ -42,9 +45,14 @@ Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyC
 
 Start-Sleep -Seconds 1
 Write-Host "Arrancando tarea..." -ForegroundColor Cyan
+$logOffset = Get-WatchdogLogLength -Path $logFile
 Start-ScheduledTask -TaskName $taskName
-Start-Sleep -Seconds 3
-
+Assert-BridgeWatchdog `
+  -TaskName $taskName `
+  -WrapperPath $wrapper `
+  -BridgePath $bridgeJs `
+  -LogPath $logFile `
+  -LogOffset $logOffset | Out-Null
 $info = Get-ScheduledTaskInfo -TaskName $taskName
 Write-Host ("Estado LastTaskResult={0}" -f $info.LastTaskResult) -ForegroundColor Green
 Write-Host ("Log: {0}" -f $logFile)
