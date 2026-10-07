@@ -476,6 +476,23 @@ const resolveAuthUsername = (user) => {
 };
 
 /**
+ * Puertas vinculadas al usuario kiosk/estación (lectores con usuarioSistemaId = username).
+ * Es la única fuente para decidir qué puertas puede operar ese usuario
+ * (reclamar aperturas en cola, declarar eventos offline).
+ * @returns {Promise<Set<string>>}
+ */
+const listDoorIdsForKioskUser = async (username) => {
+  const uid = String(username || '').trim().toLowerCase();
+  if (!uid) return new Set();
+  const snap = await db.collection(LECTORES).where('usuarioSistemaId', '==', uid).limit(50).get();
+  return new Set(
+    snap.docs
+      .map((doc) => String((doc.data() || {}).doorId || '').trim())
+      .filter(Boolean)
+  );
+};
+
+/**
  * Resuelve el doc del lector vinculado al usuario kiosk (mismo criterio que heartbeat).
  */
 const resolveLectorDocForKiosk = async ({
@@ -682,6 +699,7 @@ module.exports = {
   regenerateCredentials,
   buildConfigForDownload,
   resolveAuthUsername,
+  listDoorIdsForKioskUser,
   touchHeartbeat,
   claimForceResync,
   requestForceResync,

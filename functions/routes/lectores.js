@@ -24,7 +24,8 @@ const {
   resolveAuthUsername,
   resolveApiBaseUrl,
   resolveConnectionStatus,
-  getLectorById
+  getLectorById,
+  listDoorIdsForKioskUser
 } = require('../lib/lectores');
 const { createPairingCode } = require('../lib/lectorPairing');
 
@@ -278,13 +279,17 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
     });
 
     let pendingOpens = [];
+    let pendingOpensError = null;
     const doorId = String(req.body?.doorId || lector.doorId || '').trim();
     if (doorId && req.body?.claimPendingOpens !== false) {
       try {
+        // Solo puertas vinculadas a ESTE usuario (si no, 403 en la lib y la cola queda intacta).
+        const allowedDoorIds = await listDoorIdsForKioskUser(username);
         const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
-        const claimed = await claimPendingLocalOpens(doorId);
+        const claimed = await claimPendingLocalOpens(doorId, { allowedDoorIds });
         pendingOpens = claimed.opens || [];
       } catch (claimErr) {
+        if (claimErr.status === 403) pendingOpensError = 'puerta_no_vinculada';
         console.warn('[lectores/heartbeat] claimPendingLocalOpens', claimErr.message);
       }
     }
@@ -302,7 +307,8 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours ?? null,
       puertoDetectado: lector.puertoDetectado || null,
       inputModeDetectado: lector.inputModeDetectado || null,
-      pendingOpens
+      pendingOpens,
+      ...(pendingOpensError ? { pendingOpensError } : {})
     });
   } catch (err) {
     res.status(err.status || 500).json({
@@ -326,8 +332,10 @@ router.post('/api/lectores/claim-pending-opens', auth, async (req, res) => {
     if (!doorId) {
       return res.status(400).json({ message: 'doorId requerido' });
     }
+    // La estación solo reclama aperturas de SUS puertas: si no, 403 y la cola no se toca.
+    const allowedDoorIds = await listDoorIdsForKioskUser(username);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
-    const claimed = await claimPendingLocalOpens(doorId);
+    const claimed = await claimPendingLocalOpens(doorId, { allowedDoorIds });
 
     let forceResync = false;
     let offlineCache = false;
