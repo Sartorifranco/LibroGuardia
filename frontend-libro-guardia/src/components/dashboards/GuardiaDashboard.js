@@ -76,8 +76,8 @@ function GuardiaDashboard({
       quickActions={[
         { id: 'personal', label: 'Registrar personal', icon: User },
         { id: 'flota', label: 'Unidad blindada', icon: Truck },
-        { id: 'botonera', label: 'Botonera', icon: DoorOpen },
-        { id: 'novedad', label: 'Cargar novedad', icon: ClipboardList }
+        { id: 'botonera', label: 'Puertas', icon: DoorOpen },
+        { id: 'novedad', label: 'Novedades', icon: ClipboardList }
       ]}
     />
   );

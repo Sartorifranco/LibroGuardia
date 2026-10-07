@@ -55,8 +55,8 @@ function SupervisorDashboard({
       kpis={[
         { label: 'Movimientos hoy', value: stats.totalToday, icon: Activity, accent: true },
         { label: 'Personal ingresos', value: stats.personalIngresos, icon: User },
-        { label: 'Vehículos externos', value: stats.vehiculos, icon: Car },
-        { label: 'Flota / blindados', value: stats.flota, icon: Truck },
+        { label: 'Vehículos', value: stats.vehiculos, icon: Car },
+        { label: 'Flota', value: stats.flota, icon: Truck },
         { label: 'Novedades', value: stats.novedades, icon: ClipboardList },
         { label: 'Usuarios activos', value: '—', icon: Users }
       ]}

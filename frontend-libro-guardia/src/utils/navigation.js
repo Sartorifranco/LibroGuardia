@@ -202,12 +202,12 @@ export const buildSidebarItems = (user) => {
     );
     addIf(canBotonera, {
       id: 'botonera',
-      label: 'Botonera',
+      label: 'Puertas',
       icon: DoorOpen
     });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
-      label: 'Cargar novedad',
+      label: 'Novedades',
       icon: ClipboardList
     });
   } else if (profile === 'guardia') {
@@ -252,7 +252,7 @@ export const buildSidebarItems = (user) => {
     addIf(hasPermission(user, 'entries.create'), { id: 'personal', label: 'Personal', icon: User });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'vehiculo',
-      label: 'Vehículos externos',
+      label: 'Vehículos',
       icon: Car
     });
     addIf(
@@ -261,19 +261,19 @@ export const buildSidebarItems = (user) => {
     );
     addIf(hasPermission(user, 'fleet.gps.read') || hasPermission(user, 'entries.create'), {
       id: 'flota',
-      label: 'Flota / blindados',
+      label: 'Flota',
       icon: Truck
     });
     addIf(canBotonera, {
       id: 'botonera',
-      label: 'Botonera',
+      label: 'Puertas',
       icon: DoorOpen
     });
     // Molinete / Acceso: pantalla kiosk dedicada. Hoy el lector físico ya
     // registra vía door-reader-bridge; se oculta del menú para no duplicar.
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
-      label: 'Cargar novedad',
+      label: 'Novedades',
       icon: ClipboardList
     });
   }

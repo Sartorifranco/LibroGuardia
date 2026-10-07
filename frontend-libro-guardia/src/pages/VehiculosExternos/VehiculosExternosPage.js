@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Save, Search, ShieldCheck, ShieldX } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useClockPrefill } from '../../context/ClockPrefillContext';
-import { useEntries } from '../../context/EntriesContext';
+import { useEntries, wasEntryStored } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
 import { hasPermission } from '../../utils/permissions';
@@ -102,7 +102,7 @@ function VehiculosExternosPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await addEntry('vehiculo', {
+      const outcome = await addEntry('vehiculo', {
         movementType: vehicleType,
         plate: vehiclePlate,
         brand: vehicleBrand,
@@ -112,16 +112,18 @@ function VehiculosExternosPage() {
         authorized: vehicleAuthStatus === 'authorized',
         authorizedStatus: vehicleAuthStatus || 'unknown'
       });
-      setVehiclePlate('');
-      setVehicleBrand('');
-      setVehicleCompany('');
-      setVehicleDriver('');
-      setVehicleType('ingreso');
-      setVehicleEventTime('');
-      setVehicleInsuranceExpiry('');
-      setVehicleVtvExpiry('');
-      setVehicleAuthStatus(null);
-      setVehicleLookupInfo(null);
+      if (wasEntryStored(outcome)) {
+        setVehiclePlate('');
+        setVehicleBrand('');
+        setVehicleCompany('');
+        setVehicleDriver('');
+        setVehicleType('ingreso');
+        setVehicleEventTime('');
+        setVehicleInsuranceExpiry('');
+        setVehicleVtvExpiry('');
+        setVehicleAuthStatus(null);
+        setVehicleLookupInfo(null);
+      }
     } finally {
       setLoading(false);
     }

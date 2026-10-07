@@ -193,7 +193,7 @@ function PlantConnectionInfo({ open, onClose }) {
  * Admin puertas: listado + ficha individual con Guardar por puerta.
  */
 function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onError, onGlobalAccessSaved }) {
-  const { alert } = useConfirm();
+  const { alert, confirm } = useConfirm();
   const [doors, setDoors] = useState([]);
   const [airlockGroups, setAirlockGroups] = useState([]);
   const [defaultDoorId, setDefaultDoorId] = useState(null);
@@ -258,17 +258,31 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     return () => clearInterval(timer);
   }, [draft, refreshPhysicalStatus]);
 
-  const openDoor = (door) => {
-    if (dirty && draft && !window.confirm('Hay cambios sin guardar en esta puerta. ¿Descartarlos?')) {
-      return;
+  const openDoor = async (door) => {
+    if (dirty && draft) {
+      const ok = await confirm({
+        title: 'Cambios sin guardar',
+        message: 'Hay cambios sin guardar en esta puerta. ¿Descartarlos?',
+        confirmLabel: 'Descartar',
+        tone: 'danger'
+      });
+      if (!ok) return;
     }
     setSelectedId(door._localId);
     setDraft(normalizeDoorLocal(door, door.doorCode));
     setDirty(false);
   };
 
-  const backToList = () => {
-    if (dirty && !window.confirm('Hay cambios sin guardar. ¿Volver al listado sin guardar?')) return;
+  const backToList = async () => {
+    if (dirty) {
+      const ok = await confirm({
+        title: 'Cambios sin guardar',
+        message: 'Hay cambios sin guardar. ¿Volver al listado sin guardar?',
+        confirmLabel: 'Volver sin guardar',
+        tone: 'danger'
+      });
+      if (!ok) return;
+    }
     setSelectedId(null);
     setDraft(null);
     setDirty(false);
@@ -471,7 +485,13 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
 
   const deleteCurrentDoor = async () => {
     if (!draft) return;
-    if (!window.confirm(`¿Eliminar la puerta “${draft.name}”?`)) return;
+    const ok = await confirm({
+      title: 'Eliminar puerta',
+      message: `¿Eliminar la puerta “${draft.name}”?`,
+      confirmLabel: 'Eliminar',
+      tone: 'danger'
+    });
+    if (!ok) return;
     await onPending(`delete-door-${draft._localId}`, async () => {
       const nextDoors = doors.filter((d) => d._localId !== draft._localId);
       await persistDoors(nextDoors, defaultDoorId, globalAccess);
@@ -482,9 +502,15 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     });
   };
 
-  const addNewDoor = () => {
-    if (dirty && draft && !window.confirm('Hay cambios sin guardar. ¿Descartarlos y crear otra puerta?')) {
-      return;
+  const addNewDoor = async () => {
+    if (dirty && draft) {
+      const ok = await confirm({
+        title: 'Cambios sin guardar',
+        message: 'Hay cambios sin guardar. ¿Descartarlos y crear otra puerta?',
+        confirmLabel: 'Descartar',
+        tone: 'danger'
+      });
+      if (!ok) return;
     }
     const blank = createBlankDoor(doors);
     setSelectedId(blank._localId);

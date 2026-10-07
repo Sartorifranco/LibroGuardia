@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import {
   BrowserRouter,
   Routes,
@@ -7,9 +7,10 @@ import {
   Outlet,
   useNavigate,
   useParams,
+  useLocation,
   Link
 } from 'react-router-dom';
-import { Settings, LogOut, Sun, Moon, ArrowLeft, CloudOff, CircleHelp, KeyRound } from 'lucide-react';
+import { Settings, LogOut, Sun, Moon, ArrowLeft, CloudOff, CircleHelp, KeyRound, Menu, X } from 'lucide-react';
 import AccessKiosk from './components/AccessKiosk';
 import ToastStack from './components/ToastStack';
 import AppSidebar from './components/AppSidebar';
@@ -25,7 +26,7 @@ import ForceChangePasswordModal from './components/ForceChangePasswordModal';
 import ChangePasswordForm from './components/ChangePasswordForm';
 import BotoneraPopupPage from './pages/Guardia/BotoneraPopupPage';
 import { openBotoneraWindow } from './utils/openBotoneraWindow';
-import { hasPermission, canAccessAdmin, canAccessGuardia, canAccessEmpleado } from './utils/permissions';
+import { hasPermission, canAccessAdmin, canAccessGuardia, canAccessEmpleado, displayRoleLabel } from './utils/permissions';
 import {
   guardiaPath,
   adminPath,
@@ -36,6 +37,7 @@ import {
   GUARDIA_SEGMENT_TO_TAB
 } from './utils/navigation';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { useOfflineQueue } from './context/OfflineQueueContext';
 import { ToastProvider } from './context/ToastContext';
 import { ConfirmProvider } from './context/ConfirmContext';
 import { OfflineQueueProvider } from './context/OfflineQueueContext';
@@ -49,13 +51,11 @@ import VehiculosExternosPage from './pages/VehiculosExternos/VehiculosExternosPa
 import FlotaInternaPage from './pages/FlotaInterna/FlotaInternaPage';
 import NovedadPage from './pages/Novedad/NovedadPage';
 import HistorialPage from './pages/Historial/HistorialPage';
-import ReportesPage from './pages/Reportes/ReportesPage';
-import AdminPage from './pages/Admin/AdminPage';
+import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
 import ModeSelectPage from './pages/ModeSelect/ModeSelectPage';
 import EmpleadoRegistroPage from './pages/Empleado/EmpleadoRegistroPage';
 import EmpleadoVisitasPage from './pages/Empleado/EmpleadoVisitasPage';
 import VisitaInvitacionPage from './pages/Empleado/VisitaInvitacionPage';
-import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
 import LiveAlertsToaster from './components/LiveAlertsToaster';
 import {
@@ -66,12 +66,22 @@ import {
   AuthLoadingScreen
 } from './routing/RouteGuards';
 import { AppChromeProvider, useAppChrome } from './routing/AppChromeContext';
+import ConnectivityChrome from './components/ConnectivityChrome';
 
 import './App.css';
 import './pages/Empleado/empleado.css';
 
+const AdminPage = React.lazy(() => import('./pages/Admin/AdminPage'));
+const ReportesPage = React.lazy(() => import('./pages/Reportes/ReportesPage'));
+
+function RouteFallback() {
+  return <p className="route-fallback" role="status">Cargando…</p>;
+}
+
 function AppHeader({ isAdminMode, activeAdminMeta }) {
   const chrome = useAppChrome();
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
   const {
     currentUser,
     pendingCount,
@@ -84,15 +94,110 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
     setTourOpen,
     setTourAuto,
     setChangePasswordOpen,
-    mustChangePassword
+    mustChangePassword,
+    sidebarItems
   } = chrome;
+  const { rejectedItems, isOnline } = useOfflineQueue();
+  const rejectedCount = rejectedItems.length;
+  const activeTab = location.pathname.startsWith('/guardia/')
+    ? tabFromGuardiaSegment(location.pathname.split('/')[2])
+    : '';
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  const closeMenu = () => setMenuOpen(false);
+
+  const accountControls = (extraClass) => (
+    <div className={extraClass}>
+      <button
+        type="button"
+        className="theme-toggle-btn"
+        onClick={toggleTheme}
+        aria-label={isDark ? 'Activar modo claro' : 'Activar modo oscuro'}
+        title={isDark ? 'Modo claro' : 'Modo oscuro'}
+      >
+        {isDark ? <Sun size={18} /> : <Moon size={18} />}
+        <span className="header-drawer-label">{isDark ? 'Modo claro' : 'Modo oscuro'}</span>
+      </button>
+      <button
+        type="button"
+        className="btn-onboarding-link"
+        onClick={() => {
+          setTourAuto(false);
+          setTourOpen(true);
+          closeMenu();
+        }}
+        title="Ver tutorial"
+        aria-label="Ver tutorial"
+      >
+        <CircleHelp size={16} />
+        <span className="btn-onboarding-link__label">Ver tutorial</span>
+      </button>
+      <span className="user-info-tag">
+        {currentUser.username} · {displayRoleLabel(currentUser)}
+      </span>
+      <button
+        type="button"
+        className="btn-onboarding-link"
+        onClick={() => {
+          setChangePasswordOpen(true);
+          closeMenu();
+        }}
+        title="Cambiar mi contraseña"
+        aria-label="Cambiar mi contraseña"
+        disabled={mustChangePassword}
+      >
+        <KeyRound size={16} />
+        <span className="btn-onboarding-link__label">Mi contraseña</span>
+      </button>
+      {canAccessAdmin(currentUser) && (
+        isAdminMode ? (
+          <button
+            type="button"
+            className="btn-admin-panel is-active"
+            onClick={() => {
+              exitAdminPanel();
+              closeMenu();
+            }}
+          >
+            <ArrowLeft size={16} /> Volver a operación
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-admin-panel"
+            onClick={() => {
+              enterAdminPanel();
+              closeMenu();
+            }}
+          >
+            <Settings size={16} /> Panel admin
+          </button>
+        )
+      )}
+      {canAccessGuardia(currentUser) && canAccessAdmin(currentUser) && (
+        <Link to="/" className="btn-onboarding-link" title="Cambiar de área" onClick={closeMenu}>
+          Áreas
+        </Link>
+      )}
+      <button
+        type="button"
+        onClick={handleLogout}
+        className="btn-logout-link"
+      >
+        <LogOut size={16} /> Salir
+      </button>
+    </div>
+  );
 
   return (
-    <header className="app-header app-header-modern">
+    <header className={`app-header app-header-modern${isAdminMode ? ' app-header--admin' : ''}`}>
       <div className="app-header-content">
         <div className="app-header-brand">
           <img src={brand.logoPath} alt={brand.logoAlt} className="auth-logo" />
-          <div>
+          <div className="app-header-brand__text">
             <h1>{brand.appTitle}</h1>
             <p className="header-subtitle">
               {isAdminMode
@@ -103,8 +208,16 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
         </div>
         <div className="app-header-actions">
           {!isAdminMode && (
-            <GlobalSearch onNavigate={navigateToTab} />
+            <div className="app-header-search">
+              <GlobalSearch onNavigate={navigateToTab} />
+            </div>
           )}
+          <span
+            className={`conn-pill${isOnline ? ' conn-pill--on' : ' conn-pill--off'}`}
+            role="status"
+          >
+            {isOnline ? 'En línea' : 'Sin conexión'}
+          </span>
           {pendingCount > 0 && (
             <span
               className="offline-badge"
@@ -114,75 +227,62 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
               <span className="offline-badge__count">{pendingCount}</span>
             </span>
           )}
-          <button
-            type="button"
-            className="theme-toggle-btn"
-            onClick={toggleTheme}
-            aria-label={isDark ? 'Activar modo claro' : 'Activar modo oscuro'}
-            title={isDark ? 'Modo claro' : 'Modo oscuro'}
-          >
-            {isDark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <button
-            type="button"
-            className="btn-onboarding-link"
-            onClick={() => {
-              setTourAuto(false);
-              setTourOpen(true);
-            }}
-            title="Ver tutorial"
-            aria-label="Ver tutorial"
-          >
-            <CircleHelp size={16} />
-            <span className="btn-onboarding-link__label">Ver tutorial</span>
-          </button>
-          <span className="user-info-tag">
-            {currentUser.username} · {currentUser.roleLabel || currentUser.role}
-          </span>
-          <button
-            type="button"
-            className="btn-onboarding-link"
-            onClick={() => setChangePasswordOpen(true)}
-            title="Cambiar mi contraseña"
-            aria-label="Cambiar mi contraseña"
-            disabled={mustChangePassword}
-          >
-            <KeyRound size={16} />
-            <span className="btn-onboarding-link__label">Mi contraseña</span>
-          </button>
-          {canAccessAdmin(currentUser) && (
-            isAdminMode ? (
-              <button
-                type="button"
-                className="btn-admin-panel is-active"
-                onClick={exitAdminPanel}
-              >
-                <ArrowLeft size={16} /> Volver a operación
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn-admin-panel"
-                onClick={enterAdminPanel}
-              >
-                <Settings size={16} /> Panel admin
-              </button>
-            )
-          )}
-          {canAccessGuardia(currentUser) && canAccessAdmin(currentUser) && (
-            <Link to="/" className="btn-onboarding-link" title="Cambiar de área">
-              Áreas
-            </Link>
+          {rejectedCount > 0 && (
+            <button
+              type="button"
+              className="offline-badge offline-badge--rejected"
+              title="Hay registros que no se pudieron enviar"
+              onClick={() => {
+                closeMenu();
+                document.getElementById('rejected-queue-panel')?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'start'
+                });
+              }}
+            >
+              <CloudOff size={16} aria-hidden />
+              <span className="offline-badge__count">{rejectedCount}</span>
+            </button>
           )}
           <button
             type="button"
-            onClick={handleLogout}
-            className="btn-logout-link"
+            className="header-menu-btn"
+            aria-expanded={menuOpen}
+            aria-controls="app-header-drawer"
+            onClick={() => setMenuOpen((open) => !open)}
           >
-            <LogOut size={16} /> Salir
+            {menuOpen ? <X size={20} /> : <Menu size={20} />}
+            <span>Menú</span>
           </button>
+          {accountControls('app-header-actions__bar')}
         </div>
       </div>
+      {menuOpen && (
+        <div id="app-header-drawer" className="app-header-drawer">
+          {!isAdminMode && (
+            <nav aria-label="Secciones">
+              <ul className="app-sidebar-list">
+                {sidebarItems.map(({ id, label, icon: Icon }) => (
+                  <li key={id}>
+                    <button
+                      type="button"
+                      className={`app-sidebar-link${activeTab === id ? ' active' : ''}`}
+                      onClick={() => {
+                        closeMenu();
+                        navigateToTab(id);
+                      }}
+                    >
+                      <Icon size={18} aria-hidden />
+                      <span>{label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
+          {accountControls('app-header-drawer__account')}
+        </div>
+      )}
       {isAdminMode && activeAdminMeta ? (
         <span className="sr-only">{activeAdminMeta.title}</span>
       ) : null}
@@ -321,6 +421,7 @@ function GuardiaLayout() {
           <OnboardingTour
             open={tourOpen}
             auto={tourAuto}
+            user={currentUser}
             onClose={() => {
               setTourOpen(false);
               setTourAuto(false);
@@ -336,7 +437,7 @@ function GuardiaLayout() {
                 showAdmin={false}
                 items={sidebarItems}
               />
-              <div className="app-content">
+              <div className={`app-content${activeTab === 'botonera' ? ' app-content--puertas' : ''}`}>
                 {activeTab !== 'inicio' && hasPermission(currentUser, 'fleet.gps.read') && (
                   <FleetGatePanel
                     authToken={authToken}
@@ -378,8 +479,8 @@ function GuardiaLayout() {
                     <div className="form-section botonera-inline-fallback">
                       <div className="botonera-inline-fallback__banner">
                         <p>
-                          La botonera está pensada para una <strong>ventana aparte</strong>
-                          {' '}(otro monitor). Podés seguir usándola acá si el navegador bloqueó el popup.
+                          En una computadora de escritorio, las puertas también pueden ir en una
+                          <strong> ventana aparte</strong> (otro monitor).
                         </p>
                         <button
                           type="button"
@@ -421,7 +522,11 @@ function GuardiaLayout() {
                   {activeTab === 'flota' && <FlotaInternaPage />}
                   {activeTab === 'novedad' && <NovedadPage />}
                   {(activeTab === 'historial' || activeTab === 'allRecords') && <HistorialPage />}
-                  {activeTab === 'reportes' && <ReportesPage />}
+                  {activeTab === 'reportes' && (
+                    <Suspense fallback={<RouteFallback />}>
+                      <ReportesPage />
+                    </Suspense>
+                  )}
                 </main>
               </div>
             </div>
@@ -490,6 +595,7 @@ function AdminLayout() {
           <OnboardingTour
             open={tourOpen}
             auto={tourAuto}
+            user={currentUser}
             onClose={() => {
               setTourOpen(false);
               setTourAuto(false);
@@ -513,12 +619,14 @@ function AdminLayout() {
                 </div>
                 <main className="app-main-inner">
                   {resolvedSection && (
-                    <AdminPage
-                      adminSection={adminSection}
-                      onSectionChange={(id) => navigate(adminPath(id))}
-                      onExit={exitAdminPanel}
-                      authPrefillKey={authPrefillKey}
-                    />
+                    <Suspense fallback={<RouteFallback />}>
+                      <AdminPage
+                        adminSection={adminSection}
+                        onSectionChange={(id) => navigate(adminPath(id))}
+                        onExit={exitAdminPanel}
+                        authPrefillKey={authPrefillKey}
+                      />
+                    </Suspense>
                   )}
                 </main>
               </div>
@@ -580,6 +688,7 @@ function ModeSelectRoute() {
 function AuthenticatedShell() {
   return (
     <AppChromeProvider>
+      <ConnectivityChrome />
       <Outlet />
     </AppChromeProvider>
   );

@@ -426,7 +426,7 @@ function AccessKiosk({
             onError={(message) => setDoorFeedback(message)}
           />
           <button type="button" className="btn btn-secondary" onClick={onExit}>
-            <LogOut size={18} /> Salir del molinete
+            <LogOut size={18} /> Salir
           </button>
         </div>
       </div>
@@ -510,7 +510,7 @@ function AccessKiosk({
 
               {result.relayTriggered && (
 
-                <p className="kiosk-detail">Molinete habilitado</p>
+                <p className="kiosk-detail">Puerta abierta</p>
 
               )}
 
@@ -648,7 +648,7 @@ function AccessKiosk({
 
                     >
 
-                      Confirmar y abrir molinete
+                      Confirmar y abrir la puerta
 
                     </button>
 

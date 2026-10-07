@@ -784,7 +784,7 @@ function CitacionesAdminSection({ pendingAction, runAction, setPendingAction, au
                   <option value="empleado">Empleado</option>
                 </select>
                 <input type="text" value={newCitacionName} onChange={(e) => setNewCitacionName(e.target.value)} className="input-field" placeholder="Apellido y nombre" required />
-                <input type="text" value={newCitacionDni} onChange={(e) => setNewCitacionDni(e.target.value)} className="input-field" placeholder="DNI" />
+                <input type="text" value={newCitacionDni} onChange={(e) => setNewCitacionDni(e.target.value)} className="input-field" placeholder="DNI" inputMode="numeric" autoComplete="off" pattern="[0-9]*" />
                 <input type="text" value={newCitacionLegajo} onChange={(e) => setNewCitacionLegajo(e.target.value)} className="input-field" placeholder="Legajo (si no hay DNI)" />
                 <input type="text" value={newCitacionCompany} onChange={(e) => setNewCitacionCompany(e.target.value)} className="input-field" placeholder="Empresa" />
                 <input type="text" value={newCitacionDestination} onChange={(e) => setNewCitacionDestination(e.target.value)} className="input-field" placeholder="Destino / sector" />

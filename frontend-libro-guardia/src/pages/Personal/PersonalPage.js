@@ -3,7 +3,7 @@ import { Save } from 'lucide-react';
 import EmployeeNominaCard from '../../components/EmployeeNominaCard';
 import { useAuth } from '../../context/AuthContext';
 import { useClockPrefill } from '../../context/ClockPrefillContext';
-import { useEntries } from '../../context/EntriesContext';
+import { useEntries, wasEntryStored } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
 import { hasPermission } from '../../utils/permissions';
@@ -224,7 +224,7 @@ function PersonalPage() {
 
     setLoading(true);
     try {
-      await addEntry('personal', {
+      const outcome = await addEntry('personal', {
         movementType: personalType,
         name: personalName,
         idNumber: personalId,
@@ -235,7 +235,7 @@ function PersonalPage() {
         allowAccessOverride: useExceptional || personalAllowOverride,
         exceptionalReason: useExceptional ? personalExceptionalReason.trim() : undefined
       });
-      resetPersonalForm();
+      if (wasEntryStored(outcome)) resetPersonalForm();
     } finally {
       setLoading(false);
     }
@@ -249,8 +249,8 @@ function PersonalPage() {
         <div className="section-heading">
           <h2 className="text-2xl font-semibold text-red-700">Registro de Personal</h2>
           <p className="text-sm text-gray-600">
-            Carga manual para personas que no pasan por la guardia (monitoreo por cámaras).
-            Quienes ingresan por molinete escanean su DNI en el acceso automático.
+            Cargá a mano a quien no pasa por el lector.
+            Si entra por la puerta y escanea el DNI, el ingreso queda registrado solo.
           </p>
         </div>
 
@@ -283,6 +283,9 @@ function PersonalPage() {
               className="input-field"
               placeholder="Ej: 12345678"
               required
+              inputMode="numeric"
+              autoComplete="off"
+              pattern="[0-9A-Za-z]*"
             />
           </div>
           <div>
@@ -359,7 +362,7 @@ function PersonalPage() {
               checked={personalAllowOverride}
               onChange={(e) => setPersonalAllowOverride(e.target.checked)}
             />
-            Autorizar ingreso manual y activar relevador aunque no haya citación
+            Autorizar el ingreso y abrir la puerta aunque no haya citación
           </label>
         )}
 

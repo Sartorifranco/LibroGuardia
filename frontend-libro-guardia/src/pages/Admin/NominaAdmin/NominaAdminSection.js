@@ -639,6 +639,9 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
                     className="input-field"
                     value={form.idNumber}
                     onChange={(e) => setForm((f) => ({ ...f, idNumber: e.target.value }))}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    pattern="[0-9]*"
                   />
                 </label>
                 <label className="nomina-admin__field">

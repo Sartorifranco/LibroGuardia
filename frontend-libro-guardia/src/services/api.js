@@ -6,6 +6,7 @@
 export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
 
 export const SESSION_EXPIRED_MESSAGE = 'Tu sesión expiró. Iniciá sesión de nuevo.';
+export const FORBIDDEN_MESSAGE = 'No tenés permiso para hacer esto.';
 export const NETWORK_ERROR_MESSAGE = 'No se pudo conectar con el servidor. Revisá tu conexión a internet.';
 export const GENERIC_ERROR_MESSAGE = 'Ocurrió un error inesperado. Intentá de nuevo o avisá a soporte.';
 
@@ -92,7 +93,8 @@ const triggerSessionExpired = () => {
  *   skipSessionExpiry?: boolean
  * }} options
  * - token: string usa ese Bearer; undefined → localStorage; null → sin Authorization
- * - allowForbidden: 403 no cierra sesión (permiso denegado esperado)
+ * - allowForbidden: se mantiene por compatibilidad. Un 403 nunca cierra sesión
+ *   (permiso denegado). El llamador sigue recibiendo el error para mostrarlo o ignorarlo.
  * - skipSessionExpiry: no forzar logout (p.ej. login con clave incorrecta)
  */
 export async function apiFetch(path, options = {}) {
@@ -158,14 +160,29 @@ export async function apiFetch(path, options = {}) {
 
   if (!response.ok) {
     const status = response.status;
-    const isAuthFailure = status === 401 || (status === 403 && !allowForbidden);
 
-    if (isAuthFailure && !skipExpiry) {
+    // Solo 401 cierra la sesión. 403 es falta de permiso, aunque no venga allowForbidden.
+    if (status === 401 && !skipExpiry) {
       triggerSessionExpired();
       const err = new Error(SESSION_EXPIRED_MESSAGE);
       err.status = status;
       err.isSessionExpired = true;
       err.data = data;
+      throw err;
+    }
+
+    if (status === 403) {
+      const err = new Error(FORBIDDEN_MESSAGE);
+      err.status = 403;
+      err.isForbidden = true;
+      err.data = data;
+      // allowForbidden: pantallas que ya esperan un 403 y muestran el texto del servidor.
+      if (allowForbidden) {
+        const serverMessage = buildErrorMessage(data, status);
+        if (serverMessage && serverMessage !== GENERIC_ERROR_MESSAGE) {
+          err.message = serverMessage;
+        }
+      }
       throw err;
     }
 

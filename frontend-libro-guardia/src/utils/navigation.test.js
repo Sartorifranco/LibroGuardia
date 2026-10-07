@@ -1,5 +1,6 @@
 import {
   adminPath,
+  buildSidebarItems,
   guardiaPath,
   resolveHomePath,
   sectionFromAdminSegment,
@@ -80,5 +81,28 @@ describe('navigation routes', () => {
     // Deep-link: segmento válido no depende del default
     expect(sectionFromAdminSegment('doors')).toBe('equiposAcceso');
     expect(adminPath('doors')).toBe('/admin/equipos-acceso');
+  });
+
+  test('guardia, supervisor y monitoreo usan las mismas etiquetas de menú', () => {
+    const perms = [
+      'entries.create',
+      'entries.view',
+      'fleet.gps.read',
+      'guard.doors.panel',
+      'monitoring.doors.panel',
+      'access.manual_open'
+    ];
+    const labelsOf = (user) => buildSidebarItems(user).map((item) => item.label);
+    const guardia = labelsOf({ role: 'guardia', dashboardProfile: 'guardia', permissions: perms });
+    const supervisor = labelsOf({ role: 'supervisor', dashboardProfile: 'supervisor', permissions: perms });
+    const monitoreo = labelsOf({ role: 'monitoreo', dashboardProfile: 'monitoreo', permissions: perms });
+
+    ['Puertas', 'Novedades', 'Vehículos', 'Flota'].forEach((label) => {
+      expect(guardia).toContain(label);
+      expect(supervisor).toContain(label);
+    });
+    expect(monitoreo).toEqual(expect.arrayContaining(['Puertas', 'Novedades']));
+    const joined = [...guardia, ...supervisor, ...monitoreo].join(' ');
+    expect(joined).not.toMatch(/Botonera|Cargar novedad|Vehículos externos/);
   });
 });
