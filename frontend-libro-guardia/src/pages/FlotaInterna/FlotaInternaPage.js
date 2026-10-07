@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Save } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useClockPrefill } from '../../context/ClockPrefillContext';
-import { useEntries } from '../../context/EntriesContext';
+import { useEntries, wasEntryStored } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
 
@@ -71,18 +71,20 @@ function FlotaInternaPage() {
     }
     setLoading(true);
     try {
-      await addEntry('flota', {
+      const outcome = await addEntry('flota', {
         movementType: flotaMovementType,
         mobile: flotaMobile,
         flotaDriver: flotaDriver,
         scheduledTime: flotaScheduledTime,
         actualTime: flotaActualTime,
       });
-      setFlotaMobile(movilesList.length > 0 ? movilesList[0] : '');
-      setFlotaDriver(driversList.length > 0 ? driversList[0] : '');
-      setFlotaScheduledTime('');
-      setFlotaActualTime('');
-      setFlotaMovementType('ingreso');
+      if (wasEntryStored(outcome)) {
+        setFlotaMobile(movilesList.length > 0 ? movilesList[0] : '');
+        setFlotaDriver(driversList.length > 0 ? driversList[0] : '');
+        setFlotaScheduledTime('');
+        setFlotaActualTime('');
+        setFlotaMovementType('ingreso');
+      }
     } finally {
       setLoading(false);
     }

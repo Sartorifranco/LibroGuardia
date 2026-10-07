@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -35,6 +36,7 @@ export function AppChromeProvider({ children }) {
   const [personalPrefillKey, setPersonalPrefillKey] = useState(0);
   const [tourOpen, setTourOpen] = useState(false);
   const [tourAuto, setTourAuto] = useState(false);
+  const tourPromptedRef = useRef(false);
   const [lastGuardiaPath, setLastGuardiaPath] = useState(guardiaPath('inicio'));
 
   useEffect(() => {
@@ -104,10 +106,15 @@ export function AppChromeProvider({ children }) {
       enterAdminPanel();
       return;
     }
-    // Botonera: ventana aparte para segundo monitor (si el popup está bloqueado, navega).
+    // En pantalla ancha, Puertas puede ir a una ventana aparte (segundo monitor).
+    // En celular o tablet se queda en esta pantalla: el contenido tiene que verse primero.
     if (tab === 'botonera' || tab === 'botoneraMonitoreo' || tab === 'botoneraGuardia') {
-      const win = openBotoneraWindow();
-      if (win) return;
+      const narrow = typeof window !== 'undefined'
+        && window.matchMedia('(max-width: 960px)').matches;
+      if (!narrow) {
+        const win = openBotoneraWindow();
+        if (win) return;
+      }
       navigate(guardiaPath('botonera'));
       return;
     }
@@ -140,9 +147,14 @@ export function AppChromeProvider({ children }) {
   }, [showSuccess, showError]);
 
   useEffect(() => {
-    if (!currentUser) return undefined;
-    if (isOnboardingDone()) return undefined;
+    if (!currentUser) {
+      tourPromptedRef.current = false;
+      return undefined;
+    }
+    if (isOnboardingDone(currentUser)) return undefined;
     if (location.pathname === '/' || location.pathname.startsWith('/login')) return undefined;
+    if (tourPromptedRef.current) return undefined;
+    tourPromptedRef.current = true;
     setTourAuto(true);
     setTourOpen(true);
     return undefined;

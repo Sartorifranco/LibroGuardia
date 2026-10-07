@@ -22,8 +22,10 @@ const indexHtml = `<!DOCTYPE html>
       name="description"
       content="${brand.metaDescription.replace(/"/g, '&quot;')}"
     />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/favicon-512.png" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -47,6 +49,11 @@ const manifest = {
   short_name: brand.shortName,
   name: `${brand.appTitle} ${brand.companyName}`.trim(),
   icons: [
+    {
+      src: 'logo192.png',
+      type: 'image/png',
+      sizes: '192x192'
+    },
     {
       src: 'favicon-512.png',
       type: 'image/png',

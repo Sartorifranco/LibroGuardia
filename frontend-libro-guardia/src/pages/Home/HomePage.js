@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import ExecutiveDashboard from '../../components/dashboards/ExecutiveDashboard';
 import GuardiaDashboard from '../../components/dashboards/GuardiaDashboard';
 import MonitoreoDashboard from '../../components/dashboards/MonitoreoDashboard';
+import EntriesRefreshNotice from '../../components/EntriesRefreshNotice';
 import ExpirationAlertsBanner from '../../components/ExpirationAlertsBanner';
 import GuardiaControlCenter from '../../components/GuardiaControlCenter';
 import { useAuth } from '../../context/AuthContext';
@@ -81,6 +82,7 @@ function HomePage({ onNavigate, onEnterAdmin }) {
 
   return (
     <>
+      {dashboardProfile === 'guardia' && <EntriesRefreshNotice />}
       {showExpirationAlerts && <ExpirationAlertsBanner />}
       {showControlCenter && <GuardiaControlCenter onNavigate={onNavigate} />}
       {dashboard}

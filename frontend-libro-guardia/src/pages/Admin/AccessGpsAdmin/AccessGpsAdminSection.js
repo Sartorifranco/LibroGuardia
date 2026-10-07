@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { Save, ShieldCheck, Satellite, X } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
 import FleetGpsVehicleTable, { formatFleetTime } from '../../../components/FleetGpsVehicleTable';
-import FleetGpsLiveMap from '../../../components/FleetGpsLiveMap';
 import {
   AdminBlock,
   AdminEmpty,
@@ -16,6 +15,21 @@ import { gpsProviderDisplayName, DEFAULT_GPS_PROVIDER_DISPLAY_NAME } from '../..
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
+
+function LazyFleetGpsLiveMap(props) {
+  const [MapView, setMapView] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    import('../../../components/FleetGpsLiveMap').then((mod) => {
+      if (!cancelled) setMapView(() => mod.default);
+    }).catch(() => {
+      if (!cancelled) setMapView(null);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  if (!MapView) return <p className="route-fallback" role="status">Cargando…</p>;
+  return <MapView {...props} />;
+}
 
 /**
  * Sección GPS flota del panel de administración. El id de sección permanece 'access'.
@@ -459,7 +473,7 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
         title="Mapa y geocercas"
         description="Dibujá portones o ajustá radios. Guardá los cambios del mapa con el botón del propio mapa."
       >
-        <FleetGpsLiveMap
+        <LazyFleetGpsLiveMap
           ref={fleetGpsMapRef}
           authToken={authToken}
           previewConfig={fleetGpsConfig}

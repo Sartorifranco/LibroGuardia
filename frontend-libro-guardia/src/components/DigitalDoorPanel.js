@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
 
@@ -40,6 +40,8 @@ import { apiFetch } from '../services/api';
 
 import { openManualDoor } from '../utils/openManualDoor';
 
+import { doorOpenUserMessage, lastPulseStatusWord } from '../utils/doorOpenStatus';
+
 import { openBotoneraWindow } from '../utils/openBotoneraWindow';
 
 import {
@@ -50,7 +52,9 @@ import {
 
   setDoorHotkeySlot,
 
-  clearDoorHotkeys
+  clearDoorHotkeys,
+
+  hotkeySlotFromEvent
 
 } from '../utils/doorHotkeys';
 
@@ -86,11 +90,11 @@ const AUTH_METHOD_META = {
 
 function formatAgo(iso) {
 
-  if (!iso) return 'Sin disparos';
+  if (!iso) return '';
 
   const then = new Date(iso).getTime();
 
-  if (Number.isNaN(then)) return 'Sin disparos';
+  if (Number.isNaN(then)) return '';
 
   const sec = Math.max(0, Math.round((Date.now() - then) / 1000));
 
@@ -143,6 +147,8 @@ function DigitalDoorPanel({
   const [loading, setLoading] = useState(true);
 
   const [openingId, setOpeningId] = useState(null);
+
+  const openingLockRef = useRef(false);
 
   const [loadError, setLoadError] = useState('');
 
@@ -266,65 +272,69 @@ function DigitalDoorPanel({
 
 
 
-  const openDoor = useCallback(async (door, { fromHotkey = false } = {}) => {
+  const openDoor = useCallback(async (door) => {
 
-    if (!door?.id || openingId) return;
+    if (!door?.id || openingLockRef.current) return;
+
+    openingLockRef.current = true;
 
     const label = door.name || door.id;
 
-    const ok = await confirm({
-
-      title: fromHotkey ? 'Apertura por atajo' : 'Apertura manual',
-
-      message: `¿Abrir ${label} manualmente? Se enviará el pulso al relé.`,
-
-      confirmLabel: 'Abrir puerta',
-
-      tone: 'default'
-
-    });
-
-    if (!ok) return;
-
-    setOpeningId(door.id);
-
     try {
 
-      const forceLocal = connectivityMode === 'local-fallback' || connectivityMode === 'offline';
+      const ok = await confirm({
 
-      const data = await openManualDoor({
+        title: 'Abrir puerta',
 
-        authToken,
+        message: `¿Abrir la puerta ${label}?`,
 
-        doorId: door.id,
+        confirmLabel: 'Abrir puerta',
 
-        door,
-
-        forceLocal
+        tone: 'danger'
 
       });
 
-      const viaNote = data.via === 'local'
+      if (!ok) return;
 
-        ? ' (red local)'
+      setOpeningId(door.id);
 
-        : ` (vía nube${data.relay?.via ? `/${data.relay.via}` : ''})`;
+      try {
 
-      showSuccess((data.message || `${label} abierta`) + viaNote);
+        const forceLocal = connectivityMode === 'local-fallback' || connectivityMode === 'offline';
 
-      reload();
+        const data = await openManualDoor({
 
-    } catch (err) {
+          authToken,
 
-      showError(err.message || 'Error al abrir la puerta');
+          doorId: door.id,
+
+          door,
+
+          forceLocal
+
+        });
+
+        showSuccess(doorOpenUserMessage(data, label));
+
+        reload();
+
+      } catch (err) {
+
+        showError(err.message || 'Error al abrir la puerta');
+
+      } finally {
+
+        setOpeningId(null);
+
+      }
 
     } finally {
 
-      setOpeningId(null);
+      openingLockRef.current = false;
 
     }
 
-  }, [authToken, confirm, openingId, reload, showError, showSuccess, connectivityMode]);
+  }, [authToken, confirm, reload, showError, showSuccess, connectivityMode]);
 
 
 
@@ -334,43 +344,67 @@ function DigitalDoorPanel({
 
     const onKey = async (event) => {
 
-      const result = await handleDoorHotkeyOpen({
+      const slot = hotkeySlotFromEvent(event);
 
-        event,
+      if (!slot) return;
 
-        authToken,
+      if (openingLockRef.current) {
 
-        doors,
+        event.preventDefault?.();
 
-        hotkeys,
-
-        confirmFn: confirm,
-
-        skipConfirm: false
-
-      });
-
-      if (!result.handled) return;
-
-      if (result.cancelled) return;
-
-      if (result.error) {
-
-        showError(result.error);
+        event.stopPropagation?.();
 
         return;
 
       }
 
-      if (result.result) {
+      openingLockRef.current = true;
 
-        const door = doors.find((d) => d.id === result.doorId);
+      try {
 
-        const viaNote = result.result.via === 'local' ? ' (red local)' : '';
+        const result = await handleDoorHotkeyOpen({
 
-        showSuccess((result.result.message || `${door?.name || result.doorId} abierta`) + viaNote);
+          event,
 
-        reload();
+          authToken,
+
+          doors,
+
+          hotkeys,
+
+          confirmFn: confirm,
+
+          skipConfirm: false
+
+        });
+
+        if (!result.handled) return;
+
+        if (result.cancelled) return;
+
+        if (result.error) {
+
+          showError(result.error);
+
+          return;
+
+        }
+
+        if (result.result) {
+
+          const door = doors.find((d) => d.id === result.doorId);
+
+          const doorLabel = door?.name || 'Puerta';
+
+          showSuccess(doorOpenUserMessage(result.result, doorLabel));
+
+          reload();
+
+        }
+
+      } finally {
+
+        openingLockRef.current = false;
 
       }
 
@@ -422,7 +456,7 @@ function DigitalDoorPanel({
 
       <section className="control-doors">
 
-        <p className="control-doors__hint">Sin permiso de apertura manual (`access.manual_open`).</p>
+        <p className="control-doors__hint">No podés abrir puertas.</p>
 
       </section>
 
@@ -452,7 +486,7 @@ function DigitalDoorPanel({
 
         <div>
 
-          <h3>{botoneraMode ? 'Botonera' : title}</h3>
+          <h3>{botoneraMode ? 'Puertas' : title}</h3>
 
           <p>
 
@@ -462,9 +496,9 @@ function DigitalDoorPanel({
 
                 ? 'Tocá Abrir · pensada para el puesto / segundo monitor.'
 
-                : 'Tocá Abrir para disparar el relé.')
+                : 'Tocá Abrir para abrir la puerta.')
 
-              : 'Apertura manual y último disparo del relé. No hay sensor de posición física de hoja; el estado mostrado es el del último pulso.'}
+              : 'Abrí la puerta desde acá. El estado es del último pedido, no de un sensor en la hoja.'}
 
           </p>
 
@@ -490,13 +524,13 @@ function DigitalDoorPanel({
 
               type="button"
 
-              className="control-doors__help-btn"
+              className="control-doors__help-btn control-doors__popout"
 
               onClick={() => openBotoneraWindow()}
 
               title="Abrir en otra ventana"
 
-              aria-label="Abrir botonera en otra ventana"
+              aria-label="Abrir en otra ventana"
 
             >
 
@@ -538,9 +572,7 @@ function DigitalDoorPanel({
 
           <span>
 
-            Sin internet — operando por red local (estaciones en planta).
-
-            La apertura va directo a la mini PC / Raspberry, no a la nube.
+            Sin internet. La puerta se abre por la red de la planta.
 
           </span>
 
@@ -606,9 +638,11 @@ function DigitalDoorPanel({
 
           const slot = slotByDoorId[door.id];
 
-          const pulseOk = pulse?.ok === true;
+          const pulseWord = lastPulseStatusWord(pulse);
 
-          const pulseErr = pulse?.ok === false;
+          const pulseOk = pulseWord === 'Abierta';
+
+          const pulseErr = pulseWord === 'Error';
 
           if (botoneraMode) {
 
@@ -658,9 +692,9 @@ function DigitalDoorPanel({
 
                     {pulse
 
-                      ? `Último disparo ${formatAgo(pulse.at)} · ${pulseOk ? 'OK' : 'Error'}`
+                      ? `Último pedido ${formatAgo(pulse.at)} · ${pulseWord}`
 
-                      : 'Sin disparos aún'}
+                      : 'Todavía no se pidió abrir'}
 
                   </span>
 
@@ -724,17 +758,9 @@ function DigitalDoorPanel({
 
                   ) : null}
 
-                  {door.relayMode === 'local' && door.localStation ? (
+                  {door.relayMode === 'local' ? (
 
-                    <span className="control-door-card__local">
-
-                      LAN ·
-
-                      {' '}
-
-                      {door.localStation.direccionRedLocal}
-
-                    </span>
+                    <span className="control-door-card__local">En planta</span>
 
                   ) : null}
 
@@ -778,17 +804,17 @@ function DigitalDoorPanel({
 
                     <>
 
-                      Último disparo {formatAgo(pulse.at)}
+                      Último pedido {formatAgo(pulse.at)}
 
                       {' · '}
 
-                      {pulseOk ? 'OK' : 'Con error'}
+                      {pulseWord}
 
                     </>
 
                   )
 
-                  : 'Sin disparos registrados'}
+                  : 'Todavía no se pidió abrir'}
 
               </p>
 
@@ -796,13 +822,13 @@ function DigitalDoorPanel({
 
                 <p className="control-door-card__local-status">
 
-                  Lector local:
+                  Lector:
 
                   {' '}
 
                   {door.localReader.connected ? 'conectado' : 'desconectado'}
 
-                  {door.localReader.allowlistFresh === false ? ' · caché vencida' : ''}
+                  {door.localReader.allowlistFresh === false ? ' · hay que actualizar la lista' : ''}
 
                 </p>
 

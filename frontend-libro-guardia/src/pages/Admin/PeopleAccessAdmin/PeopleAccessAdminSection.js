@@ -527,6 +527,9 @@ function PeopleAccessAdminSection() {
                           value={draft.idNumber}
                           onChange={(e) => updateDraftField('idNumber', e.target.value)}
                           disabled={saving}
+                          inputMode="numeric"
+                          autoComplete="off"
+                          pattern="[0-9]*"
                         />
                       </label>
                     </div>

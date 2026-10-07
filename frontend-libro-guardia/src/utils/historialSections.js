@@ -90,8 +90,8 @@ export const resolveDoorEntryOrigin = (entry = {}) => {
 
 export const DOOR_ENTRY_ORIGIN_FILTERS = [
   { id: 'all', label: 'Todos los orígenes' },
-  { id: 'biostar', label: 'BioStar' },
-  { id: 'kiosk', label: 'Kiosko / lector' },
+  { id: 'biostar', label: 'Lector biométrico' },
+  { id: 'kiosk', label: 'Lector' },
   { id: 'manual', label: 'Manual con puerta' }
 ];
 

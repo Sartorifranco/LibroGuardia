@@ -23,21 +23,21 @@ export const PERMISSION_LABELS = {
   'notifications.config': 'Configurar alertas por email',
   'access.control': `Configurar GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`,
   'access.doors.manage': 'Configurar puertas, estancos y dispositivos',
-  'access.manual_open': 'Abrir puerta manualmente (SR201)',
-  'access.manual_override': 'Autorizar ingreso manual sin citación',
-  'access.exceptional_entry': 'Registrar ingreso excepcional con motivo',
-  'access.kiosk': 'Estación de acceso (lector / bridge)',
+  'access.manual_open': 'Abrir la puerta a mano',
+  'access.manual_override': 'Autorizar un ingreso y abrir la puerta sin citación',
+  'access.exceptional_entry': 'Registrar un ingreso excepcional, con motivo',
+  'access.kiosk': 'Usar la estación de acceso (lector)',
   'master.citaciones.preregister': 'Pre-registrar visitas esperadas',
   'fleet.gps.read': 'Ver alertas GPS de flota cercana',
   'master.nomina.read': 'Ver nómina de personal',
   'master.nomina.write': 'Importar y gestionar nómina',
   'attendance.alerts.read': 'Ver alertas de asistencia (faltantes de ingreso)',
   'monitoring.vehicles.manage': 'Autorizar vehículos con chofer y acompañantes (Monitoreo)',
-  'monitoring.doors.panel': 'Botonera digital portón Monitoreo',
-  'guard.doors.panel': 'Botonera digital portón Guardia',
+  'monitoring.doors.panel': 'Abrir puertas desde Monitoreo',
+  'guard.doors.panel': 'Abrir puertas desde Guardia',
   'empresas.manage': 'Gestionar empresas del predio',
   'destinos.manage': 'Gestionar destinos y secuencias de puertas',
-  'lectores.manage': 'Gestionar lectores físicos (mini PC / GADNIC)',
+  'lectores.manage': 'Gestionar los lectores de las puertas',
   'visitas.create': 'Cargar visitas autorizadas (sin aprobación)',
   'visitas.request': 'Solicitar visita (queda pendiente de aprobación)',
   'visitas.approve': 'Aprobar o rechazar solicitudes de visita',
@@ -137,7 +137,7 @@ export const DASHBOARD_PROFILE_LABELS = {
 export const ROLE_TEMPLATES = {
   guardia: {
     label: 'Guardia',
-    description: 'Portón de unidades blindadas y acceso principal a planta. Personal, molinete y novedades.',
+    description: 'Portón de unidades blindadas y acceso principal a planta. Personal, lector y novedades.',
     dashboardProfile: 'guardia',
     permissions: [
       'entries.create',
@@ -339,5 +339,27 @@ export const isAccessStationAccount = (user) => {
 
 export const humanRoleLabel = (systemRoles, roleId) => {
   if (roleId === ACCESS_STATION_ROLE_ID) return ACCESS_STATION_ROLE_LABEL;
-  return systemRoles?.find((r) => r.id === roleId)?.label || roleId || '—';
+  return systemRoles?.find((r) => r.id === roleId)?.label || ROLE_DISPLAY_LABELS[roleId] || '—';
 };
+
+/** Etiqueta de rol para encabezado y pantallas de operación. Nunca el id crudo. */
+export const ROLE_DISPLAY_LABELS = {
+  guardia: 'Guardia',
+  supervisor: 'Supervisor',
+  admin: 'Administración',
+  monitoreo: 'Monitoreo',
+  'empleado-visitas': 'Empleado',
+  empleado: 'Empleado',
+  kiosk_puerta: 'Estación de acceso',
+  operational: 'Operación'
+};
+
+export function displayRoleLabel(user) {
+  if (!user) return '';
+  const raw = String(user.role || '').trim();
+  const given = String(user.roleLabel || '').trim();
+  if (given && given.toLowerCase() !== raw.toLowerCase()) return given;
+  return ROLE_DISPLAY_LABELS[raw]
+    || ROLE_DISPLAY_LABELS[user.dashboardProfile]
+    || 'Operación';
+}

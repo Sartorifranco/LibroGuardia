@@ -19,6 +19,7 @@ export function OfflineQueueProvider({ children }) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
   const [pendingCount, setPendingCount] = useState(0);
+  const [rejectedItems, setRejectedItems] = useState([]);
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
@@ -26,8 +27,12 @@ export function OfflineQueueProvider({ children }) {
 
   const refreshCount = useCallback(async () => {
     try {
-      const n = await offlineQueue.count();
+      const [n, rejected] = await Promise.all([
+        offlineQueue.count(),
+        offlineQueue.listRejected()
+      ]);
       setPendingCount(n);
+      setRejectedItems(rejected);
     } catch (err) {
       console.error('Error al contar cola offline:', err);
     }
@@ -86,9 +91,19 @@ export function OfflineQueueProvider({ children }) {
             setIsOnline(false);
             break;
           }
-          // Ítem inválido o error definitivo: eliminar para no bloquear la cola
+          if (err.isSessionExpired) {
+            break;
+          }
+          // El servidor rechazó este registro. Se conserva, marcado, y se sigue con el resto.
           console.error('Error al reenviar ítem offline:', err);
-          await offlineQueue.remove(item.id);
+          try {
+            await offlineQueue.markRejected(
+              item.id,
+              err.message || 'El servidor no aceptó el registro'
+            );
+          } catch (markErr) {
+            console.error('No se pudo marcar el ítem como rechazado:', markErr);
+          }
         }
       }
 
@@ -109,6 +124,17 @@ export function OfflineQueueProvider({ children }) {
       flushingRef.current = false;
     }
   }, [authToken, currentUser, probeConnectivity, refreshCount, showError, showSuccess]);
+
+  const retryRejected = useCallback(async (id) => {
+    await offlineQueue.markPending(id);
+    await refreshCount();
+    await flushQueue();
+  }, [flushQueue, refreshCount]);
+
+  const discardRejected = useCallback(async (id) => {
+    await offlineQueue.remove(id);
+    await refreshCount();
+  }, [refreshCount]);
 
   useEffect(() => {
     refreshCount();
@@ -141,12 +167,25 @@ export function OfflineQueueProvider({ children }) {
 
   const value = useMemo(() => ({
     pendingCount,
+    rejectedItems,
     isOnline,
     enqueueEntry,
     flushQueue,
     refreshCount,
-    probeConnectivity
-  }), [pendingCount, isOnline, enqueueEntry, flushQueue, refreshCount, probeConnectivity]);
+    probeConnectivity,
+    retryRejected,
+    discardRejected
+  }), [
+    pendingCount,
+    rejectedItems,
+    isOnline,
+    enqueueEntry,
+    flushQueue,
+    refreshCount,
+    probeConnectivity,
+    retryRejected,
+    discardRejected
+  ]);
 
   return (
     <OfflineQueueContext.Provider value={value}>

@@ -130,7 +130,7 @@ function GuardiaControlCenter({
           {canNovedad && (
             <button type="button" className="btn btn-primary guard-ops__novedad-btn" onClick={() => setNovedadOpen(true)}>
               <ClipboardList size={18} />
-              Cargar novedad
+              Novedades
             </button>
           )}
           {typeof onNavigate === 'function' && canDoors && (

@@ -162,7 +162,7 @@ function GuardAuthorizationsPanel({
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             <input className="input-field" placeholder="Apellido y nombre" value={preName} onChange={(e) => setPreName(e.target.value)} required />
-            <input className="input-field" placeholder="DNI" value={preDni} onChange={(e) => setPreDni(e.target.value)} />
+            <input className="input-field" placeholder="DNI" value={preDni} onChange={(e) => setPreDni(e.target.value)} inputMode="numeric" autoComplete="off" pattern="[0-9]*" />
             <input className="input-field" placeholder="Legajo (opcional)" value={preLegajo} onChange={(e) => setPreLegajo(e.target.value)} />
             <input className="input-field" placeholder="Empresa" value={preCompany} onChange={(e) => setPreCompany(e.target.value)} />
             <input className="input-field" placeholder="Destino" value={preDestination} onChange={(e) => setPreDestination(e.target.value)} />

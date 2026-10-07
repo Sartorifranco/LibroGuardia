@@ -5,6 +5,8 @@ import {
 import { useLiveClock } from '../../hooks/useLiveClock';
 import { getDashboardStats, formatEntryRow } from '../../utils/dashboardStats';
 import { getProfileKicker } from '../../utils/navigation';
+import { displayRoleLabel } from '../../utils/permissions';
+import EntriesRefreshNotice from '../EntriesRefreshNotice';
 
 function DashboardShell({
   currentUser,
@@ -33,7 +35,7 @@ function DashboardShell({
           <p className="home-hero-kicker">{kicker || getProfileKicker(currentUser)}</p>
           <h2 className="home-hero-title">{title || `Hola, ${currentUser.username}`}</h2>
           <p className="home-hero-subtitle">
-            {subtitle || `${currentUser.roleLabel || currentUser.role} · ${dateDisplay}`}
+            {subtitle || `${displayRoleLabel(currentUser)} · ${dateDisplay}`}
           </p>
         </div>
         <div className="home-hero-clock">
@@ -81,6 +83,7 @@ function DashboardShell({
             Ver historial <ArrowRight size={14} />
           </button>
         </div>
+        <EntriesRefreshNotice />
         {recentRows.length === 0 ? (
           <p className="home-empty">Sin registros recientes en su puesto.</p>
         ) : (

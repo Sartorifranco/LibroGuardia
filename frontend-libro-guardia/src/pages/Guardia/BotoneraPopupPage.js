@@ -26,7 +26,7 @@ function BotoneraPopupPage() {
           <img src={brand.logoPath} alt="" className="botonera-popup-logo" />
           <div>
             <strong>{brand.appTitle}</strong>
-            <span>Botonera · ventana dedicada</span>
+            <span>Puertas</span>
           </div>
         </div>
         <div className="botonera-popup-actions">
@@ -73,7 +73,7 @@ function BotoneraPopupPage() {
             standaloneWindow
           />
         ) : (
-          <p className="control-doors__hint">Sin permiso de apertura manual.</p>
+          <p className="control-doors__hint">No podés abrir puertas.</p>
         )}
       </main>
     </div>

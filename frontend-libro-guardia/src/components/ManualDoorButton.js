@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { DoorOpen } from 'lucide-react';
 import { hasPermission } from '../utils/permissions';
 import { useConfirm } from '../context/ConfirmContext';
 import { apiFetch } from '../services/api';
 import { openManualDoor } from '../utils/openManualDoor';
+import { doorOpenUserMessage } from '../utils/doorOpenStatus';
 
 function ManualDoorButton({
   authToken,
@@ -14,6 +15,7 @@ function ManualDoorButton({
   onError
 }) {
   const { confirm } = useConfirm();
+  const openingLockRef = useRef(false);
   const [opening, setOpening] = useState(false);
   const [doors, setDoors] = useState([]);
   const [selectedDoorId, setSelectedDoorId] = useState(doorId || '');
@@ -52,32 +54,37 @@ function ManualDoorButton({
   }
 
   const handleOpen = async () => {
-    if (opening) return;
+    if (openingLockRef.current || opening) return;
     if (!selectedDoorId) {
       onError?.(loadError || 'No hay puerta seleccionada. Guardá puertas en Admin → Puertas y acceso.');
       return;
     }
+    openingLockRef.current = true;
     const targetDoor = doors.find((door) => door.id === selectedDoorId);
     const label = targetDoor?.name || selectedDoorId;
-    const ok = await confirm({
-      title: 'Apertura manual',
-      message: `¿Abrir ${label} manualmente? Se enviará el pulso al relé de esa puerta.`,
-      confirmLabel: 'Abrir puerta',
-      tone: 'default'
-    });
-    if (!ok) return;
-
-    setOpening(true);
     try {
-      const data = await openManualDoor({
-        authToken,
-        doorId: selectedDoorId
+      const ok = await confirm({
+        title: 'Abrir puerta',
+        message: `¿Abrir la puerta ${label}?`,
+        confirmLabel: 'Abrir puerta',
+        tone: 'danger'
       });
-      onSuccess?.(data.message || `${label} abierta`);
-    } catch (err) {
-      onError?.(err.message || 'Error al abrir la puerta');
+      if (!ok) return;
+
+      setOpening(true);
+      try {
+        const data = await openManualDoor({
+          authToken,
+          doorId: selectedDoorId
+        });
+        onSuccess?.(doorOpenUserMessage(data, label));
+      } catch (err) {
+        onError?.(err.message || 'Error al abrir la puerta');
+      } finally {
+        setOpening(false);
+      }
     } finally {
-      setOpening(false);
+      openingLockRef.current = false;
     }
   };
 
@@ -92,8 +99,7 @@ function ManualDoorButton({
         >
           {doors.map((door) => (
             <option key={door.id} value={door.id}>
-              {door.name || door.id}
-              {door.device?.channel ? ` · CH${door.device.channel}` : ''}
+              {door.name || 'Puerta'}
             </option>
           ))}
         </select>
@@ -103,7 +109,7 @@ function ManualDoorButton({
         className={`btn-manual-door btn-manual-door--${variant}`}
         onClick={handleOpen}
         disabled={opening || !selectedDoorId}
-        title={selectedDoorId ? 'Abrir puerta manualmente (SR201)' : (loadError || 'Sin puertas configuradas')}
+        title={selectedDoorId ? 'Abrir la puerta' : (loadError || 'Sin puertas configuradas')}
       >
         <DoorOpen size={variant === 'kiosk' ? 22 : 18} />
         <span>{opening ? 'Abriendo...' : 'Abrir puerta'}</span>

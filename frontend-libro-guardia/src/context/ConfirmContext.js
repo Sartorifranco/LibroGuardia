@@ -67,6 +67,7 @@ export function ConfirmProvider({ children }) {
         confirmLabel={state.options.confirmLabel}
         cancelLabel={state.options.cancelLabel}
         tone={state.options.tone}
+        autoFocusConfirm={state.options.autoFocusConfirm === true}
         onConfirm={() => close(true)}
         onCancel={() => close(false)}
       />

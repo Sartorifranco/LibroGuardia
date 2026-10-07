@@ -17,6 +17,7 @@ import { useLiveClock } from '../../hooks/useLiveClock';
 import { getExecutiveChartData, buildDonutGradient } from '../../utils/dashboardCharts';
 import { hasPermission, canAccessAdmin } from '../../utils/permissions';
 import { getProfileKicker, canAccessHistorial } from '../../utils/navigation';
+import EntriesRefreshNotice from '../EntriesRefreshNotice';
 
 function ExecutiveDashboard({ currentUser, entries, onNavigate, isAdmin = false }) {
   const { timeDisplay, dateDisplay } = useLiveClock();
@@ -44,7 +45,7 @@ function ExecutiveDashboard({ currentUser, entries, onNavigate, isAdmin = false 
     },
     {
       id: 'flota',
-      label: 'Flota / tránsito',
+      label: 'Flota',
       hint: `${chart.stats.flota} hoy · GPS`,
       icon: Truck,
       show: hasPermission(currentUser, 'fleet.gps.read') || hasPermission(currentUser, 'entries.create')
@@ -65,7 +66,7 @@ function ExecutiveDashboard({ currentUser, entries, onNavigate, isAdmin = false 
     },
     {
       id: 'novedad',
-      label: 'Cargar novedad',
+      label: 'Novedades',
       hint: `${chart.stats.novedades} hoy`,
       icon: ClipboardList,
       show: hasPermission(currentUser, 'entries.create')
@@ -108,6 +109,8 @@ function ExecutiveDashboard({ currentUser, entries, onNavigate, isAdmin = false 
           <span className="exec-dashboard__clock">{timeDisplay}</span>
         </div>
       </header>
+
+      <EntriesRefreshNotice />
 
       <section className="exec-charts">
         <article className="exec-chart-card exec-chart-card--donut">

@@ -97,13 +97,23 @@ export function AuthProvider({ children }) {
         setCurrentUser(data.user);
       } catch (err) {
         console.error('Error al obtener usuario actual:', err);
-        // 401/403: apiFetch ya disparó session-expired / logout.
+        // 401: apiFetch ya disparó session-expired / logout.
+        // 403 no cierra sesión (falta de permiso, no token vencido).
         // Errores de red o HTML cacheado de Hosting NO deben tumbar una sesión
         // recién creada por /auth/login (el user ya viene en esa respuesta).
         if (!cancelled && !err.isSessionExpired) {
-          const keepSession = Boolean(err.isNetworkError || err.isHtmlInsteadOfApi || err.status === 0 || err.status === 502);
+          const keepSession = Boolean(
+            err.isForbidden
+            || err.status === 403
+            || err.isNetworkError
+            || err.isHtmlInsteadOfApi
+            || err.status === 0
+            || err.status === 502
+          );
           if (!keepSession) {
             logout();
+          } else if (err.isForbidden || err.status === 403) {
+            showError(err.message || 'No tenés permiso para hacer esto.');
           }
         }
       } finally {
@@ -115,7 +125,7 @@ export function AuthProvider({ children }) {
     return () => {
       cancelled = true;
     };
-  }, [authToken, logout]);
+  }, [authToken, logout, showError]);
 
   useEffect(() => {
     if (!authToken || !currentUser) {
