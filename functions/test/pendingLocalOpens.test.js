@@ -146,7 +146,7 @@ describe('claimPendingLocalOpens', () => {
     ]);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
 
-    const res = await claimPendingLocalOpens('puerta-p1');
+    const res = await claimPendingLocalOpens('puerta-p1', { allowedDoorIds: ['puerta-p1'] });
 
     assert.equal(res.opens.length, 1);
     assert.equal(res.opens[0].id, 'vivo');
@@ -159,7 +159,7 @@ describe('claimPendingLocalOpens', () => {
     ]);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
 
-    const res = await claimPendingLocalOpens('puerta-p1');
+    const res = await claimPendingLocalOpens('puerta-p1', { allowedDoorIds: ['puerta-p1'] });
 
     assert.equal(res.opens.length, 0);
     assert.deepEqual(deleted, ['viejo'], 'el vencido tiene que salir de la cola');
@@ -172,7 +172,7 @@ describe('claimPendingLocalOpens', () => {
     ]);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
 
-    const res = await claimPendingLocalOpens('puerta-p1');
+    const res = await claimPendingLocalOpens('puerta-p1', { allowedDoorIds: ['puerta-p1'] });
 
     assert.deepEqual(res.opens.map((o) => o.id), ['p1']);
     assert.deepEqual(deleted, ['p1']);
@@ -187,7 +187,7 @@ describe('claimPendingLocalOpens', () => {
     ]);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
 
-    await claimPendingLocalOpens('puerta-p1');
+    await claimPendingLocalOpens('puerta-p1', { allowedDoorIds: ['puerta-p1'] });
 
     const campos = queries[0].filters.map((f) => f.field).sort();
     assert.deepEqual(campos, ['doorId', 'status']);
@@ -197,7 +197,7 @@ describe('claimPendingLocalOpens', () => {
     const { deleted } = installFirestoreMock([]);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
 
-    const res = await claimPendingLocalOpens('puerta-p1');
+    const res = await claimPendingLocalOpens('puerta-p1', { allowedDoorIds: ['puerta-p1'] });
 
     assert.equal(res.opens.length, 0);
     assert.equal(deleted.length, 0);
@@ -210,7 +210,7 @@ describe('claimPendingLocalOpens', () => {
     const { deleted } = installFirestoreMock(rows);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
 
-    const res = await claimPendingLocalOpens('puerta-p1', { limit: 3 });
+    const res = await claimPendingLocalOpens('puerta-p1', { limit: 3, allowedDoorIds: ['puerta-p1'] });
 
     assert.equal(res.opens.length, 3);
     assert.equal(deleted.length, 3, 'los que no entraron quedan para el próximo poll');

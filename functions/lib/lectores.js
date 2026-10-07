@@ -400,9 +400,11 @@ const updateLector = async (id, body) => {
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
   const afterSnap = await ref.get();
+  const rebind = describeEstacionRebind(before.estacionId, fields.estacionId, { doorId: fields.doorId });
   return {
     before: toLectorJson(beforeSnap),
-    lector: toLectorJson(afterSnap)
+    lector: toLectorJson(afterSnap),
+    ...(rebind || {})
   };
 };
 
@@ -416,8 +418,29 @@ const deleteLector = async (id) => {
   return before;
 };
 
+/**
+ * Aviso explícito cuando un lector (y su puerta) pasa a otra estación o se le
+ * regeneran credenciales estando vinculado a una: la estación anterior deja de
+ * funcionar (incidente real en banco de pruebas).
+ * @param {string} previousEstacionId
+ * @param {string|null} nextEstacionId  null = se desconoce la nueva (p. ej. pairing/regenerar)
+ * @returns {null | { previousEstacionId: string, warning: string }}
+ */
+const describeEstacionRebind = (previousEstacionId, nextEstacionId = null, { doorId = '' } = {}) => {
+  const prev = String(previousEstacionId || '').trim();
+  if (!prev) return null;
+  const next = nextEstacionId == null ? null : String(nextEstacionId || '').trim();
+  if (next !== null && next === prev) return null;
+  const warning = `Esta puerta${doorId ? ` (${doorId})` : ''} estaba vinculada a la estación ${prev}; `
+    + 'esa estación dejará de funcionar para este lector'
+    + (next === null ? ' hasta que cargue el nuevo JSON.' : '.');
+  console.warn('[lectores] Re-vinculación de estación', { previousEstacionId: prev, nextEstacionId: next, doorId });
+  return { previousEstacionId: prev, warning };
+};
+
 const regenerateCredentials = async (id, { apiBaseUrl } = {}) => {
   const lector = await getLectorById(id);
+  const rebind = describeEstacionRebind(lector.estacionId, null, { doorId: lector.doorId });
   if (!lector.usuarioSistemaId) {
     throw httpError(400, 'El lector no tiene usuario de sistema asociado');
   }
@@ -442,7 +465,7 @@ const regenerateCredentials = async (id, { apiBaseUrl } = {}) => {
   const { enrichConfigWithEstacion } = require('./estaciones');
   config = await enrichConfigWithEstacion(config, lector.estacionId);
 
-  return { lector, password, config };
+  return { lector, password, config, ...(rebind || {}) };
 };
 
 const buildConfigForDownload = async (id, { apiBaseUrl, includePassword = false, password = '' } = {}) => {
@@ -473,6 +496,23 @@ const resolveAuthUsername = (user) => {
   const fromUsername = String(user?.username || '').trim();
   if (fromUsername) return fromUsername.toLowerCase();
   return String(user?.id || '').trim().toLowerCase();
+};
+
+/**
+ * Puertas vinculadas al usuario kiosk/estación (lectores con usuarioSistemaId = username).
+ * Es la única fuente para decidir qué puertas puede operar ese usuario
+ * (reclamar aperturas en cola, declarar eventos offline).
+ * @returns {Promise<Set<string>>}
+ */
+const listDoorIdsForKioskUser = async (username) => {
+  const uid = String(username || '').trim().toLowerCase();
+  if (!uid) return new Set();
+  const snap = await db.collection(LECTORES).where('usuarioSistemaId', '==', uid).limit(50).get();
+  return new Set(
+    snap.docs
+      .map((doc) => String((doc.data() || {}).doorId || '').trim())
+      .filter(Boolean)
+  );
 };
 
 /**
@@ -682,6 +722,8 @@ module.exports = {
   regenerateCredentials,
   buildConfigForDownload,
   resolveAuthUsername,
+  listDoorIdsForKioskUser,
+  describeEstacionRebind,
   touchHeartbeat,
   claimForceResync,
   requestForceResync,

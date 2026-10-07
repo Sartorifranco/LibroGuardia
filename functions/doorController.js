@@ -10,15 +10,36 @@ const {
 } = require('./lib/doorsConfig');
 
 const AIRLOCK_COLLECTION = 'doorAirlockStates';
+/** Último pulso por puerta (antes un Map en memoria: cada instancia tenía el suyo). */
+const COOLDOWN_COLLECTION = 'doorOpenCooldowns';
 const MANUAL_COOLDOWN_MS = 3000;
-const manualCooldownByDoor = new Map();
-const airlockTimers = new Map();
+/** Tras abrir la interior, el estanco vuelve a idle a los 3 s (igual que el timer anterior). */
+const INNER_OPEN_RESET_MS = 3000;
+const AIRLOCK_DEFAULTS = {
+  outerCloseDelayMs: 5000,
+  interDoorDelayMs: 2000,
+  transitTimeoutMs: 120000
+};
 
 const logDoorEvent = async (event) => {
   await db.collection('accessEvents').add({
     ...event,
     createdAt: FieldValue.serverTimestamp()
   });
+};
+
+/**
+ * Estado de confirmación del pulso para auditoría.
+ * - 'confirmado': la placa (o el puente) respondió.
+ * - 'sin_confirmacion': el comando se envió pero la placa no contestó: NO es un éxito pleno.
+ * - 'en_cola': modo local, lo dispara la estación.
+ * - 'desconocido': driver/puente viejo que no informa confirmación.
+ */
+const describeRelayConfirmation = (relay = {}) => {
+  if (relay.via === 'local-queue') return { relayConfirmed: null, relayStatus: 'en_cola' };
+  if (relay.confirmed === false) return { relayConfirmed: false, relayStatus: 'sin_confirmacion' };
+  if (relay.confirmed === true) return { relayConfirmed: true, relayStatus: 'confirmado' };
+  return { relayConfirmed: null, relayStatus: 'desconocido' };
 };
 
 const buildRelayConfigForDoor = (door, globalConfig = {}, overrides = {}) => {
@@ -69,7 +90,70 @@ const isDoorRelayConfigured = (door, globalConfig = {}) => {
   return Boolean(String(relay.bridgeUrl || '').trim()) || Boolean(String(relay.host || '').trim());
 };
 
-const getAirlockState = async (groupId) => {
+const toMillis = (value) => {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (typeof value.toDate === 'function') return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  const ms = Date.parse(String(value));
+  return Number.isFinite(ms) ? ms : null;
+};
+
+const toIso = (value) => {
+  const ms = toMillis(value);
+  return ms == null ? null : new Date(ms).toISOString();
+};
+
+const airlockTimings = (group = {}) => ({
+  outerCloseDelayMs: Number(group?.outerCloseDelayMs) > 0
+    ? Number(group.outerCloseDelayMs) : AIRLOCK_DEFAULTS.outerCloseDelayMs,
+  interDoorDelayMs: Number.isFinite(Number(group?.interDoorDelayMs)) && Number(group.interDoorDelayMs) >= 0
+    ? Number(group.interDoorDelayMs) : AIRLOCK_DEFAULTS.interDoorDelayMs,
+  transitTimeoutMs: Number(group?.transitTimeoutMs) > 0
+    ? Number(group.transitTimeoutMs) : AIRLOCK_DEFAULTS.transitTimeoutMs
+});
+
+/**
+ * Fase EFECTIVA del estanco derivada del tiempo transcurrido.
+ *
+ * Antes las transiciones (outer_open → outer_closed_pending → inner_allowed →
+ * idle) las hacían setTimeout en memoria de la instancia que abrió: con varias
+ * instancias de Cloud Functions (o la instancia congelada tras responder) el
+ * estado quedaba trabado u otra instancia no lo veía. Ahora el doc solo guarda
+ * el instante de apertura y cualquier instancia calcula la fase igual.
+ */
+const deriveAirlockPhase = (data = {}, group = {}, nowMs = Date.now()) => {
+  const stored = data?.phase || 'idle';
+  if (stored === 'idle') return 'idle';
+  const t = airlockTimings(group);
+
+  if (stored === 'inner_open') {
+    const t1 = data.innerOpenedAtMs ?? toMillis(data.innerOpenedAt) ?? toMillis(data.updatedAt);
+    if (t1 == null) return 'idle';
+    return nowMs - t1 < INNER_OPEN_RESET_MS ? 'inner_open' : 'idle';
+  }
+
+  // outer_open / outer_closed_pending / inner_allowed: anclados a la apertura exterior.
+  const t0 = data.outerOpenedAtMs ?? toMillis(data.outerOpenedAt) ?? toMillis(data.updatedAt);
+  if (t0 == null) return 'idle';
+  const elapsed = nowMs - t0;
+  if (elapsed < t.outerCloseDelayMs) return 'outer_open';
+  if (elapsed < t.outerCloseDelayMs + t.interDoorDelayMs) return 'outer_closed_pending';
+  if (elapsed < t.outerCloseDelayMs + t.interDoorDelayMs + t.transitTimeoutMs) return 'inner_allowed';
+  return 'idle';
+};
+
+const resolveGroupForState = async (groupId, group) => {
+  if (group) return group;
+  try {
+    return findAirlockGroup(await getDoorsConfig(), groupId) || null;
+  } catch (_err) {
+    return null;
+  }
+};
+
+const getAirlockState = async (groupId, group = null, nowMs = Date.now()) => {
   const snap = await db.collection(AIRLOCK_COLLECTION).doc(groupId).get();
   if (!snap.exists) {
     return {
@@ -83,14 +167,15 @@ const getAirlockState = async (groupId) => {
       lastEntryId: null
     };
   }
-  const data = snap.data();
+  const data = snap.data() || {};
+  const effectiveGroup = await resolveGroupForState(groupId, group);
   return {
     groupId,
-    phase: data.phase || 'idle',
-    outerOpenedAt: data.outerOpenedAt?.toDate ? data.outerOpenedAt.toDate().toISOString() : data.outerOpenedAt || null,
-    outerClosedAt: data.outerClosedAt?.toDate ? data.outerClosedAt.toDate().toISOString() : data.outerClosedAt || null,
-    innerOpenedAt: data.innerOpenedAt?.toDate ? data.innerOpenedAt.toDate().toISOString() : data.innerOpenedAt || null,
-    innerAllowedAt: data.innerAllowedAt?.toDate ? data.innerAllowedAt.toDate().toISOString() : data.innerAllowedAt || null,
+    phase: deriveAirlockPhase(data, effectiveGroup || {}, nowMs),
+    outerOpenedAt: toIso(data.outerOpenedAtMs ?? data.outerOpenedAt),
+    outerClosedAt: toIso(data.outerClosedAt),
+    innerOpenedAt: toIso(data.innerOpenedAtMs ?? data.innerOpenedAt),
+    innerAllowedAt: toIso(data.innerAllowedAt),
     lastPersonId: data.lastPersonId || null,
     lastEntryId: data.lastEntryId || null
   };
@@ -104,45 +189,26 @@ const setAirlockState = async (groupId, updates = {}) => {
   }, { merge: true });
 };
 
-const clearAirlockTimer = (groupId) => {
-  const timers = airlockTimers.get(groupId);
-  if (!timers) return;
-  timers.forEach((timer) => clearTimeout(timer));
-  airlockTimers.delete(groupId);
-};
-
-const scheduleAirlockTransition = (groupId, delayMs, handler) => {
-  clearAirlockTimer(groupId);
-  const timer = setTimeout(async () => {
-    try {
-      await handler();
-    } catch (err) {
-      console.error('[doorController] airlock timer error', groupId, err.message);
-    }
-  }, delayMs);
-  airlockTimers.set(groupId, [timer]);
+const IDLE_AIRLOCK_FIELDS = {
+  phase: 'idle',
+  outerOpenedAt: null,
+  outerOpenedAtMs: null,
+  outerClosedAt: null,
+  innerOpenedAt: null,
+  innerOpenedAtMs: null,
+  innerAllowedAt: null
 };
 
 const resetAirlockState = async (groupId, reason = 'reset') => {
-  clearAirlockTimer(groupId);
   await setAirlockState(groupId, {
-    phase: 'idle',
-    outerOpenedAt: null,
-    outerClosedAt: null,
-    innerOpenedAt: null,
-    innerAllowedAt: null,
+    ...IDLE_AIRLOCK_FIELDS,
     resetReason: reason
   });
 };
 
-const evaluateAirlockForOpen = async ({ door, group, bypassAirlock = false, manual = false }) => {
-  if (!group || bypassAirlock || manual) {
-    return { allowed: true, phase: 'bypass' };
-  }
-
-  const state = await getAirlockState(group.id);
-  const role = door.airlockRole;
-
+/** Regla del estanco para una fase ya derivada. Pura. */
+const evaluateAirlockPhase = (role, phase) => {
+  const state = { phase };
   if (role === 'outer') {
     if (state.phase === 'idle') {
       return { allowed: true, phase: 'idle', nextPhase: 'outer_open' };
@@ -182,46 +248,105 @@ const evaluateAirlockForOpen = async ({ door, group, bypassAirlock = false, manu
   return { allowed: true, phase: state.phase };
 };
 
-const afterOuterDoorOpened = async ({ group, personId = null, entryId = null }) => {
-  const now = FieldValue.serverTimestamp();
-  await setAirlockState(group.id, {
-    phase: 'outer_open',
-    outerOpenedAt: now,
-    outerClosedAt: null,
-    innerOpenedAt: null,
-    innerAllowedAt: null,
-    lastPersonId: personId,
-    lastEntryId: entryId
-  });
-
-  scheduleAirlockTransition(group.id, group.outerCloseDelayMs, async () => {
-    await setAirlockState(group.id, {
-      phase: 'outer_closed_pending',
-      outerClosedAt: FieldValue.serverTimestamp()
-    });
-
-    scheduleAirlockTransition(group.id, group.interDoorDelayMs, async () => {
-      await setAirlockState(group.id, {
-        phase: 'inner_allowed',
-        innerAllowedAt: FieldValue.serverTimestamp()
-      });
-
-      scheduleAirlockTransition(group.id, group.transitTimeoutMs, async () => {
-        await resetAirlockState(group.id, 'transit_timeout');
-      });
-    });
-  });
+const evaluateAirlockForOpen = async ({ door, group, bypassAirlock = false, manual = false, nowMs = Date.now() }) => {
+  if (!group || bypassAirlock || manual) {
+    return { allowed: true, phase: 'bypass' };
+  }
+  const state = await getAirlockState(group.id, group, nowMs);
+  return evaluateAirlockPhase(door.airlockRole, state.phase);
 };
 
-const afterInnerDoorOpened = async ({ group }) => {
-  await setAirlockState(group.id, {
-    phase: 'inner_open',
-    innerOpenedAt: FieldValue.serverTimestamp()
-  });
+const httpError = (status, message, extra = {}) => Object.assign(new Error(message), { status }, extra);
 
-  scheduleAirlockTransition(group.id, 3000, async () => {
-    await resetAirlockState(group.id, 'transit_complete');
-  });
+/**
+ * Reserva atómica (transacción Firestore) antes de pulsar:
+ * - cooldown por puerta (MANUAL_COOLDOWN_MS) compartido entre instancias;
+ * - chequeo + transición del estanco (outer → outer_open, inner → inner_open),
+ *   así dos lecturas simultáneas en instancias distintas no abren ambas.
+ * Devuelve lo necesario para revertir si el pulso falla.
+ */
+const reserveDoorOpen = async ({
+  door,
+  group,
+  airlockApplies,
+  personId = null,
+  entryId = null,
+  nowMs = Date.now()
+}) => db.runTransaction(async (tx) => {
+  const cooldownRef = db.collection(COOLDOWN_COLLECTION).doc(door.id);
+  const airlockRef = airlockApplies ? db.collection(AIRLOCK_COLLECTION).doc(group.id) : null;
+  const [cooldownSnap, airlockSnap] = await Promise.all([
+    tx.get(cooldownRef),
+    airlockRef ? tx.get(airlockRef) : Promise.resolve(null)
+  ]);
+
+  const previousCooldownMs = cooldownSnap?.exists ? Number(cooldownSnap.data()?.lastOpenAtMs) || 0 : 0;
+  if (nowMs - previousCooldownMs < MANUAL_COOLDOWN_MS && nowMs >= previousCooldownMs) {
+    throw httpError(429, 'Espere unos segundos antes de volver a abrir esta puerta');
+  }
+
+  let airlockCheck = { allowed: true, phase: 'bypass' };
+  let previousAirlock = null;
+  if (airlockRef) {
+    const data = airlockSnap?.exists ? (airlockSnap.data() || {}) : {};
+    previousAirlock = data;
+    const phase = deriveAirlockPhase(data, group, nowMs);
+    airlockCheck = evaluateAirlockPhase(door.airlockRole, phase);
+    if (!airlockCheck.allowed) {
+      throw httpError(423, airlockCheck.message || 'Puerta bloqueada por secuencia de estanco', {
+        airlock: airlockCheck
+      });
+    }
+    if (door.airlockRole === 'outer') {
+      tx.set(airlockRef, {
+        groupId: group.id,
+        ...IDLE_AIRLOCK_FIELDS,
+        phase: 'outer_open',
+        outerOpenedAt: FieldValue.serverTimestamp(),
+        outerOpenedAtMs: nowMs,
+        lastPersonId: personId,
+        lastEntryId: entryId,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    } else if (door.airlockRole === 'inner') {
+      tx.set(airlockRef, {
+        groupId: group.id,
+        phase: 'inner_open',
+        innerOpenedAt: FieldValue.serverTimestamp(),
+        innerOpenedAtMs: nowMs,
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+  }
+
+  tx.set(cooldownRef, {
+    doorId: door.id,
+    lastOpenAtMs: nowMs,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  return { airlockCheck, previousCooldownMs, previousAirlock };
+});
+
+/** El pulso falló: devolver cooldown y estanco a como estaban (best effort). */
+const releaseDoorOpenReservation = async ({ door, group, airlockApplies, reservation }) => {
+  try {
+    await db.collection(COOLDOWN_COLLECTION).doc(door.id).set({
+      doorId: door.id,
+      lastOpenAtMs: reservation?.previousCooldownMs || 0,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    if (airlockApplies) {
+      const prev = reservation?.previousAirlock || {};
+      await setAirlockState(group.id, {
+        ...IDLE_AIRLOCK_FIELDS,
+        ...prev,
+        resetReason: 'pulso_fallido'
+      });
+    }
+  } catch (err) {
+    console.error('[doorController] No se pudo revertir la reserva de apertura', door.id, err.message);
+  }
 };
 
 const pulseDoorRelay = async (door, globalConfig, {
@@ -322,27 +447,18 @@ const openDoor = async ({
     throw error;
   }
 
-  const cooldownKey = door.id;
-  const now = Date.now();
-  const lastOpen = manualCooldownByDoor.get(cooldownKey) || 0;
-  if (now - lastOpen < MANUAL_COOLDOWN_MS) {
-    const error = new Error('Espere unos segundos antes de volver a abrir esta puerta');
-    error.status = 429;
-    throw error;
-  }
-
   const group = door.airlockGroupId
     ? findAirlockGroup(doorsConfig, door.airlockGroupId)
     : null;
+  const airlockApplies = Boolean(group)
+    && !bypassAirlock
+    && !manual
+    && (door.airlockRole === 'outer' || door.airlockRole === 'inner');
 
-  const airlockCheck = await evaluateAirlockForOpen({ door, group, bypassAirlock, manual });
-  if (!airlockCheck.allowed) {
-    const error = new Error(airlockCheck.message || 'Puerta bloqueada por secuencia de estanco');
-    error.status = 423;
-    error.airlock = airlockCheck;
-    throw error;
-  }
+  // Cooldown + estanco en una transacción (429 / 423 si no corresponde abrir).
+  const reservation = await reserveDoorOpen({ door, group, airlockApplies, personId, entryId });
 
+  let pulseSucceeded = false;
   try {
     const relay = await pulseDoorRelay(door, globalConfig, {
       force: manual || force || bypassAirlock,
@@ -351,13 +467,7 @@ const openDoor = async ({
       requestedBy: username || userId || null,
       reason: reason || (manual ? 'apertura_manual' : 'acceso_autorizado')
     });
-    manualCooldownByDoor.set(cooldownKey, now);
-
-    if (group && door.airlockRole === 'outer' && !bypassAirlock && !manual) {
-      await afterOuterDoorOpened({ group, personId, entryId });
-    } else if (group && door.airlockRole === 'inner' && !bypassAirlock && !manual) {
-      await afterInnerDoorOpened({ group });
-    }
+    pulseSucceeded = true;
 
     await logDoorEvent({
       type: manual ? 'manual_open' : 'door_open',
@@ -376,10 +486,11 @@ const openDoor = async ({
       relayTriggered: true,
       relayCommand: relay.command,
       relayVia: relay.via,
-      relayChannel: buildRelayConfigForDoor(door, globalConfig).relayChannel
+      relayChannel: buildRelayConfigForDoor(door, globalConfig).relayChannel,
+      ...describeRelayConfirmation(relay)
     });
 
-    const airlockState = group ? await getAirlockState(group.id) : null;
+    const airlockState = group ? await getAirlockState(group.id, group) : null;
 
     return {
       message: relay.via === 'local-queue'
@@ -395,6 +506,10 @@ const openDoor = async ({
       } : null
     };
   } catch (err) {
+    if (!pulseSucceeded) {
+      // La puerta no se abrió: liberar cooldown y estanco para no bloquear el reintento.
+      await releaseDoorOpenReservation({ door, group, airlockApplies, reservation });
+    }
     await logDoorEvent({
       type: manual ? 'manual_open' : 'door_open',
       movementType,
@@ -405,8 +520,10 @@ const openDoor = async ({
       username,
       userId,
       reason: reason || 'error_apertura',
-      relayTriggered: false,
+      relayTriggered: pulseSucceeded,
       relayError: err.message
+    }).catch((logErr) => {
+      console.error('[doorController] No se pudo registrar el error de apertura', logErr.message);
     });
     try {
       const { notifySafe } = require('./lib/notifications');
@@ -440,7 +557,7 @@ const resolveDoorContext = async ({ doorId, readerId }) => {
     ? findAirlockGroup(doorsConfig, door.airlockGroupId)
     : null;
 
-  const airlockState = group ? await getAirlockState(group.id) : null;
+  const airlockState = group ? await getAirlockState(group.id, group) : null;
   const airlockDoors = group ? getAirlockDoors(doorsConfig, group.id) : [];
 
   return { door, group, airlockState, airlockDoors, doorsConfig };
@@ -613,6 +730,7 @@ const getDoorsPhysicalStatus = async () => {
 };
 
 module.exports = {
+  describeRelayConfirmation,
   buildRelayConfigForDoor,
   isDoorRelayConfigured,
   getAirlockState,
@@ -621,5 +739,9 @@ module.exports = {
   resolveDoorContext,
   listActiveDoors,
   getDoorsPhysicalStatus,
-  evaluateAirlockForOpen
+  evaluateAirlockForOpen,
+  evaluateAirlockPhase,
+  deriveAirlockPhase,
+  reserveDoorOpen,
+  MANUAL_COOLDOWN_MS
 };

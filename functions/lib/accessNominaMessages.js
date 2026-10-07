@@ -10,6 +10,7 @@ const { isCitacionRequiredArea, isSistemasArea } = require('./centroCostoGroups'
 const { resolveShiftSchedule } = require('./shiftParser');
 const { hydrateAuthorizationForRead } = require('./transportCsvParser');
 const { mark: profileMark } = require('./kioskProfile');
+const { isDoorAllowedForIngreso } = require('./doorAccess');
 
 const SHIFT_EARLY_MINUTES = 30;
 const SHIFT_LATE_MINUTES = 15;
@@ -185,13 +186,39 @@ const prefetchNominaAccessData = async ({
   return { employee, citacionesToday, dateString };
 };
 
+/** Denegaciones que la nómina (turno/citación/Sistemas) nunca puede convertir en autorización. */
+const NON_OVERRIDABLE_DENIALS = new Set([
+  'error_interno',
+  'no_encontrado',
+  'persona_inactiva',
+  'dni_duplicado'
+]);
+
+/**
+ * ¿Puede un "autorizado" de nómina revertir una denegación previa?
+ * Solo si la persona existe en people, está activa y la denegación no es de
+ * identidad/estado (no encontrado, baja, DNI duplicado, error interno).
+ */
+const canNominaOverrideDenial = ({ person = null, denialReason = null } = {}) => {
+  if (!person || !person.id) return false;
+  if (person.active === false) return false;
+  if (denialReason && NON_OVERRIDABLE_DENIALS.has(denialReason)) return false;
+  return true;
+};
+
 const buildNominaAccessMessage = async ({
   personId,
   dniNormalized,
   personName = '',
   referenceDate = new Date(),
-  prefetched = null
+  prefetched = null,
+  person = null,
+  doorId = null
 }) => {
+  // Baja en people (active=false): la nómina no tiene nada que decir; la
+  // persona ya está denegada y nada de acá puede revivirla.
+  if (person && person.active === false) return null;
+
   const employee = prefetched && Object.prototype.hasOwnProperty.call(prefetched, 'employee')
     ? prefetched.employee
     : await findPersonalMaster({ personId, dniNormalized });
@@ -205,6 +232,10 @@ const buildNominaAccessMessage = async ({
   const centro = employee.centroCosto || employee.company || '';
 
   if (isSistemasArea(centro)) {
+    // "Sistemas siempre autorizado" solo vale para una persona ACTIVA de people
+    // y en una puerta de su propia lista allowedDoorIds. Si no, no hay override.
+    if (!person || person.active === false) return null;
+    if (doorId && !isDoorAllowedForIngreso(person.allowedDoorIds, doorId)) return null;
     return {
       authorized: true,
       message: `${name} — Sistemas: ingreso autorizado (acceso permanente a planta).`,
@@ -275,6 +306,8 @@ const buildNominaAccessMessage = async ({
 };
 
 module.exports = {
+  NON_OVERRIDABLE_DENIALS,
+  canNominaOverrideDenial,
   buildNominaAccessMessage,
   prefetchNominaAccessData,
   findPersonalMaster,

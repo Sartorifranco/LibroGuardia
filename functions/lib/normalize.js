@@ -33,7 +33,9 @@ const getArgentinaDateParts = (referenceDate = new Date()) => {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    // h23 y no hour12:false: con hour12:false algunas versiones de ICU devuelven
+    // "24:00" a la medianoche (rompe ventanas horarias y eventTime).
+    hourCycle: 'h23',
     weekday: 'short'
   });
 

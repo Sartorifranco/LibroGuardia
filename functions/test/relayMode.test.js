@@ -223,7 +223,20 @@ const makeFirestoreMock = ({ settings = {}, collections = {} } = {}) => {
   };
 
   return {
-    db: { collection: makeCollection },
+    db: {
+      collection: makeCollection,
+      // Transacción mínima: lecturas directas, escrituras al final (como Firestore).
+      async runTransaction(fn) {
+        const writes = [];
+        const tx = {
+          get: (ref) => ref.get(),
+          set(ref, data, opts) { writes.push(() => ref.set(data, opts)); return tx; }
+        };
+        const result = await fn(tx);
+        for (const write of writes) await write();
+        return result;
+      }
+    },
     FieldValue: {
       serverTimestamp: () => 'SERVER_TIMESTAMP',
       increment: (n) => ({ __inc: n }),

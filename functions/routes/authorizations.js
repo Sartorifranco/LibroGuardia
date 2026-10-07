@@ -34,7 +34,8 @@ const bumpAuthQuiet = () => bumpAuthorizationsVersion().catch((err) => {
   console.warn('[authorizations] bumpAuthorizationsVersion', err.message);
 });
 
-const todayDateString = () => new Date().toISOString().slice(0, 10);
+// Fecha "hoy" en Argentina (antes UTC: después de las 21:00 ART daba el día siguiente).
+const { todayDateString } = require('../authorizations');
 
 const listAuthorizationsHandler = async (req, res) => {
   try {
@@ -257,10 +258,34 @@ router.post('/api/admin/authorizations/upload', auth, requirePermission('master.
   }
 });
 
+const SECRET_MASK_PREFIX = '••••';
+
+/** "••••" + últimos 2 caracteres. Nunca devolver el secreto en claro. */
+const maskSecret = (secret) => {
+  const value = String(secret || '');
+  if (!value) return '';
+  return `${SECRET_MASK_PREFIX}${value.length > 2 ? value.slice(-2) : ''}`;
+};
+
+const isMaskedSecret = (value) => typeof value === 'string' && value.startsWith(SECRET_MASK_PREFIX);
+
+const maskBridgeConfig = (config = {}) => ({
+  ...config,
+  bridgeSecret: maskSecret(config.bridgeSecret),
+  hasBridgeSecret: Boolean(config.bridgeSecret)
+});
+
+/** Salud pública (sin auth): solo lo mínimo; nada de nombres de archivo ni errores. */
+const publicCitacionesHealth = (config = {}) => ({
+  ok: true,
+  lastSyncAt: config.lastSyncAt || null,
+  hasSyncError: Boolean(config.lastSyncError)
+});
+
 router.get('/api/admin/citaciones-bridge', auth, requirePermission('master.citaciones.write'), async (_req, res) => {
   try {
     const config = await getCitacionesBridgeConfig();
-    res.json({ config });
+    res.json({ config: maskBridgeConfig(config) });
   } catch (err) {
     res.status(500).json({ message: 'Error al leer configuración del puente', error: err.message });
   }
@@ -273,8 +298,10 @@ router.put('/api/admin/citaciones-bridge', auth, requirePermission('master.citac
     allowed.forEach((key) => {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     });
+    // La UI recibe el secreto enmascarado: si lo devuelve tal cual, no se pisa el real.
+    if (isMaskedSecret(updates.bridgeSecret)) delete updates.bridgeSecret;
     const config = await saveCitacionesBridgeConfig(updates);
-    res.json({ message: 'Configuración del puente guardada', config });
+    res.json({ message: 'Configuración del puente guardada', config: maskBridgeConfig(config) });
   } catch (err) {
     res.status(500).json({ message: 'Error al guardar configuración del puente', error: err.message });
   }
@@ -283,18 +310,10 @@ router.put('/api/admin/citaciones-bridge', auth, requirePermission('master.citac
 router.get('/api/bridge/citaciones/health', async (_req, res) => {
   try {
     const config = await getCitacionesBridgeConfig();
-    res.json({
-      status: 'ok',
-      service: 'citaciones-folder-bridge',
-      enabled: config.enabled,
-      lastSyncAt: config.lastSyncAt,
-      lastHeartbeatAt: config.lastHeartbeatAt,
-      lastSyncFile: config.lastSyncFile,
-      lastSyncCount: config.lastSyncCount,
-      lastSyncError: config.lastSyncError
-    });
+    res.json(publicCitacionesHealth(config));
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('[citaciones/health]', err.message);
+    res.status(500).json({ ok: false });
   }
 });
 

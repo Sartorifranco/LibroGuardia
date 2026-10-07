@@ -24,7 +24,8 @@ const {
   resolveAuthUsername,
   resolveApiBaseUrl,
   resolveConnectionStatus,
-  getLectorById
+  getLectorById,
+  listDoorIdsForKioskUser
 } = require('../lib/lectores');
 const { createPairingCode } = require('../lib/lectorPairing');
 
@@ -75,7 +76,7 @@ router.post('/api/admin/lectores', auth, requirePermission('lectores.manage'), a
 
 router.put('/api/admin/lectores/:id', auth, requirePermission('lectores.manage'), async (req, res) => {
   try {
-    const { before, lector } = await updateLector(req.params.id, req.body || {});
+    const { before, lector, previousEstacionId, warning } = await updateLector(req.params.id, req.body || {});
     logAdminAction({
       req,
       action: 'lector.update',
@@ -89,7 +90,8 @@ router.put('/api/admin/lectores/:id', auth, requirePermission('lectores.manage')
       lector: {
         ...lector,
         connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
-      }
+      },
+      ...(previousEstacionId ? { previousEstacionId, warning } : {})
     });
   } catch (err) {
     res.status(err.status || 500).json({
@@ -134,7 +136,10 @@ router.post(
         message: 'Credenciales regeneradas. La contraseña anterior ya no sirve. Guardá la nueva: no se volverá a mostrar.',
         lector: result.lector,
         password: result.password,
-        config: result.config
+        config: result.config,
+        ...(result.previousEstacionId
+          ? { previousEstacionId: result.previousEstacionId, warning: result.warning }
+          : {})
       });
     } catch (err) {
       res.status(err.status || 500).json({ message: err.message || 'Error al regenerar credenciales' });
@@ -278,13 +283,17 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
     });
 
     let pendingOpens = [];
+    let pendingOpensError = null;
     const doorId = String(req.body?.doorId || lector.doorId || '').trim();
     if (doorId && req.body?.claimPendingOpens !== false) {
       try {
+        // Solo puertas vinculadas a ESTE usuario (si no, 403 en la lib y la cola queda intacta).
+        const allowedDoorIds = await listDoorIdsForKioskUser(username);
         const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
-        const claimed = await claimPendingLocalOpens(doorId);
+        const claimed = await claimPendingLocalOpens(doorId, { allowedDoorIds });
         pendingOpens = claimed.opens || [];
       } catch (claimErr) {
+        if (claimErr.status === 403) pendingOpensError = 'puerta_no_vinculada';
         console.warn('[lectores/heartbeat] claimPendingLocalOpens', claimErr.message);
       }
     }
@@ -302,7 +311,8 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours ?? null,
       puertoDetectado: lector.puertoDetectado || null,
       inputModeDetectado: lector.inputModeDetectado || null,
-      pendingOpens
+      pendingOpens,
+      ...(pendingOpensError ? { pendingOpensError } : {})
     });
   } catch (err) {
     res.status(err.status || 500).json({
@@ -326,8 +336,10 @@ router.post('/api/lectores/claim-pending-opens', auth, async (req, res) => {
     if (!doorId) {
       return res.status(400).json({ message: 'doorId requerido' });
     }
+    // La estación solo reclama aperturas de SUS puertas: si no, 403 y la cola no se toca.
+    const allowedDoorIds = await listDoorIdsForKioskUser(username);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
-    const claimed = await claimPendingLocalOpens(doorId);
+    const claimed = await claimPendingLocalOpens(doorId, { allowedDoorIds });
 
     let forceResync = false;
     let offlineCache = false;

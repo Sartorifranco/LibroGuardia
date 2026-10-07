@@ -81,12 +81,22 @@ const enqueuePendingLocalOpen = async ({
 };
 
 /**
- * Reclama (y marca claimed) los pedidos pendientes de una puerta.
- * Solo el bridge kiosk debe llamar esto.
+ * Reclama (y borra de la cola) los pedidos pendientes de una puerta.
+ * Solo el bridge kiosk de ESA puerta puede llamar esto: `allowedDoorIds` son las
+ * puertas vinculadas al usuario que llama (ver lectores.listDoorIdsForKioskUser).
+ * Sin esa lista, o si la puerta no está en ella → 403 y NO se toca la cola
+ * (evita que otra estación "robe" y descarte una apertura ajena).
  */
-const claimPendingLocalOpens = async (doorId, { limit = 5 } = {}) => {
+const claimPendingLocalOpens = async (doorId, { limit = 5, allowedDoorIds } = {}) => {
   const id = String(doorId || '').trim();
   if (!id) throw httpError(400, 'doorId requerido');
+  const allowed = allowedDoorIds instanceof Set
+    ? allowedDoorIds
+    : new Set(Array.isArray(allowedDoorIds) ? allowedDoorIds.map((d) => String(d || '').trim()) : []);
+  if (!allowed.has(id)) {
+    console.warn('[pendingLocalOpens] Reclamo rechazado: la puerta no está vinculada al usuario', { doorId: id });
+    throw httpError(403, 'Esta estación no está vinculada a esa puerta');
+  }
 
   // La estación pollea cada ~2 s. Sin filtrar por status, cada poll pagaba una
   // lectura por cada apertura histórica de la puerta y el costo crecía para
@@ -107,6 +117,7 @@ const claimPendingLocalOpens = async (doorId, { limit = 5 } = {}) => {
   for (const doc of snap.docs) {
     if (claimed.length >= max) break;
     const data = doc.data() || {};
+    if (String(data.doorId || '').trim() !== id) continue;
 
     batch.delete(doc.ref);
     writes += 1;
