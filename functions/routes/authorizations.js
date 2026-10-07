@@ -10,6 +10,8 @@ const {
   AUTHORIZATION_TYPES
 } = require('../authorizations');
 const { listVisitasEsperadasForDate } = require('../lib/visitasAccess');
+const { resolveOrCreatePerson } = require('../people');
+const { logActivity } = require('../lib/activityLog');
 const { parseImportRows } = require('../citacionesImport');
 const {
   getCitacionesBridgeConfig,

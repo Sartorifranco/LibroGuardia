@@ -1,6 +1,7 @@
 const express = require('express');
 const { db, FieldValue } = require('../firestore');
 const { normalizePlate } = require('../permissions');
+const { getGpsProvider } = require('../lib/gpsProviders');
 const {
   getFleetGpsConfig,
   publicFleetGpsConfig,

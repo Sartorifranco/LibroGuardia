@@ -337,6 +337,7 @@ const getLectorById = async (id) => {
 };
 
 const createLector = async (body, { apiBaseUrl } = {}) => {
+  kioskDoorsCache.clear();
   const fields = sanitizeLectorFields(body);
   const { door } = await validateDoorAndReader(fields);
   await assertEstacionExistsIfSet(fields.estacionId);
@@ -383,6 +384,7 @@ const createLector = async (body, { apiBaseUrl } = {}) => {
 };
 
 const updateLector = async (id, body) => {
+  kioskDoorsCache.clear();
   const ref = db.collection(LECTORES).doc(id);
   const beforeSnap = await ref.get();
   if (!beforeSnap.exists) throw httpError(404, 'Lector no encontrado');
@@ -409,6 +411,7 @@ const updateLector = async (id, body) => {
 };
 
 const deleteLector = async (id) => {
+  kioskDoorsCache.clear();
   const ref = db.collection(LECTORES).doc(id);
   const snap = await ref.get();
   if (!snap.exists) throw httpError(404, 'Lector no encontrado');
@@ -504,16 +507,26 @@ const resolveAuthUsername = (user) => {
  * (reclamar aperturas en cola, declarar eventos offline).
  * @returns {Promise<Set<string>>}
  */
-const listDoorIdsForKioskUser = async (username) => {
+// Las estaciones consultan cada pocos segundos: cachear evita una lectura por poll.
+const KIOSK_DOORS_CACHE_TTL_MS = 60 * 1000;
+const kioskDoorsCache = new Map();
+
+const listDoorIdsForKioskUser = async (username, { nowMs = Date.now(), bypassCache = false } = {}) => {
   const uid = String(username || '').trim().toLowerCase();
   if (!uid) return new Set();
+  const cached = kioskDoorsCache.get(uid);
+  if (!bypassCache && cached && nowMs - cached.at < KIOSK_DOORS_CACHE_TTL_MS) {
+    return new Set(cached.doorIds);
+  }
   const snap = await db.collection(LECTORES).where('usuarioSistemaId', '==', uid).limit(50).get();
-  return new Set(
-    snap.docs
-      .map((doc) => String((doc.data() || {}).doorId || '').trim())
-      .filter(Boolean)
-  );
+  const doorIds = snap.docs
+    .map((doc) => String((doc.data() || {}).doorId || '').trim())
+    .filter(Boolean);
+  kioskDoorsCache.set(uid, { at: nowMs, doorIds });
+  return new Set(doorIds);
 };
+
+const clearKioskDoorsCache = () => kioskDoorsCache.clear();
 
 /**
  * Resuelve el doc del lector vinculado al usuario kiosk (mismo criterio que heartbeat).
@@ -724,6 +737,7 @@ module.exports = {
   resolveAuthUsername,
   listDoorIdsForKioskUser,
   describeEstacionRebind,
+  clearKioskDoorsCache,
   touchHeartbeat,
   claimForceResync,
   requestForceResync,

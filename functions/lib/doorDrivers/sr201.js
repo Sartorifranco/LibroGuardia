@@ -327,8 +327,14 @@ const sendViaBridge = async (bridgeUrl, payload, bridgeSecret = '') => {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       throw new Error('Puente SR201 rechazó el secreto (BRIDGE_SECRET). Verificá el valor en Admin y en el PC de planta.');
+    }
+    if (response.status === 403) {
+      throw new Error(
+        data.message
+          || 'El puente SR201 no tiene permitida la IP/puerto de esta puerta. Agregala en "sr201Permitidos" de configuracion-apertura-internet.json.'
+      );
     }
     throw new Error(data.message || `Puente SR201 respondió ${response.status}`);
   }
