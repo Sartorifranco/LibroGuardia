@@ -62,7 +62,7 @@ test('persona inactiva se deniega aunque tenga allowedDoorIds', async () => {
   assert.equal(mock.authQueries.length, 0);
 });
 
-test('resolución por nameKey completa el DNI y autoriza con citación', async () => {
+test('DNI leído desconocido NO se resuelve por nameKey ni se escribe en otra ficha', async () => {
   const mock = createMockFirestore({
     people: [{
       id: 'p-namekey',
@@ -90,10 +90,12 @@ test('resolución por nameKey completa el DNI y autoriza con citación', async (
     referenceDate
   });
 
-  assert.equal(result.authorized, true);
-  assert.equal(result.personId, 'p-namekey');
-  assert.equal(mock.peopleUpdates.length, 1);
-  assert.equal(mock.peopleUpdates[0].payload.dniNormalized, '30461597');
+  // Antes: se tomaba la ficha por nombre y se le grababa el DNI leído.
+  // Un homónimo podía así "heredar" la autorización y las puertas de otro.
+  assert.equal(result.authorized, false);
+  assert.equal(result.denialReason, 'no_encontrado');
+  assert.equal(result.personId, null);
+  assert.equal(mock.peopleUpdates.length, 0);
 });
 
 test('persona no encontrada devuelve no_encontrado y validarAcceso escribe entry', async () => {

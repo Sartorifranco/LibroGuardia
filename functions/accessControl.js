@@ -17,7 +17,11 @@ const {
   TOLERANCIA_MINUTOS,
   evaluateAuthorizationCandidates
 } = require('./lib/accessValidation');
-const { buildNominaAccessMessage, prefetchNominaAccessData } = require('./lib/accessNominaMessages');
+const {
+  buildNominaAccessMessage,
+  prefetchNominaAccessData,
+  canNominaOverrideDenial
+} = require('./lib/accessNominaMessages');
 const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
 const { applyDoorRestrictionForIngreso } = require('./lib/doorAccess');
 const {
@@ -41,6 +45,21 @@ const findPersonalMaster = async (idNumber) => {
   return { id: doc.id, ...doc.data() };
 };
 
+/** Cuántos docs de people traer por DNI para detectar duplicados (limit(1) elegía uno arbitrario). */
+const DNI_DUPLICATE_PROBE_LIMIT = 5;
+
+/**
+ * Resuelve la persona de `people` para una lectura.
+ *
+ * Reglas (control de acceso físico, fail-closed):
+ * - Con DNI leído: SOLO se busca por DNI. Si nadie tiene ese DNI → no_encontrado.
+ *   Nunca se cae a buscar por nombre (homónimos) ni se escribe el DNI leído en
+ *   otra ficha.
+ * - Si más de una persona ACTIVA comparte el DNI → `dni_duplicado` (se deniega y
+ *   se loguea para que un admin corrija los datos).
+ * - Sin DNI (formatos que solo traen nombre): match exacto por nameKey y solo si
+ *   hay un único candidato. Sin escrituras.
+ */
 const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
   const dniNormalized = normalizeDni(dni);
   const nameKey = buildNameKey(nombre, apellido);
@@ -48,44 +67,44 @@ const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
 
   let resolutionPath = 'no_encontrado';
   let personDoc = null;
+  let duplicatePersonIds = null;
 
   if (dniNormalized) {
     const snap = await db.collection('people')
       .where('dniNormalized', '==', dniNormalized)
-      .limit(1)
+      .limit(DNI_DUPLICATE_PROBE_LIMIT)
       .get();
     profileMark('resolvePerson.queryByDni');
     if (!snap.empty) {
-      personDoc = snap.docs[0];
-      resolutionPath = 'dni';
+      const activeDocs = snap.docs.filter((doc) => (doc.data() || {}).active !== false);
+      if (activeDocs.length > 1) {
+        resolutionPath = 'dni_duplicado';
+        duplicatePersonIds = activeDocs.map((doc) => doc.id);
+        console.error('[accessControl] DNI duplicado en people: más de una persona activa. '
+          + 'Se deniega el acceso hasta que un admin unifique las fichas.', {
+          dniNormalized,
+          personIds: duplicatePersonIds
+        });
+      } else {
+        // 1 activa → esa. 0 activas → la (primera) inactiva, para denegar como persona_inactiva.
+        personDoc = activeDocs[0] || snap.docs[0];
+        resolutionPath = 'dni';
+      }
     }
-  }
-
-  if (!personDoc && nameKey) {
+  } else if (nameKey) {
     const snap = await db.collection('people')
       .where('nameKey', '==', nameKey)
-      .limit(1)
+      .limit(2)
       .get();
     profileMark('resolvePerson.queryByNameKey');
-    if (!snap.empty) {
+    if (snap.docs.length === 1) {
       personDoc = snap.docs[0];
       resolutionPath = 'nameKey';
-
-      const data = personDoc.data();
-      if (dniNormalized && !data.dniNormalized) {
-        await personDoc.ref.update({
-          dni: dniNormalized,
-          dniNormalized,
-          idNumber: dniNormalized,
-          idNumberNormalized: dniNormalized,
-          updatedAt: FieldValue.serverTimestamp()
-        });
-        profileMark('resolvePerson.backfillDni');
-        console.log('[accessControl] DNI completado en people por nameKey', {
-          personId: personDoc.id,
-          dniNormalized
-        });
-      }
+    } else if (snap.docs.length > 1) {
+      resolutionPath = 'nombre_ambiguo';
+      console.warn('[accessControl] Lectura sin DNI con nombre ambiguo (más de una persona); no se resuelve', {
+        nameKey
+      });
     }
   }
 
@@ -101,15 +120,12 @@ const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
       personId: null,
       resolutionPath,
       nameSnapshot: fullName,
-      dniNormalized: dniNormalized || null
+      dniNormalized: dniNormalized || null,
+      ...(duplicatePersonIds ? { duplicatePersonIds } : {})
     };
   }
 
   const person = { id: personDoc.id, ...personDoc.data() };
-  if (personDoc.ref && dniNormalized && !person.dniNormalized) {
-    person.dniNormalized = dniNormalized;
-    person.dni = dniNormalized;
-  }
 
   return {
     person,
@@ -118,6 +134,11 @@ const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
     nameSnapshot: person.nombre || person.name || fullName,
     dniNormalized: dniNormalized || person.dniNormalized || null
   };
+};
+
+/** Los logAccessEvent del kiosk son fire-and-forget, pero un fallo no puede pasar en silencio. */
+const logAccessEventFailure = (err) => {
+  console.error('[accessControl] No se pudo registrar accessEvent (auditoría incompleta)', err?.message || err);
 };
 
 const mapAuthorizationDocs = (snap) =>
@@ -284,7 +305,13 @@ const decidirAcceso = async ({
   let authorized = false;
   let denialReason = null;
 
-  if (!resolved.personId) {
+  if (resolved.resolutionPath === 'dni_duplicado') {
+    denialReason = 'dni_duplicado';
+    console.error('[accessControl] Acceso denegado: DNI compartido por varias personas activas', {
+      dniNormalized: resolved.dniNormalized,
+      personIds: resolved.duplicatePersonIds || null
+    });
+  } else if (!resolved.personId) {
     denialReason = 'no_encontrado';
     console.log('[accessControl] Acceso denegado: persona no encontrada');
   } else if (resolved.person?.active === false) {
@@ -327,6 +354,24 @@ const decidirAcceso = async ({
       profileMark('decidirAcceso.legacyAuthorizationFallback');
     }
 
+    // Una autorización que pertenece a OTRA persona nunca autoriza a ésta
+    // (ni aporta su lista de puertas). Si el DNI de la autorización coincide con
+    // el leído es la misma identidad (p. ej. ficha fusionada) y se respeta.
+    const authDni = normalizeDni(authorization?.idNumberNormalized || authorization?.idNumber || '');
+    const ownDni = dniNormalized || resolved.dniNormalized || '';
+    if (
+      authorization?.personId
+      && authorization.personId !== resolved.personId
+      && !(authDni && ownDni && authDni === ownDni)
+    ) {
+      console.error('[accessControl] Autorización de otra persona descartada', {
+        personId: resolved.personId,
+        authorizationId: authorization.id,
+        authorizationPersonId: authorization.personId
+      });
+      authorization = null;
+    }
+
     if (authorization) {
       authorized = true;
       authorizationType = authorization.type;
@@ -354,7 +399,16 @@ const decidirAcceso = async ({
 
   // Visitas de empleados (colección 'visitas'): si no hubo auth clásica, o como
   // refuerzo cuando la persona no está en people.
-  if (!authorized) {
+  // Una visita NUNCA revive a una persona dada de baja en people (active=false)
+  // ni resuelve un DNI duplicado.
+  const visitaBlocked = resolved.person?.active === false || denialReason === 'dni_duplicado';
+  if (!authorized && visitaBlocked) {
+    console.log('[accessControl] Visita no evaluada: persona inactiva o DNI duplicado', {
+      personId: resolved.personId,
+      denialReason
+    });
+  }
+  if (!authorized && !visitaBlocked) {
     const visitaMatch = await findEligibleVisita({
       dniNormalized: dniNormalized || resolved.dniNormalized,
       doorId,
@@ -826,18 +880,36 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       : config.denyMessage);
 
   if (movementType === 'ingreso') {
+    const peoplePerson = resolvedPerson.person || scan.person || null;
     const nominaAccess = await buildNominaAccessMessage({
       personId: result.personId,
       dniNormalized: idNumber,
       personName: result.personName,
-      prefetched: nominaPrefetch
+      prefetched: nominaPrefetch,
+      person: peoplePerson,
+      doorId: door.id
     });
     profileMark('kiosk.buildNominaAccessMessage');
 
     if (nominaAccess) {
-      message = nominaAccess.message;
-      if (nominaAccess.authorized === true) authorized = true;
-      else if (nominaAccess.authorized === false) {
+      const overrideAllowed = canNominaOverrideDenial({
+        person: peoplePerson,
+        denialReason: result.denialReason
+      });
+      if (nominaAccess.authorized === true) {
+        if (authorized || overrideAllowed) {
+          message = nominaAccess.message;
+          authorized = true;
+        } else {
+          // La nómina no revive bajas / no encontrados / errores internos.
+          console.log('[accessControl] Override de nómina ignorado', {
+            personId: result.personId,
+            denialReason: result.denialReason,
+            nominaReason: nominaAccess.reason
+          });
+        }
+      } else if (nominaAccess.authorized === false) {
+        message = nominaAccess.message;
         authorized = false;
         denialReason = nominaAccess.reason || denialReason;
       }
@@ -928,7 +1000,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       note: 'Relé delegado al bridge local de la puerta (no disparado desde la nube)',
       doorId: door.id,
       authMethod: scan.authMethod
-    }).catch(() => {});
+    }).catch(logAccessEventFailure);
     profileMark('kiosk.localRelay.fireAndForgetLog');
   } else if (shouldTryRelay) {
     // MODO CLOUD (default): comportamiento actual — la nube dispara el relé.
@@ -963,7 +1035,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
         relayError: err.message,
         doorId: door.id,
         authMethod: scan.authMethod
-      }).catch(() => {});
+      }).catch(logAccessEventFailure);
       profileMark('kiosk.openDoor.cloudRelayError');
     }
   } else if (movementType === 'ingreso' && !authorized) {
@@ -980,7 +1052,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       relayTriggered: false,
       doorId: door.id,
       authMethod: scan.authMethod
-    }).catch(() => {});
+    }).catch(logAccessEventFailure);
     profileMark('kiosk.denied.fireAndForgetLog');
   }
 
@@ -1020,7 +1092,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       doorId: door.id,
       doorName: door.name,
       authMethod: scan.authMethod
-    }).catch(() => {});
+    }).catch(logAccessEventFailure);
     responsePayload.identityVerification = {
       required: true,
       photoAvailable: Boolean(photoDataUrl)

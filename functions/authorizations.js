@@ -3,6 +3,7 @@ const { normalizeIdNumber } = require('./dniParser');
 const { normalizeLegajo } = require('./lib/personMatch');
 const { normalizePersonName, buildNameTokens, namesMatch } = require('./lib/nameUtils');
 const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
+const { getArgentinaDateString } = require('./lib/normalize');
 
 const AUTHORIZATION_TYPES = ['citacion', 'visit', 'visita', 'temporal', 'permanent'];
 
@@ -29,7 +30,11 @@ const getAuthorizationLabel = (type) => {
   return labels[normalized] || labels[type] || 'Sin autorización';
 };
 
-const todayDateString = () => new Date().toISOString().slice(0, 10);
+/**
+ * "Hoy" en Argentina (YYYY-MM-DD). Antes usaba UTC: entre las 21:00 y las
+ * 23:59 ART devolvía el día siguiente (citaciones / altas con fecha corrida).
+ */
+const todayDateString = (referenceDate = new Date()) => getArgentinaDateString(referenceDate);
 
 const dateInRange = (date, startDate, endDate) => {
   if (!startDate) return false;
@@ -227,29 +232,53 @@ const resolveAuthorization = async (idNumber, referenceDate = todayDateString())
   return null;
 };
 
+/** Identidad del titular de una autorización (para detectar homónimos). */
+const authorizationHolderKey = (data = {}) => {
+  if (data.personId) return `p:${data.personId}`;
+  const dni = normalizeIdNumber(data.idNumberNormalized || data.idNumber);
+  if (dni) return `d:${dni}`;
+  const legajo = String(data.legajoNormalized || data.legajo || '').trim();
+  if (legajo) return `l:${legajo}`;
+  return null;
+};
+
+/**
+ * Autorización por nombre. SOLO para lecturas sin DNI.
+ * Exige match exacto de tokens normalizados (nameKey / nameTokens) y que todas
+ * las autorizaciones encontradas pertenezcan a un único titular. Si hay
+ * homónimos (o un titular sin identidad) → null. Ya no se hace el barrido
+ * difuso de todas las autorizaciones activas.
+ */
 const resolveAuthorizationByName = async (name, referenceDate = todayDateString()) => {
   const nameTokens = buildNameTokens(name);
   if (!nameTokens) return null;
 
-  const byNameKey = await db.collection('authorizations')
-    .where('nameKey', '==', nameTokens)
-    .where('active', '==', true)
-    .get();
+  const [byNameKey, byLegacyTokens] = await Promise.all([
+    db.collection('authorizations')
+      .where('nameKey', '==', nameTokens)
+      .where('active', '==', true)
+      .get(),
+    db.collection('authorizations')
+      .where('nameTokens', '==', nameTokens)
+      .where('active', '==', true)
+      .get()
+  ]);
 
-  let tokenMatch = pickBestAuthorization(byNameKey.docs, referenceDate);
-  if (tokenMatch) return tokenMatch;
+  const docsById = new Map();
+  [...byNameKey.docs, ...byLegacyTokens.docs].forEach((doc) => docsById.set(doc.id, doc));
+  const docs = [...docsById.values()];
+  if (!docs.length) return null;
 
-  const byLegacyTokens = await db.collection('authorizations')
-    .where('nameTokens', '==', nameTokens)
-    .where('active', '==', true)
-    .get();
+  const holders = new Set(docs.map((doc) => authorizationHolderKey(doc.data() || {})));
+  if (holders.size !== 1 || holders.has(null)) {
+    console.warn('[authorizations] Autorización por nombre ambigua (homónimos); no se resuelve', {
+      nameTokens,
+      candidates: docs.length
+    });
+    return null;
+  }
 
-  tokenMatch = pickBestAuthorization(byLegacyTokens.docs, referenceDate);
-  if (tokenMatch) return tokenMatch;
-
-  const snap = await db.collection('authorizations').where('active', '==', true).get();
-  const matchedDocs = snap.docs.filter((doc) => namesMatch(name, doc.data().name));
-  return pickBestAuthorization(matchedDocs, referenceDate);
+  return pickBestAuthorization(docs, referenceDate);
 };
 
 const resolveAuthorizationByPersonId = async (personId, referenceDate = todayDateString()) => {
@@ -274,7 +303,9 @@ const resolveAuthorizationForAccess = async ({
 
   const byId = await resolveAuthorization(idNumber, referenceDate);
   if (byId) return byId;
-  if (name?.trim()) {
+  // Con DNI leído nunca se busca por nombre (homónimos). Tampoco si la persona
+  // ya se resolvió en people: una autorización por nombre podría ser de otro.
+  if (!normalizeIdNumber(idNumber) && !person?.id && name?.trim()) {
     return resolveAuthorizationByName(name, referenceDate);
   }
   return null;

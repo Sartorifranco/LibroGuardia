@@ -34,7 +34,8 @@ const bumpAuthQuiet = () => bumpAuthorizationsVersion().catch((err) => {
   console.warn('[authorizations] bumpAuthorizationsVersion', err.message);
 });
 
-const todayDateString = () => new Date().toISOString().slice(0, 10);
+// Fecha "hoy" en Argentina (antes UTC: después de las 21:00 ART daba el día siguiente).
+const { todayDateString } = require('../authorizations');
 
 const listAuthorizationsHandler = async (req, res) => {
   try {
