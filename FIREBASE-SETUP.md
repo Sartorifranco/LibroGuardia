@@ -44,8 +44,19 @@ notepad .env
 En `.env` ponÃ© el mismo valor secreto que usarÃ¡s en producciÃ³n, por ejemplo:
 
 ```
-JWT_SECRET=BacarGuard_LG_2026_JWT_xK9mP2vQ7nR4wL8sT1
+JWT_SECRET=<generar-un-valor-aleatorio-de-al-menos-32-caracteres>
+SETUP_KEY=<generar-otro-valor-aleatorio-distinto>
 ```
+
+Genera cada valor con:
+
+```powershell
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+> El backend rechaza firmar/verificar tokens si `JWT_SECRET` falta o tiene menos de 32 caracteres.
+> `SETUP_KEY` es opcional: si no esta definida, `POST /api/setup/initial-users` queda deshabilitado (404).
+> Nunca pegues secretos reales en documentación ni en el repo.
 
 > No subas `.env` a Git. Se despliega con la Function automÃ¡ticamente.
 
@@ -63,7 +74,7 @@ JWT_SECRET=BacarGuard_LG_2026_JWT_xK9mP2vQ7nR4wL8sT1
 ```powershell
 cd functions
 npm install
-node create-admin.js admin Bacar2026
+node create-admin.js admin <password-temporal>
 ```
 
 Debe decir: `Admin "admin" creado/actualizado en Firestore.`
