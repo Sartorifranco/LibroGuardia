@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { db, FieldValue } = require('./firestore');
 const { parseImportRows, buildMasterLookups } = require('./citacionesImport');
 const { resolveOrCreatePerson } = require('./people');
@@ -60,6 +61,28 @@ const touchCitacionesHeartbeat = async () => {
   return getCitacionesBridgeConfig();
 };
 
+/** Comparación en tiempo constante (sha256 previo: no filtra longitud por timing). */
+const safeEqualSecret = (provided, expected) => {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  if (!provided || !expected) return false;
+  const a = crypto.createHash('sha256').update(provided, 'utf8').digest();
+  const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
+  return crypto.timingSafeEqual(a, b);
+};
+
+/**
+ * Payload público de GET /api/bridge/citaciones/health: solo estado y timestamps.
+ * Nunca incluye lastSyncError (puede contener rutas/nombres de archivos/datos).
+ */
+const publicCitacionesBridgeHealth = (config = {}) => ({
+  status: 'ok',
+  service: 'citaciones-folder-bridge',
+  enabled: config.enabled === true,
+  lastSyncAt: config.lastSyncAt || null,
+  lastHeartbeatAt: config.lastHeartbeatAt || null,
+  hasSyncError: Boolean(config.lastSyncError)
+});
+
 const verifyCitacionesBridgeRequest = async (req) => {
   const config = await getCitacionesBridgeConfig();
   if (!config.enabled) {
@@ -69,7 +92,7 @@ const verifyCitacionesBridgeRequest = async (req) => {
   }
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  if (!config.bridgeSecret || token !== config.bridgeSecret) {
+  if (!config.bridgeSecret || !safeEqualSecret(token, String(config.bridgeSecret))) {
     const error = new Error('Secreto de puente inválido');
     error.status = 401;
     throw error;
@@ -538,6 +561,8 @@ module.exports = {
   saveCitacionesBridgeConfig,
   touchCitacionesHeartbeat,
   verifyCitacionesBridgeRequest,
+  publicCitacionesBridgeHealth,
+  safeEqualSecret,
   syncAuthorizationsFromBridge,
   relinkCitacionesWithNomina,
   reprocessImportBatch,
