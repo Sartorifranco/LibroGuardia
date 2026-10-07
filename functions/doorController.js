@@ -21,6 +21,20 @@ const logDoorEvent = async (event) => {
   });
 };
 
+/**
+ * Estado de confirmación del pulso para auditoría.
+ * - 'confirmado': la placa (o el puente) respondió.
+ * - 'sin_confirmacion': el comando se envió pero la placa no contestó: NO es un éxito pleno.
+ * - 'en_cola': modo local, lo dispara la estación.
+ * - 'desconocido': driver/puente viejo que no informa confirmación.
+ */
+const describeRelayConfirmation = (relay = {}) => {
+  if (relay.via === 'local-queue') return { relayConfirmed: null, relayStatus: 'en_cola' };
+  if (relay.confirmed === false) return { relayConfirmed: false, relayStatus: 'sin_confirmacion' };
+  if (relay.confirmed === true) return { relayConfirmed: true, relayStatus: 'confirmado' };
+  return { relayConfirmed: null, relayStatus: 'desconocido' };
+};
+
 const buildRelayConfigForDoor = (door, globalConfig = {}, overrides = {}) => {
   const driver = resolveDriverId(door.device?.driver);
   const doorSeconds = Number(door.pulseSeconds);
@@ -376,7 +390,8 @@ const openDoor = async ({
       relayTriggered: true,
       relayCommand: relay.command,
       relayVia: relay.via,
-      relayChannel: buildRelayConfigForDoor(door, globalConfig).relayChannel
+      relayChannel: buildRelayConfigForDoor(door, globalConfig).relayChannel,
+      ...describeRelayConfirmation(relay)
     });
 
     const airlockState = group ? await getAirlockState(group.id) : null;
@@ -613,6 +628,7 @@ const getDoorsPhysicalStatus = async () => {
 };
 
 module.exports = {
+  describeRelayConfirmation,
   buildRelayConfigForDoor,
   isDoorRelayConfigured,
   getAirlockState,

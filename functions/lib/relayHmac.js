@@ -122,8 +122,32 @@ const verifyRelayRequest = ({
   return { ok: true };
 };
 
+/** Largo mínimo del secreto del puente (más corto = adivinable). */
+const MIN_SECRET_LENGTH = 16;
+
+/** Valor de ejemplo de configuracion-apertura-internet.ejemplo.json: nunca válido. */
+const PLACEHOLDER_SECRETS = new Set(['CAMBIAR-SECRETO', 'cambiar-secreto', 'secret', 'changeme']);
+
 /**
- * Puente: Bearer + HMAC. Sin secreto no hay gate (mismo aviso actual).
+ * @returns {{ ok: true } | { ok: false, code: 'missing_secret'|'placeholder_secret'|'short_secret', length: number }}
+ */
+const checkBridgeSecretStrength = (secret) => {
+  const value = typeof secret === 'string' ? secret.trim() : '';
+  if (!value) return { ok: false, code: 'missing_secret', length: 0 };
+  if (PLACEHOLDER_SECRETS.has(value)) return { ok: false, code: 'placeholder_secret', length: value.length };
+  if (value.length < MIN_SECRET_LENGTH) return { ok: false, code: 'short_secret', length: value.length };
+  return { ok: true };
+};
+
+/** Bearer en tiempo constante. Sin secreto configurado → false (fail-closed). */
+const isBearerAuthorized = (secret, headers = {}) => {
+  if (!secret) return false;
+  const authHeader = headers.authorization || headers.Authorization || '';
+  return timingSafeEqualHex(`Bearer ${secret}`, String(authHeader));
+};
+
+/**
+ * Puente: Bearer + HMAC. Fail-closed: sin secreto configurado NO se pulsa.
  * Nunca pulsa el relé si esto no da ok.
  */
 const authorizePulseRequest = ({
@@ -133,9 +157,8 @@ const authorizePulseRequest = ({
   nowMs = Date.now(),
   seenNonces
 }) => {
-  if (!secret) return { ok: true, skipped: true };
-  const authHeader = headers.authorization || headers.Authorization || '';
-  if (authHeader !== `Bearer ${secret}`) {
+  if (!secret) return { ok: false, status: 503, code: 'missing_secret' };
+  if (!isBearerAuthorized(secret, headers)) {
     return { ok: false, status: 401, code: 'bearer' };
   }
   const verified = verifyRelayRequest({
@@ -157,6 +180,9 @@ module.exports = {
   WINDOW_SECONDS,
   NONCE_TTL_MS,
   HMAC_HEADERS,
+  MIN_SECRET_LENGTH,
+  checkBridgeSecretStrength,
+  isBearerAuthorized,
   createNonceStore,
   buildCanonicalString,
   signRelayRequest,

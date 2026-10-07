@@ -940,6 +940,8 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
 
   let relayTriggered = false;
   let relayError = null;
+  // true = placa confirmó, false = enviado "sin confirmación", null = n/a o desconocido.
+  let relayConfirmed = null;
   let airlock = airlockState ? { groupId: door.airlockGroupId, state: airlockState } : null;
 
   // 'cloud' (default): la nube dispara el relé. 'local': lo dispara el bridge de la puerta.
@@ -1015,8 +1017,11 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
       });
       profileMark('kiosk.openDoor.cloudRelay');
       relayTriggered = true;
+      relayConfirmed = openResult.relay?.confirmed === false ? false
+        : (openResult.relay?.confirmed === true ? true : null);
       airlock = openResult.airlock || airlock;
       responsePayload.relayTriggered = true;
+      responsePayload.relayConfirmed = relayConfirmed;
       responsePayload.airlock = airlock;
     } catch (err) {
       relayError = err.message;
@@ -1103,6 +1108,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     db.collection('entries').doc(result.entryId).update({
       relayTriggered,
       relayError,
+      relayConfirmed,
       relayMode,
       doorId: door.id,
       doorName: door.name,

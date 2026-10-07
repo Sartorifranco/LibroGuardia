@@ -56,12 +56,15 @@ const sendTcpCommand = (host, port, command, timeoutMs = DEFAULT_TIMEOUT_MS) =>
         socket.once('data', (data) => {
           finish(null, {
             command,
-            response: data.toString('ascii').trim()
+            response: data.toString('ascii').trim(),
+            confirmed: true
           });
         });
 
+        // La placa no contestó: el comando se escribió pero NO hay confirmación.
+        // Se informa como "sin confirmación" (confirmed=false), no como éxito pleno.
         setTimeout(() => {
-          finish(null, { command, response: null });
+          finish(null, { command, response: null, confirmed: false });
         }, 350);
       });
     });
@@ -75,6 +78,73 @@ const sendTcpCommand = (host, port, command, timeoutMs = DEFAULT_TIMEOUT_MS) =>
  *   Si false, resuelve apenas el ON TCP confirma (el OFF sigue en background).
  *   Usado por el bridge HTTP para no bloquear /api/access/kiosk-scan durante N s.
  */
+/** Esperas entre reintentos del OFF (además del primer intento). */
+const DEFAULT_OFF_RETRY_DELAYS_MS = [300, 1000, 3000];
+
+/**
+ * Manda OFF y, si falla o la placa no confirma, lo reintenta (OFF es
+ * idempotente). Un relé que queda en ON = puerta destrabada: se loguea fuerte.
+ *
+ * @returns {Promise<{ ok: boolean, confirmed: boolean, attempts: number, response: string|null, error: string|null }>}
+ */
+const sendOffWithRetry = async (host, port, channel, {
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  retryDelaysMs = DEFAULT_OFF_RETRY_DELAYS_MS,
+  sendFn = sendTcpCommand,
+  sleepFn = sleep,
+  logger = console
+} = {}) => {
+  const offCmd = buildOffCommand(channel);
+  const delays = Array.isArray(retryDelaysMs) ? retryDelaysMs : DEFAULT_OFF_RETRY_DELAYS_MS;
+  let lastError = null;
+  let lastResponse = null;
+  let sent = false;
+
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    if (attempt > 0) await sleepFn(delays[attempt - 1]);
+    try {
+      const result = await sendFn(host, port, offCmd, timeoutMs);
+      sent = true;
+      lastResponse = result?.response ?? null;
+      if (result?.confirmed !== false) {
+        if (attempt > 0) {
+          logger.warn(`[sr201] OFF confirmado en el intento ${attempt + 1} (${host}:${port} ch=${channel})`);
+        }
+        return { ok: true, confirmed: true, attempts: attempt + 1, response: lastResponse, error: null };
+      }
+      lastError = 'sin confirmación de la placa';
+      logger.warn(`[sr201] OFF sin confirmación (intento ${attempt + 1}) ${host}:${port} ch=${channel}`);
+    } catch (err) {
+      lastError = err?.message || String(err);
+      logger.error(`[sr201] OFF falló (intento ${attempt + 1}) ${host}:${port} ch=${channel}: ${lastError}`);
+    }
+  }
+
+  logger.error(
+    `[sr201] ¡ATENCIÓN! No se pudo confirmar el OFF del relé ${host}:${port} ch=${channel} `
+    + `tras ${delays.length + 1} intentos (${lastError}). La puerta PUEDE HABER QUEDADO DESTRABADA: `
+    + 'verificar en sitio.'
+  );
+  return {
+    ok: sent,
+    confirmed: false,
+    attempts: delays.length + 1,
+    response: lastResponse,
+    error: lastError
+  };
+};
+
+/**
+ * @param {object} [options]
+ * @param {boolean} [options.waitForComplete=true]
+ *   Si false, resuelve apenas el ON TCP confirma (el OFF sigue en background).
+ *   Usado por el bridge HTTP para no bloquear /api/access/kiosk-scan durante N s.
+ * @param {boolean} [options.nativeTimer=false]
+ *   true → el ON se manda como "1R:n" (la propia placa apaga a los n s) y el OFF
+ *   por software queda como red de seguridad. Validar en banco con el firmware
+ *   instalado antes de activarlo.
+ * @param {number[]} [options.offRetryDelaysMs]
+ */
 const sendTimedPulseTcp = async (
   host,
   port,
@@ -84,39 +154,62 @@ const sendTimedPulseTcp = async (
   options = {}
 ) => {
   const waitForComplete = options.waitForComplete !== false;
+  const sendFn = options.sendFn || sendTcpCommand;
+  const sleepFn = options.sleepFn || sleep;
+  const logger = options.logger || console;
   const n = clampSeconds(seconds);
-  const onCmd = buildOnCommand(channel);
+  const onCmd = options.nativeTimer === true
+    ? buildPulseCommand(channel, 'timed', n)
+    : buildOnCommand(channel);
   const offCmd = buildOffCommand(channel);
-  const onResult = await sendTcpCommand(host, port, onCmd, timeoutMs);
+  const onResult = await sendFn(host, port, onCmd, timeoutMs);
+  const onConfirmed = onResult?.confirmed !== false;
+  if (!onConfirmed) {
+    logger.warn(`[sr201] ON enviado sin confirmación de la placa (${host}:${port} ch=${channel})`);
+  }
 
   const runOff = async () => {
-    await sleep(n * 1000);
-    return sendTcpCommand(host, port, offCmd, timeoutMs);
+    await sleepFn(n * 1000);
+    return sendOffWithRetry(host, port, channel, {
+      timeoutMs,
+      retryDelaysMs: options.offRetryDelaysMs,
+      sendFn,
+      sleepFn,
+      logger
+    });
   };
+
+  const commandLabel = `${onCmd} / wait ${n}s / ${offCmd}`;
 
   if (!waitForComplete) {
     runOff().catch((err) => {
-      console.error(
+      logger.error(
         `[sr201] OFF async falló (${host}:${port} ch=${channel}):`,
-        err.message || err
+        err?.message || err
       );
     });
     return {
-      command: `${onCmd} / wait ${n}s / ${offCmd}`,
+      command: commandLabel,
       mode: 'timed',
       seconds: n,
       async: true,
-      response: onResult.response
+      nativeTimer: options.nativeTimer === true,
+      response: onResult?.response ?? null,
+      confirmed: onConfirmed
     };
   }
 
   const off = await runOff();
   return {
-    command: `${onCmd} / wait ${n}s / ${offCmd}`,
+    command: commandLabel,
     mode: 'timed',
     seconds: n,
     async: false,
-    response: off.response
+    nativeTimer: options.nativeTimer === true,
+    response: off.response,
+    confirmed: onConfirmed && off.confirmed,
+    offConfirmed: off.confirmed,
+    offAttempts: off.attempts
   };
 };
 
@@ -321,6 +414,10 @@ module.exports = {
   buildOffCommand,
   sendTcpCommand,
   sendTimedPulseTcp,
+  sendOffWithRetry,
+  DEFAULT_OFF_RETRY_DELAYS_MS,
+  clampChannel,
+  clampSeconds,
   parseRelayStatusBits,
   queryRelayStatusTcp,
   queryRelayStatusViaBridge,
