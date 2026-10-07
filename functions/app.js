@@ -8,6 +8,27 @@ const cors = require('cors');
 
 const app = express();
 
+/**
+ * `trust proxy` para que req.ip sea la IP real y no el primer valor de
+ * X-Forwarded-For (que controla el cliente).
+ * Cloud Functions v2 (Cloud Run) agrega 1 salto (Google Front End). Si TODO el
+ * tráfico entra por Firebase Hosting (rewrite /api/**) puede hacer falta 2.
+ * TRUST_PROXY: número de saltos o lista de IPs/subredes (formato Express).
+ * `true` no se acepta: confiaría en cualquier valor enviado por el cliente.
+ */
+const resolveTrustProxy = (raw = process.env.TRUST_PROXY) => {
+  const value = String(raw ?? '').trim();
+  if (!value) return 1;
+  if (/^\d+$/.test(value)) return Number(value);
+  if (value === 'false') return false;
+  if (value === 'true') {
+    console.warn('[app] TRUST_PROXY=true ignorado (inseguro); se usa 1 salto.');
+    return 1;
+  }
+  return value;
+};
+app.set('trust proxy', resolveTrustProxy());
+
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ||
   'http://localhost:3000,https://mss-guard.web.app,https://mss-guard.firebaseapp.com'
 ).split(',').map((origin) => origin.trim());

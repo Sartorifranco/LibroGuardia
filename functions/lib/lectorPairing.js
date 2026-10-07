@@ -29,8 +29,8 @@ const httpError = (status, message, code) => {
 };
 
 const generateSixDigitCode = () => {
-  // 100000–999999 (siempre 6 dígitos)
-  return String(Math.floor(100000 + Math.random() * 900000));
+  // 100000–999999 (siempre 6 dígitos), CSPRNG.
+  return String(crypto.randomInt(100000, 1000000));
 };
 
 /**
@@ -115,37 +115,32 @@ const exchangePairingCode = async (rawCode, { apiBaseUrl } = {}) => {
   }
 
   const ref = db.collection(PAIRING_COLLECTION).doc(code);
-  const snap = await ref.get();
-  if (!snap.exists) {
-    throw httpError(400, INVALID_CODE_MESSAGE, 'invalid_pairing_code');
-  }
 
-  const data = snap.data() || {};
-  const now = Date.now();
-  if (data.usedAt) {
-    throw httpError(400, INVALID_CODE_MESSAGE, 'invalid_pairing_code');
-  }
-  const expiresAt = Number(data.expiresAt) || 0;
-  if (!expiresAt || expiresAt < now) {
-    throw httpError(400, INVALID_CODE_MESSAGE, 'invalid_pairing_code');
-  }
-
-  const lectorId = String(data.lectorId || '').trim();
-  if (!lectorId) {
-    throw httpError(400, INVALID_CODE_MESSAGE, 'invalid_pairing_code');
-  }
-
-  // Un solo uso: claim atómico sin transacción (claimId gana).
+  // Un solo uso: lectura + marca usedAt en la misma transacción
+  // (dos canjes concurrentes del mismo código: solo uno gana).
   const claimId = crypto.randomBytes(8).toString('hex');
-  await ref.set({
-    usedAt: now,
-    claimId,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  const lectorId = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
 
-  const afterMark = await ref.get();
-  const afterData = afterMark.data() || {};
-  if (afterData.claimId !== claimId) {
+    const data = snap.data() || {};
+    const now = Date.now();
+    if (data.usedAt) return null;
+    const expiresAt = Number(data.expiresAt) || 0;
+    if (!expiresAt || expiresAt < now) return null;
+
+    const id = String(data.lectorId || '').trim();
+    if (!id) return null;
+
+    tx.set(ref, {
+      usedAt: now,
+      claimId,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    return id;
+  });
+
+  if (!lectorId) {
     throw httpError(400, INVALID_CODE_MESSAGE, 'invalid_pairing_code');
   }
 
