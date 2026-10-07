@@ -42,9 +42,18 @@ const {
 const { logAdminAction } = require('../lib/auditLog');
 const { notifySafe } = require('../lib/notifications');
 const {
+  maskDoors,
+  maskDoorsConfig,
+  maskAccessControlConfig,
+  restoreDoorSecrets,
+  restoreAccessControlSecret
+} = require('../lib/secretMask');
+const {
   auth,
   requirePermission,
-  requireAnyPermission
+  requireAnyPermission,
+  sendServerError,
+  sendRouteError
 } = require('../middleware/auth');
 
 const router = express.Router();
@@ -57,25 +66,27 @@ const buildResolvedName = (parsed) => {
 router.get('/api/admin/access-control', auth, requirePermission('access.control'), async (_req, res) => {
   try {
     const config = await getAccessControlConfig();
-    res.json({ config });
+    res.json({ config: maskAccessControlConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener configuración de acceso', error: err.message });
+    sendServerError(res, err, 'Error al obtener configuración de acceso');
   }
 });
 
 router.put('/api/admin/access-control', auth, requirePermission('access.control'), async (req, res) => {
   try {
     const allowedKeys = Object.keys(DEFAULT_ACCESS_CONTROL);
+    const before = await getAccessControlConfig();
+    const body = restoreAccessControlSecret(req.body || {}, before);
     const updates = {};
     allowedKeys.forEach((key) => {
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+      if (body[key] !== undefined) updates[key] = body[key];
     });
 
     await db.collection('settings').doc('accessControl').set(updates, { merge: true });
     const config = await getAccessControlConfig();
-    res.json({ message: 'Configuración de acceso actualizada', config });
+    res.json({ message: 'Configuración de acceso actualizada', config: maskAccessControlConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar configuración de acceso', error: err.message });
+    sendServerError(res, err, 'Error al guardar configuración de acceso');
   }
 });
 
@@ -139,9 +150,10 @@ router.get('/api/guard/doors', auth, requirePermission('access.manual_open'), as
     const base = await listActiveDoors();
     const withPulse = await enrichDoorsWithLastPulse(base.doors || []);
     const doors = await enrichDoorsWithLocalStations(withPulse);
-    res.json({ ...base, doors });
+    // Guardias no necesitan secretos del hardware.
+    res.json({ ...base, doors: maskDoors(doors) });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -156,7 +168,7 @@ router.get('/api/guard/door-names', auth, requireAnyPermission(['entries.view', 
       }))
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -166,7 +178,7 @@ router.get('/api/guard/live-alerts', auth, requireAnyPermission(['entries.view',
     const result = await getLiveAlerts();
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: err.message || 'Error al obtener alertas en vivo' });
+    sendServerError(res, err, 'Error al obtener alertas en vivo');
   }
 });
 
@@ -176,7 +188,7 @@ router.get('/api/guard/fleet-presence', auth, requireAnyPermission(['entries.vie
     const presence = await getFleetPresence();
     res.json(presence);
   } catch (err) {
-    res.status(500).json({ message: err.message || 'Error al calcular presencia de flota' });
+    sendServerError(res, err, 'Error al calcular presencia de flota');
   }
 });
 
@@ -189,9 +201,10 @@ router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       getDoorsConfigMeta()
     ]);
     const doors = await enrichDoorsWithLocalStations(config.doors || []);
+    // Secretos enmascarados ("••••" + 2 últimos) + hasBridgeSecret/hasHttpAuthToken.
     res.json({
-      config: { ...config, doors },
-      globalAccess,
+      config: maskDoorsConfig({ ...config, doors }),
+      globalAccess: maskAccessControlConfig(globalAccess),
       authMethods: AUTH_METHODS,
       meta: {
         ...meta,
@@ -199,7 +212,7 @@ router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       }
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -215,7 +228,14 @@ router.get('/api/admin/doors/physical-status', auth, requireAnyPermission(['acce
 router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.manage', 'access.control']), async (req, res) => {
   try {
     const before = await getDoorsConfig();
-    const { globalAccess, ...doorsPayload } = req.body || {};
+    const { globalAccess: rawGlobalAccess, ...doorsPayload } = req.body || {};
+    // Si el admin guarda sin tocar el secreto, llega la máscara (o vacío): conservar el guardado.
+    if (Array.isArray(doorsPayload.doors)) {
+      doorsPayload.doors = restoreDoorSecrets(doorsPayload.doors, before.doors || []);
+    }
+    const globalAccess = rawGlobalAccess && typeof rawGlobalAccess === 'object'
+      ? restoreAccessControlSecret(rawGlobalAccess, await getAccessControlConfig())
+      : rawGlobalAccess;
     if (Array.isArray(doorsPayload.doors)) {
       const { assertDoorsCompatibleWithOfflineLectores } = require('../lib/accessHardwareCoherence');
       const { listLectores } = require('../lib/lectores');
@@ -232,12 +252,12 @@ router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       targetType: 'doors_config',
       targetId: 'doorsConfig',
       before: {
-        doors: before.doors,
+        doors: maskDoors(before.doors),
         airlockGroups: before.airlockGroups,
         defaultDoorId: before.defaultDoorId
       },
       after: {
-        doors: config.doors,
+        doors: maskDoors(config.doors),
         airlockGroups: config.airlockGroups,
         defaultDoorId: config.defaultDoorId,
         globalAccessUpdated: Boolean(savedGlobalAccess)
@@ -245,14 +265,11 @@ router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
     }).catch((err) => console.error('auditLog door.config.update:', err.message));
     res.json({
       message: 'Configuración de puertas y acceso guardada',
-      config,
-      globalAccess: savedGlobalAccess || await getAccessControlConfig()
+      config: maskDoorsConfig(config),
+      globalAccess: maskAccessControlConfig(savedGlobalAccess || await getAccessControlConfig())
     });
   } catch (err) {
-    res.status(err.status || 500).json({
-      message: err.message || 'Error al guardar puertas',
-      code: err.code
-    });
+    sendRouteError(res, err, 'Error al guardar puertas');
   }
 });
 
@@ -260,7 +277,7 @@ router.get('/api/guard/airlock/:groupId', auth, requirePermission('access.manual
   try {
     res.json({ state: await getAirlockState(req.params.groupId) });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -269,11 +286,11 @@ router.post('/api/guard/airlock/:groupId/reset', auth, requirePermission('access
     await resetAirlockState(req.params.groupId, req.body?.reason || 'manual_reset');
     res.json({ message: 'Estanco reiniciado', state: await getAirlockState(req.params.groupId) });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
-router.post('/api/access/validar', auth, async (req, res) => {
+router.post('/api/access/validar', auth, requireAnyPermission(['access.kiosk', 'entries.create']), async (req, res) => {
   try {
     const {
       dni = '',
@@ -295,7 +312,7 @@ router.post('/api/access/validar', auth, async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al validar acceso', error: err.message });
+    sendServerError(res, err, 'Error al validar acceso');
   }
 });
 
@@ -307,7 +324,7 @@ router.get('/api/guard/access-status', auth, requirePermission('master.citacione
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al consultar acceso', error: err.message });
+    sendServerError(res, err, 'Error al consultar acceso');
   }
 });
 
@@ -343,7 +360,7 @@ router.post('/api/guard/exceptional-entry', auth, requirePermission('access.exce
   }
 });
 
-router.post('/api/access/kiosk-scan', auth, async (req, res) => {
+router.post('/api/access/kiosk-scan', auth, requirePermission('access.kiosk'), async (req, res) => {
   const t0 = Date.now();
   try {
     const normalized = normalizeAccessIngestRequest({
@@ -371,7 +388,7 @@ router.post('/api/access/kiosk-scan', auth, async (req, res) => {
       wallMs: Date.now() - t0,
       error: err.message
     }));
-    res.status(500).json({ message: 'Error en control de acceso', error: err.message });
+    sendServerError(res, err, 'Error en control de acceso');
   }
 });
 
@@ -379,7 +396,7 @@ router.post('/api/access/kiosk-scan', auth, async (req, res) => {
  * Ingest unificado (Fase A): DNI, tarjeta, biométrico u otros hardwares.
  * Misma autorización/apertura que kiosk-scan; contrato estable para marcas.
  */
-router.post('/api/access/ingest', auth, async (req, res) => {
+router.post('/api/access/ingest', auth, requirePermission('access.kiosk'), async (req, res) => {
   const t0 = Date.now();
   try {
     const normalized = normalizeAccessIngestRequest(req.body || {}, req.user.id);
@@ -408,7 +425,7 @@ router.post('/api/access/ingest', auth, async (req, res) => {
       wallMs: Date.now() - t0,
       error: err.message
     }));
-    res.status(500).json({ message: 'Error en ingest de acceso', error: err.message });
+    sendServerError(res, err, 'Error en ingest de acceso');
   }
 });
 
@@ -441,7 +458,7 @@ router.post('/api/access/evaluate', auth, requirePermission('master.personal.rea
       }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al evaluar acceso', error: err.message });
+    sendServerError(res, err, 'Error al evaluar acceso');
   }
 });
 
@@ -510,7 +527,7 @@ router.post('/api/scan/resolve', auth, requirePermission('master.personal.read')
       }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al resolver escaneo', error: err.message });
+    sendServerError(res, err, 'Error al resolver escaneo');
   }
 });
 

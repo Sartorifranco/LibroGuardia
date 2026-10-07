@@ -18,7 +18,9 @@ const { resolveOrCreatePerson } = require('../people');
 const { triggerAccessIfAuthorized } = require('../accessControl');
 const {
   auth,
-  requirePermission
+  requirePermission,
+  requireAnyPermission,
+  sendServerError
 } = require('../middleware/auth');
 
 const router = express.Router();
@@ -41,7 +43,7 @@ router.get('/api/admin/nomina', auth, requirePermission('master.nomina.read'), a
     const personal = await listNominaPersonal();
     res.json({ personal, count: personal.length });
   } catch (err) {
-    res.status(500).json({ message: 'Error al listar nómina', error: err.message });
+    sendServerError(res, err, 'Error al listar nómina');
   }
 });
 
@@ -56,7 +58,7 @@ router.post('/api/admin/nomina', auth, requirePermission('master.nomina.write'),
     if (err.code === 'invalid_nomina') {
       return res.status(400).json({ message: nominaReasonMessage(err.reason), reason: err.reason });
     }
-    res.status(500).json({ message: 'Error al guardar empleado', error: err.message });
+    sendServerError(res, err, 'Error al guardar empleado');
   }
 });
 
@@ -71,7 +73,7 @@ router.put('/api/admin/nomina/:id', auth, requirePermission('master.nomina.write
     if (err.code === 'invalid_nomina') {
       return res.status(400).json({ message: nominaReasonMessage(err.reason), reason: err.reason });
     }
-    res.status(500).json({ message: 'Error al actualizar empleado', error: err.message });
+    sendServerError(res, err, 'Error al actualizar empleado');
   }
 });
 
@@ -83,12 +85,12 @@ router.delete('/api/admin/nomina/:id', auth, requirePermission('master.nomina.wr
     if (err.code === 'not_found') {
       return res.status(404).json({ message: err.message });
     }
-    res.status(500).json({ message: 'Error al dar de baja', error: err.message });
+    sendServerError(res, err, 'Error al dar de baja');
   }
 });
 
 /** Cumpleaños de hoy (home guardia — sutil). */
-router.get('/api/nomina/birthdays-today', auth, async (_req, res) => {
+router.get('/api/nomina/birthdays-today', auth, requireAnyPermission(['master.nomina.read', 'attendance.alerts.read', 'entries.view']), async (_req, res) => {
   try {
     const birthdays = await listNominaBirthdays({ withinDays: 0 });
     res.json({
@@ -98,7 +100,7 @@ router.get('/api/nomina/birthdays-today', auth, async (_req, res) => {
       date: new Date().toISOString().slice(0, 10)
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al listar cumpleaños', error: err.message });
+    sendServerError(res, err, 'Error al listar cumpleaños');
   }
 });
 
@@ -123,7 +125,7 @@ router.post('/api/admin/nomina/upload', auth, requirePermission('master.nomina.w
       message: `Importación encolada (${job.rowCount} filas)`
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al encolar importación de nómina', error: err.message });
+    sendServerError(res, err, 'Error al encolar importación de nómina');
   }
 });
 
@@ -142,8 +144,10 @@ router.post('/api/admin/nomina/upload/:jobId/step', auth, requirePermission('mas
     }
     res.status(200).json({ message, ...result });
   } catch (err) {
-    const status = err.code === 'not_found' ? 404 : 500;
-    res.status(status).json({ message: 'Error al procesar nómina', error: err.message });
+    if (err.code === 'not_found') {
+      return res.status(404).json({ message: err.message || 'Error al procesar nómina' });
+    }
+    sendServerError(res, err, 'Error al procesar nómina');
   }
 });
 
@@ -152,7 +156,7 @@ router.get('/api/guard/attendance/missing', auth, requirePermission('attendance.
     const result = await getMissingAttendanceAlerts();
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al consultar faltantes de ingreso', error: err.message });
+    sendServerError(res, err, 'Error al consultar faltantes de ingreso');
   }
 });
 
@@ -161,7 +165,7 @@ router.get('/api/guard/citados/today', auth, requirePermission('attendance.alert
     const result = await getCitadosToday();
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al consultar citados del día', error: err.message });
+    sendServerError(res, err, 'Error al consultar citados del día');
   }
 });
 
@@ -178,7 +182,7 @@ router.post('/api/guard/attendance/dismiss', auth, requirePermission('attendance
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al omitir alerta', error: err.message });
+    sendServerError(res, err, 'Error al omitir alerta');
   }
 });
 
@@ -238,7 +242,7 @@ router.post('/api/guard/attendance/register-entry', auth, requirePermission('ent
       entryId: ref.id
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al registrar ingreso', error: err.message });
+    sendServerError(res, err, 'Error al registrar ingreso');
   }
 });
 
@@ -287,7 +291,7 @@ router.post('/api/guard/attendance/bulk-present', auth, requirePermission('entri
       errors
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error en registro masivo', error: err.message });
+    sendServerError(res, err, 'Error en registro masivo');
   }
 });
 
@@ -306,7 +310,7 @@ router.post('/api/guard/attendance/bulk-absent', auth, requirePermission('attend
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al marcar ausentes', error: err.message });
+    sendServerError(res, err, 'Error al marcar ausentes');
   }
 });
 

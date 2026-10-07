@@ -3,9 +3,9 @@
  * Paths absolutos /api/... porque setup y auth no comparten el mismo prefijo.
  */
 
+const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const { db, FieldValue } = require('../firestore');
 const { getRoleById } = require('../roles');
 const {
@@ -24,11 +24,12 @@ const { changeOwnPassword } = require('../lib/changePassword');
 const { selfRegisterEmployee } = require('../lib/selfRegister');
 const {
   getPasswordVersion,
-  setCachedPasswordVersion
+  cacheUserAuthState
 } = require('../lib/passwordVersion');
 const {
   auth,
-  getJwtSecret,
+  signAuthToken,
+  sendServerError,
   getUserPermissions,
   userToJSON
 } = require('../middleware/auth');
@@ -40,40 +41,62 @@ router.get('/api/health', async (_req, res) => {
     await db.collection('users').limit(1).get();
     res.json({ status: 'ok', database: 'firestore', platform: 'firebase-functions' });
   } catch (err) {
-    res.status(503).json({ status: 'error', database: 'firestore', error: err.message });
+    console.error('[api] health:', err?.message || err);
+    res.status(503).json({ status: 'error', database: 'firestore' });
   }
 });
 
+/** Comparación en tiempo constante (hash previo: longitudes distintas no filtran timing). */
+const safeEqualSecret = (provided, expected) => {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  if (!provided || !expected) return false;
+  const a = crypto.createHash('sha256').update(provided, 'utf8').digest();
+  const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
+  return crypto.timingSafeEqual(a, b);
+};
+
 router.post('/api/setup/initial-users', async (req, res) => {
   try {
+    const expectedKey = String(process.env.SETUP_KEY || '').trim();
+    if (!expectedKey) {
+      // Sin SETUP_KEY configurada el bootstrap HTTP no existe.
+      return res.status(404).json({ message: 'Ruta no encontrada' });
+    }
     const setupKey = req.headers['x-setup-key'] || req.body?.setupKey;
-    const expectedKey = process.env.SETUP_KEY || 'bacar-lg-setup-2026';
-    if (!setupKey || setupKey !== expectedKey) {
+    if (!safeEqualSecret(typeof setupKey === 'string' ? setupKey : '', expectedKey)) {
       return res.status(403).json({ message: 'Clave de setup inválida' });
     }
 
+    // force: crea los usuarios iniciales faltantes aunque el bootstrap ya se haya
+    // ejecutado. Nunca resetea contraseñas de usuarios existentes.
     const force = req.body?.force === true;
     if (!force && await isBootstrapCompleted()) {
       return res.status(403).json({
-        message: 'Bootstrap ya ejecutado. Use force: true para actualizar usuarios iniciales.'
+        message: 'Bootstrap ya ejecutado. Use force: true para crear usuarios iniciales faltantes.'
       });
     }
 
     const results = await seedInitialUsers();
-    const testUsers = INITIAL_USERS
-      .filter((user) => user.username.startsWith('prueba.'))
-      .map(({ username, password, role, label }) => ({ username, password, role, label }));
 
+    // Nunca se devuelven contraseñas: los usuarios nuevos quedan con mustChangePassword.
     res.json({
-      message: force ? 'Usuarios iniciales actualizados' : 'Usuarios iniciales cargados',
-      results,
+      message: force ? 'Usuarios iniciales faltantes creados' : 'Usuarios iniciales cargados',
+      results: results.map(({ username, role, created }) => ({ username, role, created })),
       admins: INITIAL_USERS
         .filter((user) => user.role === 'admin')
         .map(({ username, role }) => ({ username, role })),
-      testUsers
+      testUsers: INITIAL_USERS
+        .filter((user) => user.username.startsWith('prueba.'))
+        .map(({ username, role, label }) => ({
+          username,
+          role,
+          label,
+          created: results.find((r) => r.username === username)?.created === true
+        })),
+      note: 'Los usuarios creados deben cambiar la contraseña en el primer ingreso.'
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error en bootstrap de usuarios', error: err.message });
+    sendServerError(res, err, 'Error en bootstrap de usuarios', 'setup/initial-users');
   }
 });
 
@@ -95,7 +118,10 @@ router.post('/api/auth/self-register', async (req, res) => {
       user
     });
   } catch (err) {
-    res.status(err.status || 500).json({
+    if ((Number(err.status) || 500) >= 500) {
+      return sendServerError(res, err, 'Error en el autoregistro', 'auth/self-register');
+    }
+    res.status(err.status).json({
       message: err.message || 'Error en el autoregistro',
       code: err.code
     });
@@ -155,7 +181,7 @@ router.post('/api/auth/login', async (req, res) => {
     const permissions = await getUserPermissions(user);
     const roleMeta = await getRoleById(user.role);
     const passwordVersion = getPasswordVersion(user);
-    const token = jwt.sign(
+    const token = signAuthToken(
       {
         id: snap.id,
         // Claim explícito para endpoints que identifican por username
@@ -165,10 +191,9 @@ router.post('/api/auth/login', async (req, res) => {
         permissions,
         passwordVersion
       },
-      getJwtSecret(),
       { expiresIn: '8h' }
     );
-    setCachedPasswordVersion(snap.id, passwordVersion);
+    cacheUserAuthState(snap.id, user);
     res.json({
       token,
       user: {
@@ -187,7 +212,7 @@ router.post('/api/auth/login', async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al iniciar sesión', error: err.message });
+    sendServerError(res, err, 'Error al iniciar sesión', 'auth/login');
   }
 });
 
@@ -225,7 +250,10 @@ router.post('/api/auth/pairing-exchange', async (req, res) => {
         code: 'invalid_pairing_code'
       });
     }
-    res.status(err.status || 500).json({
+    if ((Number(err.status) || 500) >= 500) {
+      return sendServerError(res, err, 'Error en emparejamiento', 'auth/pairing-exchange');
+    }
+    res.status(err.status).json({
       message: err.message || 'Error en emparejamiento',
       code: err.code
     });
@@ -252,9 +280,11 @@ router.post('/api/auth/change-password', auth, async (req, res) => {
     });
   } catch (err) {
     const status = err.status || 500;
+    if (status >= 500) {
+      return sendServerError(res, err, 'Error al cambiar la contraseña', 'auth/change-password');
+    }
     res.status(status).json({
-      message: err.message || 'Error al cambiar la contraseña',
-      ...(status === 500 ? { error: err.message } : {})
+      message: err.message || 'Error al cambiar la contraseña'
     });
   }
 });
@@ -273,7 +303,7 @@ router.get('/api/auth/me', auth, async (req, res) => {
       });
     }
     // Refresca cache con la versión actual (defensivo ante desync).
-    setCachedPasswordVersion(req.user.id, getPasswordVersion(data));
+    cacheUserAuthState(req.user.id, data);
     const permissions = await getUserPermissions(data);
     const roleMeta = await getRoleById(data.role);
     res.json({
@@ -284,7 +314,7 @@ router.get('/api/auth/me', auth, async (req, res) => {
       }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener datos del usuario', error: err.message });
+    sendServerError(res, err, 'Error al obtener datos del usuario', 'auth/me');
   }
 });
 

@@ -26,7 +26,8 @@ const {
   userToJSON,
   auth,
   requirePermission,
-  requireAnyPermission
+  requireAnyPermission,
+  sendServerError
 } = require('../middleware/auth');
 const { clearLoginFailures } = require('../lib/loginRateLimit');
 
@@ -37,7 +38,7 @@ router.get('/api/admin/permissions/roles', auth, requirePermission('settings.per
     const roles = await getRoleTemplates();
     res.json({ roles, permissionKeys: PERMISSION_KEYS });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener permisos por rol', error: err.message });
+    sendServerError(res, err, 'Error al obtener permisos por rol');
   }
 });
 
@@ -73,7 +74,7 @@ router.put('/api/admin/permissions/roles', auth, requirePermission('settings.per
     }).catch((err) => console.error('auditLog permissions.change:', err.message));
     res.json({ message: 'Permisos por rol actualizados', roles: sanitized });
   } catch (err) {
-    res.status(500).json({ message: 'Error al actualizar permisos por rol', error: err.message });
+    sendServerError(res, err, 'Error al actualizar permisos por rol');
   }
 });
 
@@ -84,7 +85,7 @@ router.get('/api/admin/roles', auth, requireAnyPermission(['roles.view', 'roles.
     const roles = await listRoles();
     res.json({ roles, permissionKeys: PERMISSION_KEYS });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener roles', error: err.message });
+    sendServerError(res, err, 'Error al obtener roles');
   }
 });
 
@@ -177,7 +178,7 @@ router.put('/api/admin/users/:id/permissions', auth, requirePermission('settings
     }).catch((err) => console.error('auditLog user.permissions.update:', err.message));
     res.json({ message: 'Permisos personalizados actualizados', user: userToJSON(updated, resolved) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al actualizar permisos del usuario', error: err.message });
+    sendServerError(res, err, 'Error al actualizar permisos del usuario');
   }
 });
 
@@ -235,7 +236,7 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
       user: created
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al crear usuario', error: err.message });
+    sendServerError(res, err, 'Error al crear usuario');
   }
 });
 
@@ -244,7 +245,7 @@ router.get('/api/admin/users', auth, requirePermission('users.view'), async (req
     const snap = await db.collection('users').orderBy('username').get();
     res.json({ users: snap.docs.map(userToJSON) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener usuarios', error: err.message });
+    sendServerError(res, err, 'Error al obtener usuarios');
   }
 });
 
@@ -291,10 +292,21 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
     }
     if (typeof active === 'boolean' && req.user.id !== id) updates.active = active;
 
+    // Desactivar o cambiar el rol invalida las sesiones abiertas (JWT con role/permisos viejos).
+    const deactivating = updates.active === false && userToUpdate.active !== false;
+    const roleChanged = updates.role !== undefined && updates.role !== userToUpdate.role;
+    if ((deactivating || roleChanged) && updates.passwordVersion === undefined) {
+      updates.passwordVersion = nextPasswordVersion(userToUpdate);
+    }
+
     await userRef.update(updates);
-    if (password) {
+    if (updates.passwordVersion !== undefined || updates.active !== undefined) {
       invalidatePasswordVersionCache(id);
-      setCachedPasswordVersion(id, updates.passwordVersion);
+      setCachedPasswordVersion(
+        id,
+        updates.passwordVersion !== undefined ? updates.passwordVersion : getPasswordVersion(userToUpdate),
+        updates.active !== undefined ? updates.active !== false : userToUpdate.active !== false
+      );
     }
     const updated = await userRef.get();
     const afterData = updated.data();
@@ -315,7 +327,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
     }).catch((err) => console.error('auditLog user.update:', err.message));
     res.json({ message: 'Usuario actualizado', user: userToJSON(updated) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al actualizar el usuario', error: err.message });
+    sendServerError(res, err, 'Error al actualizar el usuario');
   }
 });
 
@@ -375,6 +387,8 @@ router.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), a
     }
 
     await userRef.delete();
+    // Sin cache, el próximo request del token borrado no encuentra el doc → 401.
+    invalidatePasswordVersionCache(id);
     logActivity(db, FieldValue, {
       actorUsername: req.user.username || req.user.id,
       actorId: req.user.id,
@@ -396,7 +410,7 @@ router.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), a
     }).catch((err) => console.error('auditLog user.delete:', err.message));
     res.json({ message: 'Usuario eliminado exitosamente' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al eliminar usuario', error: err.message });
+    sendServerError(res, err, 'Error al eliminar usuario');
   }
 });
 

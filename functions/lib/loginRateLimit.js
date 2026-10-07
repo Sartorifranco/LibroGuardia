@@ -30,16 +30,26 @@ const sanitizeKeyPart = (value) => String(value || 'unknown')
 const userDocId = (username) => `user_${sanitizeKeyPart(username)}`;
 const ipDocId = (ip) => `ip_${sanitizeKeyPart(ip)}`;
 
-const getClientIp = (req) => {
-  const forwarded = req?.headers?.['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim()) {
-    return forwarded.split(',')[0].trim();
-  }
-  if (Array.isArray(forwarded) && forwarded[0]) {
-    return String(forwarded[0]).trim();
-  }
-  return req?.ip || req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown';
-};
+/**
+ * IP del cliente según Express (`req.ip`), que respeta `trust proxy` (ver app.js).
+ * No se lee X-Forwarded-For a mano: su primer valor lo controla el cliente
+ * y permitiría saltear el rate limit por IP.
+ */
+const getClientIp = (req) => (
+  req?.ip || req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown'
+);
+
+/**
+ * Read-modify-write atómico de un doc de rate limit (transacción Firestore).
+ * `compute(data)` devuelve { write, result }: `write` se guarda con merge.
+ */
+const runLimitTransaction = async (db, docRef, compute) => db.runTransaction(async (tx) => {
+  const snap = await tx.get(docRef);
+  const data = snap.exists ? snap.data() : null;
+  const { write, result } = compute(data);
+  tx.set(docRef, write, { merge: true });
+  return result;
+});
 
 /**
  * Evalúa el estado de un documento de rate limit (pura, testeable).
@@ -117,16 +127,23 @@ const checkLoginRateLimit = async (db, { username }, now = Date.now()) => {
   };
 };
 
-const writeUserFailure = async (db, FieldValue, username, data, now) => {
-  const next = nextFailureState(data, now);
-  await db.collection(COLLECTION).doc(userDocId(username)).set({
-    failedAttempts: next.failedAttempts,
-    windowStartedAt: next.windowStartedAt,
-    blockedUntil: next.blockedUntil,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
-  return next;
-};
+/** Incrementa fallos del usuario en transacción (intentos concurrentes no se pisan). */
+const writeUserFailure = async (db, FieldValue, username, now) => runLimitTransaction(
+  db,
+  db.collection(COLLECTION).doc(userDocId(username)),
+  (data) => {
+    const next = nextFailureState(data, now);
+    return {
+      write: {
+        failedAttempts: next.failedAttempts,
+        windowStartedAt: next.windowStartedAt,
+        blockedUntil: next.blockedUntil,
+        updatedAt: FieldValue.serverTimestamp()
+      },
+      result: next
+    };
+  }
+);
 
 /**
  * Registra actividad sospechosa por IP (cuentas distintas) sin bloquear.
@@ -134,34 +151,37 @@ const writeUserFailure = async (db, FieldValue, username, data, now) => {
  */
 const recordIpProbe = async (db, FieldValue, { username, ip }, now = Date.now()) => {
   const docRef = db.collection(COLLECTION).doc(ipDocId(ip));
-  const snap = await docRef.get();
-  const data = snap.exists ? snap.data() : null;
-  const windowStartedAt = toMillis(data?.windowStartedAt);
-  const windowExpired = !windowStartedAt || (now - windowStartedAt) > WINDOW_MS;
-
-  let attemptedUsers = Array.isArray(data?.attemptedUsers) ? [...data.attemptedUsers] : [];
-  if (windowExpired) {
-    attemptedUsers = [];
-  }
   const normalizedUser = sanitizeKeyPart(username);
-  if (!attemptedUsers.includes(normalizedUser)) {
-    attemptedUsers.push(normalizedUser);
-  }
-  // Mantener lista acotada
-  if (attemptedUsers.length > 50) {
-    attemptedUsers = attemptedUsers.slice(-50);
-  }
+  const { alert, attemptedUsers } = await runLimitTransaction(db, docRef, (data) => {
+    const windowStartedAt = toMillis(data?.windowStartedAt);
+    const windowExpired = !windowStartedAt || (now - windowStartedAt) > WINDOW_MS;
 
-  const alert = attemptedUsers.length >= IP_ALERT_DISTINCT_USERS;
-  await docRef.set({
-    kind: 'ip_probe',
-    attemptedUsers,
-    distinctUsers: attemptedUsers.length,
-    windowStartedAt: windowExpired ? now : (windowStartedAt || now),
-    alertActive: alert,
-    lastUsername: normalizedUser,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+    let users = Array.isArray(data?.attemptedUsers) ? [...data.attemptedUsers] : [];
+    if (windowExpired) {
+      users = [];
+    }
+    if (!users.includes(normalizedUser)) {
+      users.push(normalizedUser);
+    }
+    // Mantener lista acotada
+    if (users.length > 50) {
+      users = users.slice(-50);
+    }
+
+    const isAlert = users.length >= IP_ALERT_DISTINCT_USERS;
+    return {
+      write: {
+        kind: 'ip_probe',
+        attemptedUsers: users,
+        distinctUsers: users.length,
+        windowStartedAt: windowExpired ? now : (windowStartedAt || now),
+        alertActive: isAlert,
+        lastUsername: normalizedUser,
+        updatedAt: FieldValue.serverTimestamp()
+      },
+      result: { alert: isAlert, attemptedUsers: users }
+    };
+  });
 
   if (alert) {
     console.warn('[loginRateLimit] Posible sniffing de login', {
@@ -175,8 +195,7 @@ const recordIpProbe = async (db, FieldValue, { username, ip }, now = Date.now())
 };
 
 const recordFailedLogin = async (db, FieldValue, { username, ip }, now = Date.now()) => {
-  const userData = await readLimitDoc(db, userDocId(username));
-  const userNext = await writeUserFailure(db, FieldValue, username, userData, now);
+  const userNext = await writeUserFailure(db, FieldValue, username, now);
 
   // Señal adicional: no bloquea a otros usuarios de la misma IP
   if (ip) {
@@ -218,16 +237,20 @@ const checkPairingRateLimit = async (db, { ip }, now = Date.now()) => {
 };
 
 const recordPairingFailure = async (db, FieldValue, { ip }, now = Date.now()) => {
-  const docId = pairingIpDocId(ip);
-  const data = await readLimitDoc(db, docId);
-  const next = nextFailureState(data, now);
-  await db.collection(COLLECTION).doc(docId).set({
-    kind: 'pairing',
-    failedAttempts: next.failedAttempts,
-    windowStartedAt: next.windowStartedAt,
-    blockedUntil: next.blockedUntil,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  const docRef = db.collection(COLLECTION).doc(pairingIpDocId(ip));
+  const next = await runLimitTransaction(db, docRef, (data) => {
+    const state = nextFailureState(data, now);
+    return {
+      write: {
+        kind: 'pairing',
+        failedAttempts: state.failedAttempts,
+        windowStartedAt: state.windowStartedAt,
+        blockedUntil: state.blockedUntil,
+        updatedAt: FieldValue.serverTimestamp()
+      },
+      result: state
+    };
+  });
   if (next.justBlocked || (next.blockedUntil && next.blockedUntil > now)) {
     return {
       blocked: true,

@@ -92,6 +92,17 @@ const installMock = () => {
     loaded: true,
     exports: {
       db: {
+        async runTransaction(fn) {
+          const writes = [];
+          const tx = {
+            get: (ref) => ref.get(),
+            set: (ref, payload, opts) => writes.push(() => ref.set(payload, opts)),
+            update: (ref, payload) => writes.push(() => ref.update(payload))
+          };
+          const result = await fn(tx);
+          for (const write of writes) await write();
+          return result;
+        },
         collection(name) {
           return {
             doc(id) {

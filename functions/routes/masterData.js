@@ -11,7 +11,8 @@ const { logActivity } = require('../lib/activityLog');
 const {
   auth,
   requirePermission,
-  requireAnyPermission
+  requireAnyPermission,
+  sendServerError
 } = require('../middleware/auth');
 
 const router = express.Router();
@@ -29,16 +30,16 @@ const mergeOptionalExpiry = (target, body, key) => {
   if (ymd) target[key] = ymd;
 };
 
-router.get('/api/master-data/personal', auth, async (_req, res) => {
+router.get('/api/master-data/personal', auth, requirePermission('master.personal.read'), async (_req, res) => {
   try {
     const snap = await db.collection('personalMaster').orderBy('name').get();
     res.json({ personal: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener datos maestros de personal', error: err.message });
+    sendServerError(res, err, 'Error al obtener datos maestros de personal');
   }
 });
 
-router.post('/api/master-data/personal', auth, async (req, res) => {
+router.post('/api/master-data/personal', auth, requirePermission('master.personal.write'), async (req, res) => {
   try {
     const { name, idNumber, company, destination } = req.body;
     if (!name?.trim()) {
@@ -90,7 +91,7 @@ router.post('/api/master-data/personal', auth, async (req, res) => {
       personal: { id: personRef.id, ...personData }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar persona en la base maestra', error: err.message });
+    sendServerError(res, err, 'Error al guardar persona en la base maestra');
   }
 });
 
@@ -113,7 +114,7 @@ router.get('/api/master-data/personal/by-dni/:dni', auth, requirePermission('mas
     const doc = snap.docs[0];
     res.json({ personal: { id: doc.id, ...doc.data() } });
   } catch (err) {
-    res.status(500).json({ message: 'Error al buscar persona por DNI', error: err.message });
+    sendServerError(res, err, 'Error al buscar persona por DNI');
   }
 });
 
@@ -127,7 +128,7 @@ router.get('/api/master-data/citaciones', auth, requirePermission('master.citaci
       date
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener citaciones', error: err.message });
+    sendServerError(res, err, 'Error al obtener citaciones');
   }
 });
 
@@ -168,7 +169,7 @@ router.post('/api/master-data/citaciones', auth, requirePermission('master.citac
 
     res.status(201).json({ message: 'Citación registrada', citacion: { id: ref.id, ...data } });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar citación', error: err.message });
+    sendServerError(res, err, 'Error al guardar citación');
   }
 });
 
@@ -182,7 +183,7 @@ router.delete('/api/master-data/citaciones/:id', auth, requirePermission('master
     await ref.delete();
     res.json({ message: 'Citación eliminada' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al eliminar citación', error: err.message });
+    sendServerError(res, err, 'Error al eliminar citación');
   }
 });
 
@@ -191,7 +192,7 @@ router.get('/api/master-data/vehicles', auth, requirePermission('master.vehicles
     const snap = await db.collection('vehiclesMaster').orderBy('plate').get();
     res.json({ vehicles: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener vehículos autorizados', error: err.message });
+    sendServerError(res, err, 'Error al obtener vehículos autorizados');
   }
 });
 
@@ -238,7 +239,7 @@ router.get('/api/master-data/vehicles/lookup', auth, requirePermission('master.v
         : null
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al consultar patente', error: err.message });
+    sendServerError(res, err, 'Error al consultar patente');
   }
 });
 
@@ -285,7 +286,7 @@ router.post('/api/master-data/vehicles', auth, requirePermission('master.vehicle
       vehicle: { id: vehicleRef.id, ...vehicleData }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar vehículo autorizado', error: err.message });
+    sendServerError(res, err, 'Error al guardar vehículo autorizado');
   }
 });
 
@@ -345,7 +346,7 @@ router.post('/api/master-data/vehicles/quick-authorize', auth, requireAnyPermiss
       vehicle: { id: vehicleRef.id, ...vehicleData }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error en autorización rápida', error: err.message });
+    sendServerError(res, err, 'Error en autorización rápida');
   }
 });
 
@@ -367,7 +368,7 @@ router.delete('/api/master-data/vehicles/:id', auth, requirePermission('master.v
     }).catch((err) => console.error('activityLog vehicle.delete:', err.message));
     res.json({ message: 'Vehículo eliminado de la base autorizada' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al eliminar vehículo', error: err.message });
+    sendServerError(res, err, 'Error al eliminar vehículo');
   }
 });
 
