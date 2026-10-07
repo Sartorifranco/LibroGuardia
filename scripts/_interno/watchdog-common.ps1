@@ -132,3 +132,173 @@ function Assert-BridgeWatchdog {
     Health = $health
   }
 }
+
+# Misma decision que scripts/lib/watchdogSettings.js (nextStationHealthState).
+# No duplicar el conteo aca: si cambia el tope, se cambia en un solo lugar.
+function Get-NextStationHealthState {
+  param(
+    [int]$ConsecutiveFailures = 0,
+    [bool]$Responded = $false,
+    [int]$FailureThreshold = 3
+  )
+
+  $lib = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\lib\watchdogSettings.js'))
+  $nodeCmd = Get-Command node -ErrorAction Stop
+  $json = (@{
+    consecutiveFailures = $ConsecutiveFailures
+    responded = [bool]$Responded
+    failureThreshold = $FailureThreshold
+  } | ConvertTo-Json -Compress)
+
+  $output = $json | & $nodeCmd.Source $lib next-station-health
+  if ($LASTEXITCODE -ne 0 -or -not $output) {
+    throw "watchdogSettings.js no pudo decidir el estado de salud de la estacion"
+  }
+  return ($output | ConvertFrom-Json)
+}
+
+function Write-StationHealthLog {
+  param(
+    [Parameter(Mandatory = $true)][string]$LogPath,
+    [Parameter(Mandatory = $true)][string]$Message
+  )
+  $line = "{0} {1}" -f (Get-Date).ToString('o'), $Message
+  Add-Content -LiteralPath $LogPath -Value $line -Encoding UTF8
+}
+
+function Save-StationHealthState {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)]$State
+  )
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  $tmp = "$Path.$PID.tmp"
+  [IO.File]::WriteAllText($tmp, (($State | ConvertTo-Json -Compress) + "`n"), $utf8)
+  if (Test-Path -LiteralPath $Path) {
+    Remove-Item -LiteralPath $Path -Force
+  }
+  Move-Item -LiteralPath $tmp -Destination $Path
+}
+
+function Test-HttpEndpointResponded {
+  param(
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [hashtable]$Headers = @{},
+    [int]$TimeoutSec = 5
+  )
+  try {
+    $params = @{
+      Uri = $Uri
+      Method = 'GET'
+      TimeoutSec = $TimeoutSec
+      UseBasicParsing = $true
+    }
+    if ($Headers.Count -gt 0) { $params.Headers = $Headers }
+    Invoke-WebRequest @params | Out-Null
+    return $true
+  } catch {
+    # Cualquier respuesta HTTP (401, 500, etc.) significa que el proceso sigue vivo.
+    # Timeout o conexion rechazada no traen Response: eso es cuelgue o caida.
+    return [bool]$_.Exception.Response
+  }
+}
+
+function Invoke-NssmHttpHealthWatch {
+  param(
+    [Parameter(Mandatory = $true)][string]$ServiceName,
+    [Parameter(Mandatory = $true)][string]$HealthUri,
+    [hashtable]$Headers = @{},
+    [int]$FailureThreshold = 3,
+    [Parameter(Mandatory = $true)][string]$StatePath,
+    [Parameter(Mandatory = $true)][string]$NssmPath,
+    [Parameter(Mandatory = $true)][string]$LogPath,
+    [int]$TimeoutSec = 5
+  )
+
+  $consecutive = 0
+  if (Test-Path -LiteralPath $StatePath) {
+    try {
+      $prev = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+      $consecutive = [int]$prev.consecutiveFailures
+    } catch {
+      $consecutive = 0
+    }
+  }
+
+  $responded = Test-HttpEndpointResponded -Uri $HealthUri -Headers $Headers -TimeoutSec $TimeoutSec
+  $decision = Get-NextStationHealthState `
+    -ConsecutiveFailures $consecutive `
+    -Responded $responded `
+    -FailureThreshold $FailureThreshold
+
+  Save-StationHealthState -Path $StatePath -State @{
+    serviceName = $ServiceName
+    consecutiveFailures = [int]$decision.consecutiveFailures
+    updatedAt = (Get-Date).ToString('o')
+    lastResult = $(if ($responded) { 'ok' } else { 'fail' })
+  }
+
+  if (-not $decision.shouldRestart) {
+    if (-not $responded) {
+      Write-StationHealthLog -LogPath $LogPath -Message (
+        "Sin respuesta de $HealthUri ($($decision.consecutiveFailures)/$FailureThreshold)."
+      )
+    }
+    return $decision
+  }
+
+  Write-StationHealthLog -LogPath $LogPath -Message (
+    "Sin respuesta de $HealthUri $FailureThreshold veces seguidas. Reiniciando servicio $ServiceName."
+  )
+  # NSSM escribe en stderr aunque el restart haya salido bien.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $restartOut = & $NssmPath restart $ServiceName 2>&1
+  $restartCode = $LASTEXITCODE
+  $ErrorActionPreference = $prevEap
+  if ($restartCode -ne 0) {
+    $text = (($restartOut | ForEach-Object { "$_" }) -join ' ') -replace "`0", ''
+    throw "nssm restart $ServiceName fallo (exit $restartCode): $text"
+  }
+  Write-StationHealthLog -LogPath $LogPath -Message "Pedido de reinicio enviado a $ServiceName."
+  return $decision
+}
+
+function Register-EstacionHealthWatch {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptsDir
+  )
+
+  $watchScript = Join-Path $PSScriptRoot 'vigilar-estacion.ps1'
+  if (-not (Test-Path -LiteralPath $watchScript)) {
+    throw "Falta $watchScript"
+  }
+
+  $taskName = 'MSSGuard-Estacion-Watchdog'
+  $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$watchScript`""
+  $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+  $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).Date `
+    -RepetitionInterval (New-TimeSpan -Minutes 1) `
+    -RepetitionDuration (New-TimeSpan -Days 9999)
+  $boot = New-ScheduledTaskTrigger -AtStartup
+  $settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+  $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+
+  Register-ScheduledTask `
+    -TaskName $taskName `
+    -Action $action `
+    -Trigger @($boot, $repeat) `
+    -Settings $settings `
+    -Principal $principal `
+    -Description "Si http://127.0.0.1:<puerto>/status de la estacion no responde 3 veces seguidas, reinicia el servicio NSSM." `
+    -Force | Out-Null
+
+  Write-Host "Control de cuelgue registrado: $taskName (cada 1 min, 3 fallos seguidos reinician el servicio)." -ForegroundColor Green
+  Write-Host "  Script: $watchScript"
+  Write-Host "  Carpeta: $ScriptsDir"
+}

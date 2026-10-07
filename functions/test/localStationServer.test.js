@@ -195,9 +195,11 @@ describe('createLocalStationServer HTTP', () => {
     });
     assert.equal(openWithRelay.status, 200);
     assert.equal(openCalls.length, 2);
-    assert.equal(openCalls[1].relay.host, '192.168.0.38');
+    assert.equal(openCalls[1].relay.host, undefined);
+    assert.equal(openCalls[1].relay.port, undefined);
+    assert.equal(openCalls[1].relay.httpUrl, undefined);
     assert.equal(openCalls[1].relay.channel, 2);
-    assert.equal(openCalls[1].relay.pulseSeconds, 5);
+    assert.equal(openCalls[1].relay.pulseSeconds, undefined);
 
     const panel = await request(live.port, 'GET', '/');
     assert.equal(panel.status, 200);

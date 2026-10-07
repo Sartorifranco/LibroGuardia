@@ -111,10 +111,14 @@ Entrar y cambiar la contraseña (`mustChangePassword` / “Mi contraseña”).
 
 ## 7. Hardware en planta
 
+La guía que hay que seguir en la PC es [scripts/LEEME.md](../scripts/LEEME.md): `01` / `01b` / `02` para la estación (NSSM), `03` / `03b` para apertura a distancia, `04` / `05` / `05b` para BioStar.
+
+[INSTALACION-SR201.md](./INSTALACION-SR201.md) y [INSTALACION-LECTOR-PUERTA.md](./INSTALACION-LECTOR-PUERTA.md) quedaron viejos (`sr201-bridge.js`, `door-reader-bridge.js`, `instalar-lector.cmd`). No usarlos para una instalación nueva.
+
 | Qué | Doc |
 |-----|-----|
-| Relé / molinete SR201 | [INSTALACION-SR201.md](./INSTALACION-SR201.md) |
-| Lector desatendido | [INSTALACION-LECTOR-PUERTA.md](./INSTALACION-LECTOR-PUERTA.md) |
+| Relé / molinete SR201 | [INSTALACION-SR201.md](./INSTALACION-SR201.md) — obsoleto, ver LEEME |
+| Lector desatendido | [INSTALACION-LECTOR-PUERTA.md](./INSTALACION-LECTOR-PUERTA.md) — obsoleto, ver LEEME |
 | Multi-puertas | [MULTI-PUERTAS.md](./MULTI-PUERTAS.md) |
 | Citados (carpeta Excel/CSV) | [CITACIONES-FOLDER-BRIDGE.md](./CITACIONES-FOLDER-BRIDGE.md) — módulo opcional |
 | GPS flota | [GPS-PROVEEDOR.md](./GPS-PROVEEDOR.md) — API del proveedor, no hardware en el vehículo |
@@ -147,9 +151,19 @@ las 04:00. Ese trigger permite un nuevo intento si ya se agotaron los tres
 reinicios; no genera un proceso duplicado cuando la tarea sigue corriendo.
 Cada ejecución deja fecha y hora de inicio en el log.
 
-El watchdog recupera un proceso que **terminó**. El heartbeat de 4.2 es otra
-capa: informa por mail cuando el puente deja de reportar, incluso si quedó
-colgado sin terminar. Los reinicios no reemplazan esa señal.
+El watchdog de esas dos tareas recupera un proceso que **terminó**. El heartbeat
+informa por mail cuando el puente deja de reportar. Los reinicios no reemplazan
+esa señal.
+
+La estación (`programa-estacion.js`) es distinta: corre como servicio NSSM, que
+solo reinicia si el proceso se cierra. `01-instalar-estacion.cmd` registra
+además la tarea `MSSGuard-Estacion-Watchdog`. Cada 1 minuto mira
+`http://127.0.0.1:<puerto>/status`. Si no responde 3 veces seguidas, hace
+`nssm restart` del servicio. Una respuesta HTTP (aunque sea 401) cuenta como
+vivo: no reinicia por clave equivocada. El script es
+`scripts\_interno\vigilar-estacion.ps1` y la decisión del contador está en
+`scripts\lib\watchdogSettings.js` (`nextStationHealthState`). Si la estación
+se instaló antes, corré `01b` una vez para registrar esa tarea.
 
 ### Instalar, verificar y rearmar
 
@@ -166,6 +180,7 @@ Para inspeccionar manualmente:
 ```powershell
 Get-ScheduledTask -TaskName BacarGuard-SR201-Bridge
 Get-ScheduledTask -TaskName MSSGuard-BioStar-Bridge
+Get-ScheduledTask -TaskName MSSGuard-Estacion-Watchdog
 Get-ScheduledTaskInfo -TaskName BacarGuard-SR201-Bridge
 Get-ScheduledTaskInfo -TaskName MSSGuard-BioStar-Bridge
 ```
@@ -173,9 +188,13 @@ Get-ScheduledTaskInfo -TaskName MSSGuard-BioStar-Bridge
 Si se agotaron los tres reinicios o se cambió una configuración, rearmar con:
 
 ```powershell
-.\scripts\_interno\reiniciar-apertura-internet.ps1
-.\scripts\_interno\reiniciar-biostar.ps1
+.\scripts\02-reiniciar-estacion.cmd
+.\scripts\03b-reiniciar-apertura-por-internet.cmd
+.\scripts\05b-reiniciar-servicio-biostar.cmd
 ```
+
+Esos `.cmd` llaman a `scripts\_interno\reiniciar-estacion.ps1`,
+`reiniciar-apertura-internet.ps1` y `reiniciar-biostar.ps1`.
 
 No abrir una CMD manual con el mismo `.js`: puede duplicar BioStar u ocupar
 el puerto 5022 e impedir que arranque la tarea SR201.

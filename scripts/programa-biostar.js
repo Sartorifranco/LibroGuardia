@@ -16,6 +16,8 @@
 const fs = require('fs');
 const path = require('path');
 const { createBioStarClient } = require('./lib/biostarClient');
+const { writeJsonFileAtomic } = require('./lib/atomicJson');
+const { installFatalHandlers } = require('./lib/fatalHandlers');
 
 const CONFIG_CANDIDATES = [
   path.join(__dirname, 'configuracion-biostar.json'),
@@ -34,7 +36,7 @@ const readJson = (file, fallback = null) => {
 };
 
 const writeJson = (file, data) => {
-  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  writeJsonFileAtomic(file, data);
 };
 
 const loadConfig = () => {
@@ -242,7 +244,10 @@ async function main() {
   setInterval(() => {}, 60 * 60 * 1000);
 }
 
-main().catch((err) => {
-  console.error('[biostar-bridge] FATAL', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  installFatalHandlers((level, message, extra) => log(level, message, extra));
+  main().catch((err) => {
+    console.error('[biostar-bridge] FATAL', err.message);
+    process.exit(1);
+  });
+}
