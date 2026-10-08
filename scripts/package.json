@@ -3,6 +3,7 @@
   "private": true,
   "description": "Dependencias locales para scripts de hardware de puerta (serialport).",
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "serialport": "^13.0.0"
   }
 }
