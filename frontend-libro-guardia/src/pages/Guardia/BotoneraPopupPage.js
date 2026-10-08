@@ -20,7 +20,7 @@ function BotoneraPopupPage() {
 
   return (
     <div className="botonera-popup-page">
-      <LiveAlertsToaster pollMs={4000} />
+      <LiveAlertsToaster />
       <header className="botonera-popup-header">
         <div className="botonera-popup-brand">
           <img src={brand.logoPath} alt="" className="botonera-popup-logo" />

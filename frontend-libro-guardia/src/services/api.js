@@ -97,7 +97,7 @@ const triggerSessionExpired = () => {
  *   (permiso denegado). El llamador sigue recibiendo el error para mostrarlo o ignorarlo.
  * - skipSessionExpiry: no forzar logout (p.ej. login con clave incorrecta)
  */
-export async function apiFetch(path, options = {}) {
+async function requestApi(path, options = {}) {
   const {
     method = 'GET',
     token: tokenOption,
@@ -197,6 +197,40 @@ export async function apiFetch(path, options = {}) {
   }
 
   return data ?? {};
+}
+
+/** GET idénticos en curso (misma URL + token + opciones): comparten la misma promesa. */
+const inflightGets = new Map();
+
+const buildGetKey = (path, options) => {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return [
+    normalized,
+    resolveToken(options.token) || '',
+    options.allowForbidden ? 1 : 0,
+    options.skipSessionExpiry ? 1 : 0,
+    options.headers ? JSON.stringify(options.headers) : ''
+  ].join('|');
+};
+
+/**
+ * Ver requestApi. Los GET sin body se deduplican mientras están en vuelo
+ * (varias pantallas pidiendo lo mismo a la vez = un solo request).
+ * `dedupe: false` fuerza un request propio.
+ */
+export function apiFetch(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' || options.body !== undefined || options.dedupe === false) {
+    return requestApi(path, options);
+  }
+  const key = buildGetKey(path, options);
+  const pending = inflightGets.get(key);
+  if (pending) return pending;
+  const promise = requestApi(path, options).finally(() => {
+    if (inflightGets.get(key) === promise) inflightGets.delete(key);
+  });
+  inflightGets.set(key, promise);
+  return promise;
 }
 
 export default apiFetch;

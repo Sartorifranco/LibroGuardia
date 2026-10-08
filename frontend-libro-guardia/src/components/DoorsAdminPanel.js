@@ -3,6 +3,7 @@ import { ChevronLeft, Copy, DoorOpen, Info, PlusCircle, Save, Trash2, X } from '
 import PendingButton from './PendingButton';
 import DoorPeoplePanel from './DoorPeoplePanel';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
 import { useConfirm } from '../context/ConfirmContext';
 import {
   offlineNeedsLocalRelayMessage,
@@ -251,12 +252,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     }
   }, [authToken]);
 
-  useEffect(() => {
-    if (draft) return undefined;
-    refreshPhysicalStatus();
-    const timer = setInterval(refreshPhysicalStatus, 12000);
-    return () => clearInterval(timer);
-  }, [draft, refreshPhysicalStatus]);
+  usePolling(refreshPhysicalStatus, 12000, { enabled: !draft });
 
   const openDoor = async (door) => {
     if (dirty && draft) {

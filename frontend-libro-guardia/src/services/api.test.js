@@ -84,3 +84,32 @@ describe('apiFetch sesión', () => {
     expect(localStorage.getItem('authToken')).toBeNull();
   });
 });
+
+describe('apiFetch deduplica GET en vuelo', () => {
+  beforeEach(() => {
+    global.fetch = jest.fn();
+  });
+
+  test('dos GET iguales simultáneos hacen un solo request', async () => {
+    let resolveFetch;
+    global.fetch.mockImplementation(() => new Promise((r) => { resolveFetch = r; }));
+    const a = apiFetch('/guard/doors', { token: 't1' });
+    const b = apiFetch('/guard/doors', { token: 't1' });
+    resolveFetch(jsonResponse(200, { doors: [1] }));
+    await expect(a).resolves.toEqual({ doors: [1] });
+    await expect(b).resolves.toEqual({ doors: [1] });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('distinto token, POST o un GET posterior no se deduplican', async () => {
+    global.fetch.mockImplementation(async () => jsonResponse(200, { ok: true }));
+    await Promise.all([
+      apiFetch('/guard/doors', { token: 't1' }),
+      apiFetch('/guard/doors', { token: 't2' }),
+      apiFetch('/entries', { method: 'POST', token: 't1', body: {} }),
+      apiFetch('/entries', { method: 'POST', token: 't1', body: {} })
+    ]);
+    await apiFetch('/guard/doors', { token: 't1' });
+    expect(global.fetch).toHaveBeenCalledTimes(5);
+  });
+});
