@@ -1139,7 +1139,7 @@ const manualOpenDoor = async ({
   userId = null,
   reason = '',
   doorId = null,
-  bypassAirlock = false
+  forceAirlock = false
 } = {}) => {
   const { openDoor } = require('./doorController');
   return openDoor({
@@ -1148,7 +1148,7 @@ const manualOpenDoor = async ({
     userId,
     reason: reason || 'apertura_manual_guardia',
     manual: true,
-    bypassAirlock: bypassAirlock === true,
+    forceAirlock: forceAirlock === true,
     force: true,
     authMethod: 'manual'
   });

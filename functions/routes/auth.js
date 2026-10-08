@@ -12,6 +12,8 @@ const {
   checkLoginRateLimit,
   recordFailedLogin,
   clearLoginFailures,
+  recordSuccessfulLogin,
+  isTechnicalAccount,
   getClientIp,
   LOCKOUT_MESSAGE,
   checkPairingRateLimit,
@@ -137,7 +139,9 @@ router.post('/api/auth/login', async (req, res) => {
     }
 
     const clientIp = getClientIp(req);
-    const rate = await checkLoginRateLimit(db, { username, ip: clientIp });
+    // Cuentas técnicas (kiosk.* / kiosk_puerta): bloqueo por usuario+IP, no global.
+    let technical = isTechnicalAccount({ username });
+    const rate = await checkLoginRateLimit(db, { username, ip: clientIp, technical });
     if (rate.blocked) {
       return res.status(429).json({
         message: rate.message || LOCKOUT_MESSAGE,
@@ -149,7 +153,7 @@ router.post('/api/auth/login', async (req, res) => {
     const snap = await userRef.get();
 
     if (!snap.exists) {
-      const afterFail = await recordFailedLogin(db, FieldValue, { username, ip: clientIp });
+      const afterFail = await recordFailedLogin(db, FieldValue, { username, ip: clientIp, technical });
       if (afterFail.blocked) {
         return res.status(429).json({
           message: afterFail.message || LOCKOUT_MESSAGE,
@@ -160,13 +164,24 @@ router.post('/api/auth/login', async (req, res) => {
     }
 
     const user = snap.data();
+    if (!technical && isTechnicalAccount({ role: user.role })) {
+      // Cuenta técnica sin prefijo kiosk.: se reevalúa con la clave usuario+IP.
+      technical = true;
+      const techRate = await checkLoginRateLimit(db, { username, ip: clientIp, technical });
+      if (techRate.blocked) {
+        return res.status(429).json({
+          message: techRate.message || LOCKOUT_MESSAGE,
+          retryAfterSeconds: techRate.retryAfterSeconds
+        });
+      }
+    }
     if (user.active === false) {
       return res.status(403).json({ message: 'Su cuenta ha sido deshabilitada. Contacte a un administrador.' });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      const afterFail = await recordFailedLogin(db, FieldValue, { username, ip: clientIp });
+      const afterFail = await recordFailedLogin(db, FieldValue, { username, ip: clientIp, technical });
       if (afterFail.blocked) {
         return res.status(429).json({
           message: afterFail.message || LOCKOUT_MESSAGE,
@@ -176,7 +191,12 @@ router.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ message: 'Credenciales inválidas' });
     }
 
-    await clearLoginFailures(db, { username });
+    await clearLoginFailures(db, { username, ip: clientIp, technical });
+    if (technical) {
+      await recordSuccessfulLogin(db, FieldValue, { username, ip: clientIp, technical }).catch((err) => {
+        console.warn('[auth/login] No se pudo registrar la IP del login técnico', err.message);
+      });
+    }
 
     const permissions = await getUserPermissions(user);
     const roleMeta = await getRoleById(user.role);

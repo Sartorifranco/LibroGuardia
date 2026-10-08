@@ -27,6 +27,8 @@ const PERMISSION_KEYS = [
   'access.manual_override',
   'access.exceptional_entry',
   'access.kiosk',
+  // Forzar apertura manual con la otra puerta del estanco abierta (motivo obligatorio, auditado).
+  'puertas.estanco.forzar',
   'master.citaciones.preregister',
   'fleet.gps.read',
   'master.nomina.read',
@@ -103,6 +105,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'roles.view',
     'access.manual_override',
     'access.manual_open',
+    'puertas.estanco.forzar',
     'access.kiosk',
     'access.exceptional_entry',
     'attendance.alerts.read',
@@ -123,7 +126,13 @@ const normalizePlate = (value = '') => String(value).replace(/[\s-]/g, '').toUpp
 
 const resolvePermissions = (role, customPermissions = [], roleTemplates = null) => {
   const templates = roleTemplates || DEFAULT_ROLE_PERMISSIONS;
-  const rolePerms = templates[role] || templates.guardia || [];
+  // Fail-closed: un rol desconocido (sin plantilla en Firestore ni default) no hereda
+  // permisos de otro rol. Solo cuenta lo explícito del usuario (customPermissions).
+  const roleKey = String(role || '');
+  const rolePerms = Object.prototype.hasOwnProperty.call(templates, roleKey)
+    && Array.isArray(templates[roleKey])
+    ? templates[roleKey]
+    : [];
   const merged = new Set([...rolePerms, ...(Array.isArray(customPermissions) ? customPermissions : [])]);
   return [...merged];
 };

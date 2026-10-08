@@ -341,7 +341,8 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
             {adminSection === 'activity'
               && (hasPermission(currentUser, 'users.view')
                 || hasPermission(currentUser, 'roles.view')
-                || hasPermission(currentUser, 'settings.permissions'))
+                || hasPermission(currentUser, 'settings.permissions')
+                || hasPermission(currentUser, 'audit.view'))
               && (
                 <ActivityAdminSection />
               )}

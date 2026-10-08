@@ -1,4 +1,4 @@
-import { openManualDoor } from './openManualDoor';
+import { openManualDoor, openManualDoorWithAirlock } from './openManualDoor';
 import { openDoorOnStation } from './localStationClient';
 import { apiFetch } from '../services/api';
 
@@ -106,5 +106,68 @@ describe('openManualDoor — cola / cloud', () => {
     })).rejects.toThrow(/estación local/);
     expect(openDoorOnStation).not.toHaveBeenCalled();
     expect(apiFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('openManualDoorWithAirlock — estanco', () => {
+  const airlockErr = () => Object.assign(
+    new Error('No se puede abrir: la otra puerta del estanco (Exterior) está abierta. Esperá a que se cierre.'),
+    { status: 409, data: { code: 'AIRLOCK_OTHER_OPEN' } }
+  );
+
+  beforeEach(() => {
+    apiFetch.mockReset();
+    openDoorOnStation.mockReset();
+  });
+
+  test('sin permiso de forzar: propaga el mensaje del 409 y no cae a la estación local', async () => {
+    apiFetch.mockRejectedValue(airlockErr());
+    const confirmWithReason = jest.fn();
+    await expect(openManualDoorWithAirlock({
+      authToken: 'tok',
+      door: { id: 'int', localStation: localDoor.localStation },
+      canForceAirlock: false,
+      confirmWithReason
+    })).rejects.toThrow(/Esperá a que se cierre/);
+    expect(confirmWithReason).not.toHaveBeenCalled();
+    expect(openDoorOnStation).not.toHaveBeenCalled();
+  });
+
+  test('con permiso: pide motivo y reintenta con forceAirlock', async () => {
+    apiFetch
+      .mockRejectedValueOnce(airlockErr())
+      .mockResolvedValueOnce({ message: 'ok', relay: { via: 'cloud' } });
+    const confirmWithReason = jest.fn().mockResolvedValue('Evacuación');
+    const result = await openManualDoorWithAirlock({
+      authToken: 'tok',
+      doorId: 'int',
+      canForceAirlock: true,
+      confirmWithReason
+    });
+    expect(confirmWithReason).toHaveBeenCalledWith(expect.objectContaining({
+      confirmLabel: 'Forzar apertura (queda registrado)'
+    }));
+    expect(apiFetch).toHaveBeenLastCalledWith('/guard/open-door', expect.objectContaining({
+      body: expect.objectContaining({ forceAirlock: true, forceReason: 'Evacuación', doorId: 'int' })
+    }));
+    expect(result.message).toBe('ok');
+  });
+
+  test('con permiso pero cancela: no reintenta', async () => {
+    apiFetch.mockRejectedValueOnce(airlockErr());
+    const result = await openManualDoorWithAirlock({
+      authToken: 'tok',
+      doorId: 'int',
+      canForceAirlock: true,
+      confirmWithReason: jest.fn().mockResolvedValue(null)
+    });
+    expect(result.cancelled).toBe(true);
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('apertura normal no manda bypassAirlock', async () => {
+    apiFetch.mockResolvedValue({ message: 'ok' });
+    await openManualDoor({ authToken: 'tok', doorId: 'p1' });
+    expect(apiFetch.mock.calls[0][1].body).toEqual({ reason: 'apertura_manual_guardia', doorId: 'p1' });
   });
 });

@@ -113,7 +113,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
       { id: 'admin', label: 'Administrador' }
     ]).filter((role) => (
       role.id !== ACCESS_STATION_ROLE_ID
-      && canManageTargetUser(currentUser, { role: role.id })
+      && canManageTargetUser(currentUser, { role: role.id }, systemRoles)
     ));
   }, [currentUser, systemRoles]);
 
@@ -348,7 +348,8 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
               value={newUserPassword}
               onChange={(e) => setNewUserPassword(e.target.value)}
               className="input-field"
-              placeholder="Contraseña"
+              placeholder="Contraseña (mínimo 8 caracteres)"
+              minLength={8}
               required
             />
             <select
@@ -474,7 +475,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
               <tbody>
                 {pageSlice.map((user) => {
                   const customCount = (user.customPermissions || []).length;
-                  const manageable = canManageTargetUser(currentUser, user);
+                  const manageable = canManageTargetUser(currentUser, user, systemRoles);
                   return (
                     <tr key={user.id} className={`${user.active === false ? 'users-admin__row--inactive' : ''}${isAccessStationAccount(user) ? ' users-admin__row--station' : ''}`}>
                       <td>
@@ -607,7 +608,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
             </h3>
             <form onSubmit={handleSaveUserEdit} className="space-y-4">
               <input type="text" id="editedUsername" value={editedUsername} className="input-field" disabled />
-              {canEdit && canManageTargetUser(currentUser, editingUser) && (
+              {canEdit && canManageTargetUser(currentUser, editingUser, systemRoles) && (
                 <select
                   id="editedUserRole"
                   value={editedUserRole}
@@ -626,9 +627,10 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 value={editedUserPassword}
                 onChange={(e) => setEditedUserPassword(e.target.value)}
                 className="input-field"
-                placeholder="Nueva contraseña (opcional)"
+                placeholder="Nueva contraseña (opcional, mínimo 8 caracteres)"
+                minLength={8}
               />
-              {canEdit && canManageTargetUser(currentUser, editingUser) && (
+              {canEdit && canManageTargetUser(currentUser, editingUser, systemRoles) && (
                 <button
                   type="button"
                   onClick={() => setEditedUserActive(!editedUserActive)}
@@ -640,7 +642,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                   {editedUserActive ? 'Activo' : 'Inactivo'}
                 </button>
               )}
-              {canPerms && (
+              {canPerms && editingUser.id !== currentUser.id && canManageTargetUser(currentUser, editingUser, systemRoles) && (
                 <div>
                   <h4 className="admin-block__title" style={{ marginBottom: '0.5rem' }}>Permisos personalizados</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-md p-3">

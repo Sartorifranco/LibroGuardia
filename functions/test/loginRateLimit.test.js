@@ -169,7 +169,7 @@ test('clearLoginFailures elimina el doc y deja de bloquear', async () => {
   } = require('../lib/loginRateLimit');
   const now = Date.now();
   const store = new Map();
-  store.set(userDocId('kiosk.puerta'), {
+  store.set(userDocId('operador'), {
     failedAttempts: 5,
     windowStartedAt: now - 1000,
     blockedUntil: now + 60_000
@@ -192,12 +192,12 @@ test('clearLoginFailures elimina el doc y deja de bloquear', async () => {
     }
   };
 
-  const before = await checkLoginRateLimit(db, { username: 'kiosk.puerta' }, now);
+  const before = await checkLoginRateLimit(db, { username: 'operador' }, now);
   assert.equal(before.blocked, true);
 
-  await clearLoginFailures(db, { username: 'kiosk.puerta' });
-  assert.equal(store.has(userDocId('kiosk.puerta')), false);
+  await clearLoginFailures(db, { username: 'operador' });
+  assert.equal(store.has(userDocId('operador')), false);
 
-  const after = await checkLoginRateLimit(db, { username: 'kiosk.puerta' }, now);
+  const after = await checkLoginRateLimit(db, { username: 'operador' }, now);
   assert.equal(after.blocked, false);
 });

@@ -200,14 +200,31 @@ const listValidRoleIds = async () => {
   return roles.map((role) => role.id);
 };
 
-const canManageTargetRole = async (actorRoleId, targetRoleId) => {
+/** true si todos los permisos del rol destino están incluidos en los del actor. */
+const isPermissionSubset = (targetPermissions = [], actorPermissions = []) => {
+  const actorSet = new Set(Array.isArray(actorPermissions) ? actorPermissions : []);
+  return (Array.isArray(targetPermissions) ? targetPermissions : []).every((p) => actorSet.has(p));
+};
+
+/**
+ * ¿Puede el actor crear/editar/eliminar usuarios con el rol destino (o asignarlo)?
+ * Admin: siempre. Perfil supervisor: guardia/monitoreo o roles no-sistema, y solo si los
+ * permisos del rol destino son un subconjunto de los permisos efectivos del actor
+ * (no puede otorgar más de lo que tiene).
+ * @param {string[]|null} actorPermissions permisos efectivos del actor (rol + personalizados);
+ *   si no se pasan, se usan los del rol del actor.
+ */
+const canManageTargetRole = async (actorRoleId, targetRoleId, actorPermissions = null) => {
   if (actorRoleId === 'admin') return true;
   const actor = await getRoleById(actorRoleId);
   const target = await getRoleById(targetRoleId);
   if (!actor || !target) return false;
   if (target.id === 'admin') return false;
   if (actor.dashboardProfile === 'supervisor') {
-    return ['monitoreo', 'guardia'].includes(target.id) || !target.isSystem;
+    const allowedKind = ['monitoreo', 'guardia'].includes(target.id) || !target.isSystem;
+    if (!allowedKind) return false;
+    const effective = Array.isArray(actorPermissions) ? actorPermissions : actor.permissions;
+    return isPermissionSubset(target.permissions, effective);
   }
   return false;
 };
@@ -225,5 +242,6 @@ module.exports = {
   listValidRoleIds,
   getRoleTemplatesFromFirestore,
   canManageTargetRole,
+  isPermissionSubset,
   seedSystemRoles
 };

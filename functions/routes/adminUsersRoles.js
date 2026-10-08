@@ -10,7 +10,8 @@ const {
   deleteRole,
   listValidRoleIds,
   getRoleTemplatesFromFirestore,
-  canManageTargetRole
+  canManageTargetRole,
+  isPermissionSubset
 } = require('../roles');
 const { logActivity } = require('../lib/activityLog');
 const { logAdminAction } = require('../lib/auditLog');
@@ -29,7 +30,8 @@ const {
   requireAnyPermission,
   sendServerError
 } = require('../middleware/auth');
-const { clearLoginFailures } = require('../lib/loginRateLimit');
+const { clearLoginFailures, isTechnicalAccount } = require('../lib/loginRateLimit');
+const { validateNewPassword } = require('../lib/changePassword');
 
 const router = express.Router();
 
@@ -47,6 +49,16 @@ router.put('/api/admin/permissions/roles', auth, requirePermission('settings.per
     const { roles } = req.body;
     if (!roles || typeof roles !== 'object') {
       return res.status(400).json({ message: 'Formato inválido. Se espera { roles: { guardia: [...], ... } }' });
+    }
+
+    // No se crean roles "fantasma": solo roles existentes en la colección roles.
+    const validRoleIds = await listValidRoleIds();
+    const unknownRoles = Object.keys(roles).filter((roleId) => !validRoleIds.includes(roleId));
+    if (unknownRoles.length) {
+      return res.status(400).json({
+        message: `Rol inexistente: ${unknownRoles.join(', ')}. Creá el rol primero en Roles.`,
+        unknownRoles
+      });
     }
 
     const beforeTemplates = await getRoleTemplatesFromFirestore();
@@ -157,14 +169,27 @@ router.put('/api/admin/users/:id/permissions', auth, requirePermission('settings
       return res.status(400).json({ message: 'Se espera un array de permisos' });
     }
 
+    if (String(req.user.id) === String(id)) {
+      return res.status(403).json({ message: 'No podés modificar tus propios permisos. Pedíselo a otro administrador.' });
+    }
+
     const userRef = db.collection('users').doc(id);
     const snap = await userRef.get();
     if (!snap.exists) {
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
 
+    // Misma regla que la edición de usuarios: solo sobre roles que el actor puede gestionar.
+    if (!(await canManageTargetRole(req.user.role, snap.data().role, req.userPermissions))) {
+      return res.status(403).json({ message: 'Acceso denegado: no puede editar usuarios con ese rol.' });
+    }
+
     const beforePerms = Array.isArray(snap.data().permissions) ? snap.data().permissions : [];
     const customPermissions = permissions.filter((perm) => PERMISSION_KEYS.includes(perm));
+    // Un no-admin no puede otorgar permisos que él mismo no tiene.
+    if (req.user.role !== 'admin' && !isPermissionSubset(customPermissions, req.userPermissions)) {
+      return res.status(403).json({ message: 'No podés otorgar permisos que no tenés.' });
+    }
     await userRef.update({ permissions: customPermissions });
     const updated = await userRef.get();
     const resolved = await getUserPermissions(updated.data());
@@ -188,13 +213,17 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
     if (!username?.trim() || !password) {
       return res.status(400).json({ message: 'Usuario y contraseña son obligatorios' });
     }
+    const passwordError = validateNewPassword(password, { username });
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError.replace('La nueva contraseña', 'La contraseña') });
+    }
 
     const validRoles = await listValidRoleIds();
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Rol inválido especificado.' });
     }
 
-    if (!(await canManageTargetRole(req.user.role, role))) {
+    if (!(await canManageTargetRole(req.user.role, role, req.userPermissions))) {
       return res.status(403).json({ message: 'No tiene permisos para asignar ese rol.' });
     }
 
@@ -261,7 +290,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
     }
 
     const userToUpdate = snap.data();
-    if (!(await canManageTargetRole(req.user.role, userToUpdate.role))) {
+    if (!(await canManageTargetRole(req.user.role, userToUpdate.role, req.userPermissions))) {
       return res.status(403).json({ message: 'Acceso denegado: no puede editar usuarios con ese rol.' });
     }
 
@@ -279,13 +308,17 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
       if (!validRoles.includes(role)) {
         return res.status(400).json({ message: 'Rol inválido' });
       }
-      if (!(await canManageTargetRole(req.user.role, role))) {
+      if (!(await canManageTargetRole(req.user.role, role, req.userPermissions))) {
         return res.status(403).json({ message: 'No tiene permisos para asignar ese rol.' });
       }
       updates.role = role;
     }
 
     if (password) {
+      const passwordError = validateNewPassword(password, { username: userToUpdate.username || id });
+      if (passwordError) {
+        return res.status(400).json({ message: passwordError });
+      }
       updates.password = await bcrypt.hash(password, 10);
       updates.mustChangePassword = true;
       updates.passwordVersion = nextPasswordVersion(userToUpdate);
@@ -348,7 +381,11 @@ router.post(
         return res.status(404).json({ message: 'Usuario no encontrado' });
       }
       const username = String(snap.data()?.username || id).trim().toLowerCase();
-      await clearLoginFailures(db, { username });
+      // Cuentas técnicas: limpia también los bloqueos por usuario+IP.
+      await clearLoginFailures(db, {
+        username,
+        technical: isTechnicalAccount({ username, role: snap.data()?.role })
+      });
       logAdminAction({
         req,
         action: 'user.clear_login_failures',
@@ -382,7 +419,7 @@ router.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), a
     }
 
     const userToDelete = snap.data();
-    if (!(await canManageTargetRole(req.user.role, userToDelete.role))) {
+    if (!(await canManageTargetRole(req.user.role, userToDelete.role, req.userPermissions))) {
       return res.status(403).json({ message: 'Acceso denegado: no puede eliminar usuarios con ese rol.' });
     }
 
