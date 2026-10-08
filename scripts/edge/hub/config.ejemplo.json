@@ -1,0 +1,49 @@
+{
+  "_comentarios": {
+    "uso": "Copiar a config.json (fuera del repo, p. ej. C:/mss-edge/hub/config.json) y arrancar: node edge/hub/run.js C:/mss-edge/hub/config.json. Rutas relativas = relativas a este archivo.",
+    "deviceId": "Id del hub en devices/{id} (lo da el enrolamiento).",
+    "privateKeyFile": "Clave Ed25519 del equipo (PEM PKCS#8). Generar con: node edge/hub/run.js --keygen <ruta>. Nunca subir al repo.",
+    "dataDir": "Carpeta del SQLite (hub.db). SSD o SD industrial.",
+    "lan.port": "Puerto LAN del hub. 8080 no choca con la estación actual (:8787) ni con el dev server del frontend (:3000).",
+    "lan.staticDir": "Build del frontend a servir (frontend-libro-guardia/build). null = no sirve estáticos.",
+    "lan.publicUrl": "URL con la que la nube muestra 'Abrir modo planta' (sites.lanUrl).",
+    "cloud.baseUrl": "Origen de la nube SIN /api (se acepta con /api y se recorta).",
+    "cloud.refreshToken": "Refresh token inicial del enrolamiento. Solo se usa si la base todavía no tiene uno; después se rota y se guarda cifrado en SQLite. Se puede borrar de acá tras el primer arranque.",
+    "cloud.headPublicKeys": "keyId → clave pública Ed25519 con la que la nube firma compiled/head.",
+    "cloud.allowUnsignedHeads": "SOLO banco mientras el compilador no firma. En producción false.",
+    "controllers": "Allowlist de controladores enrolados (hito 1): deviceId, clave pública Ed25519 y URL LAN. doorIds opcional (si el chunk doors no trae controllerId)."
+  },
+  "deviceId": "hub-principal",
+  "siteId": "principal",
+  "privateKeyFile": "./keys/hub.key.pem",
+  "dataDir": "./data",
+  "retentionDays": 90,
+  "lan": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "staticDir": "C:/Users/Admin/Desktop/LG/frontend-libro-guardia/build",
+    "publicUrl": "http://192.168.0.50:8080"
+  },
+  "cloud": {
+    "baseUrl": "https://mss-guard.web.app",
+    "refreshToken": "PEGAR-REFRESH-TOKEN-DEL-ENROLAMIENTO",
+    "headPublicKeys": {
+      "k1": "PEGAR-CLAVE-PUBLICA-ED25519-DE-LA-NUBE"
+    },
+    "allowUnsignedHeads": false,
+    "headPollMs": 60000,
+    "eventsIntervalMs": 120000,
+    "commandsPollMs": 10000,
+    "liveMinIntervalMs": 60000,
+    "heartbeatMs": 300000,
+    "timeoutMs": 15000
+  },
+  "controllers": [
+    {
+      "deviceId": "ctl-estanco-1",
+      "publicKey": "PEGAR-CLAVE-PUBLICA-ED25519-DEL-CONTROLADOR",
+      "url": "http://127.0.0.1:8091",
+      "doorIds": ["puerta-p1", "puerta-p2"]
+    }
+  ]
+}
