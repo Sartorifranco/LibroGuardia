@@ -56,8 +56,15 @@ const {
   sendRouteError
 } = require('../middleware/auth');
 const { resolveAuthUsername } = require('../lib/lectores');
+const { cachedGuardHandler, invalidateGuardCache } = require('../lib/guardResponseCache');
 
 const router = express.Router();
+
+// Después de abrir una puerta, el panel de este mismo servidor ve el pulso nuevo al instante.
+router.use('/api/guard/open-door', (req, res, next) => {
+  res.on('finish', () => invalidateGuardCache('/api/guard/doors'));
+  next();
+});
 
 const buildResolvedName = (parsed) => {
   if (parsed.name) return parsed.name;
@@ -144,19 +151,20 @@ router.post('/api/guard/open-door', auth, requirePermission('access.manual_open'
   }
 });
 
-router.get('/api/guard/doors', auth, requirePermission('access.manual_open'), async (_req, res) => {
-  try {
+// Caché de 15 s por instancia: la respuesta no depende del usuario (mismo enmascarado para todos).
+router.get('/api/guard/doors', auth, requirePermission('access.manual_open'), cachedGuardHandler(
+  '/api/guard/doors',
+  async () => {
     const { enrichDoorsWithLastPulse } = require('../lib/doorLastPulse');
     const { enrichDoorsWithLocalStations } = require('../lib/guardLocalStations');
     const base = await listActiveDoors();
     const withPulse = await enrichDoorsWithLastPulse(base.doors || []);
     const doors = await enrichDoorsWithLocalStations(withPulse);
     // Guardias no necesitan secretos del hardware.
-    res.json({ ...base, doors: maskDoors(doors) });
-  } catch (err) {
-    sendServerError(res, err);
-  }
-});
+    return { ...base, doors: maskDoors(doors) };
+  },
+  { onError: (res, err) => sendServerError(res, err) }
+));
 
 router.get('/api/guard/door-names', auth, requireAnyPermission(['entries.view', 'reports.export', 'access.manual_open', 'access.doors.manage']), async (_req, res) => {
   try {
@@ -173,25 +181,23 @@ router.get('/api/guard/door-names', auth, requireAnyPermission(['entries.view', 
   }
 });
 
-router.get('/api/guard/live-alerts', auth, requireAnyPermission(['entries.view', 'entries.create', 'access.kiosk', 'access.manual_open', 'attendance.alerts.read']), async (_req, res) => {
-  try {
+router.get('/api/guard/live-alerts', auth, requireAnyPermission(['entries.view', 'entries.create', 'access.kiosk', 'access.manual_open', 'attendance.alerts.read']), cachedGuardHandler(
+  '/api/guard/live-alerts',
+  async () => {
     const { getLiveAlerts } = require('../lib/liveAlerts');
-    const result = await getLiveAlerts();
-    res.json(result);
-  } catch (err) {
-    sendServerError(res, err, 'Error al obtener alertas en vivo');
-  }
-});
+    return getLiveAlerts();
+  },
+  { onError: (res, err) => sendServerError(res, err, 'Error al obtener alertas en vivo') }
+));
 
-router.get('/api/guard/fleet-presence', auth, requireAnyPermission(['entries.view', 'entries.create', 'fleet.gps.read']), async (_req, res) => {
-  try {
+router.get('/api/guard/fleet-presence', auth, requireAnyPermission(['entries.view', 'entries.create', 'fleet.gps.read']), cachedGuardHandler(
+  '/api/guard/fleet-presence',
+  async () => {
     const { getFleetPresence } = require('../lib/getFleetPresence');
-    const presence = await getFleetPresence();
-    res.json(presence);
-  } catch (err) {
-    sendServerError(res, err, 'Error al calcular presencia de flota');
-  }
-});
+    return getFleetPresence();
+  },
+  { onError: (res, err) => sendServerError(res, err, 'Error al calcular presencia de flota') }
+));
 
 router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.manage', 'access.control']), async (_req, res) => {
   try {

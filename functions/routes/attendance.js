@@ -22,8 +22,20 @@ const {
   requireAnyPermission,
   sendServerError
 } = require('../middleware/auth');
+const { cachedGuardHandler, invalidateGuardCache } = require('../lib/guardResponseCache');
 
 const router = express.Router();
+
+// Marcar presente/ausente/descartar cambia faltantes y citados: invalidar la caché de esta instancia.
+router.use('/api/guard/attendance', (req, res, next) => {
+  if (req.method !== 'GET') {
+    res.on('finish', () => {
+      invalidateGuardCache('/api/guard/attendance/missing');
+      invalidateGuardCache('/api/guard/citados/today');
+    });
+  }
+  next();
+});
 
 const nominaReasonMessage = (reason) => {
   switch (reason) {
@@ -151,23 +163,17 @@ router.post('/api/admin/nomina/upload/:jobId/step', auth, requirePermission('mas
   }
 });
 
-router.get('/api/guard/attendance/missing', auth, requirePermission('attendance.alerts.read'), async (_req, res) => {
-  try {
-    const result = await getMissingAttendanceAlerts();
-    res.json(result);
-  } catch (err) {
-    sendServerError(res, err, 'Error al consultar faltantes de ingreso');
-  }
-});
+router.get('/api/guard/attendance/missing', auth, requirePermission('attendance.alerts.read'), cachedGuardHandler(
+  '/api/guard/attendance/missing',
+  () => getMissingAttendanceAlerts(),
+  { onError: (res, err) => sendServerError(res, err, 'Error al consultar faltantes de ingreso') }
+));
 
-router.get('/api/guard/citados/today', auth, requirePermission('attendance.alerts.read'), async (_req, res) => {
-  try {
-    const result = await getCitadosToday();
-    res.json(result);
-  } catch (err) {
-    sendServerError(res, err, 'Error al consultar citados del día');
-  }
-});
+router.get('/api/guard/citados/today', auth, requirePermission('attendance.alerts.read'), cachedGuardHandler(
+  '/api/guard/citados/today',
+  () => getCitadosToday(),
+  { onError: (res, err) => sendServerError(res, err, 'Error al consultar citados del día') }
+));
 
 router.post('/api/guard/attendance/dismiss', auth, requirePermission('attendance.alerts.read'), async (req, res) => {
   try {
