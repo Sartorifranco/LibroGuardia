@@ -13,15 +13,18 @@
  *
  * Instantes: ms epoch (el edge también acepta ISO / {_seconds} y los pasa a ms).
  * Fechas de día (feriados): 'YYYY-MM-DD' en la zona del sitio. Los valores de
- * credencial NUNCA viajan en claro: solo `valueHash = hashCredential(type, raw)`.
- * Excepción conocida: los pases de visita viajan con `dni` normalizado y su `id`
- * es el contenido del QR (el guardia los lista; ver PARITY.md / preguntas).
+ * credencial NUNCA viajan en claro: solo `valueHash = hashCredential(type, raw, key)`
+ * (HMAC-SHA256 con la clave del sitio; sha256 pelado si el sitio no tiene clave).
+ * Pases de visita: con clave viajan con `dniHash` (= hashCredential('dni', dni, key))
+ * en lugar del `dni` en claro; sin clave, con `dni` normalizado. Su `id` es el contenido del QR.
  *
  * ─────────────────────────────── Chunks ───────────────────────────────
  *   'doors'            → { site, policy, doors, interlockGroups, areas, schedules, holidays, accessGroups }
  *   'ch-00' … 'ch-63'  → { bucket?, cardholders (con credentials anidadas), credentials? }
  *   'grants-YYYYMMDD'  → { date?, grants }                       (D-1 a D+7)
  *   'passes'           → { passes, revoked }                     (revoked = lista de claves revocadas)
+ *   'operators'        → { operators:[{username, hash, passwordVersion, perms, posts}] }   (solo hub)
+ *   'secrets'          → { secrets:{credentialKey, keyId, alg} }   (TODO fase 2: cifrado a la clave pública de cada equipo)
  * También se acepta como nombre un tipo de entidad suelto (body = array, o el objeto policy).
  *
  * ─────────────────────────────── Tipos ────────────────────────────────
@@ -120,7 +123,8 @@
  *
  * @typedef {Object} VisitorPass
  * @property {string} id            = contenido del QR
- * @property {string} [dni]         normalizado (solo dígitos)
+ * @property {string} [dni]         normalizado (solo dígitos); solo si el sitio no tiene clave
+ * @property {string} [dniHash]     hashCredential('dni', dni, key); con clave del sitio
  * @property {string} [cardholderId]
  * @property {string} [name]
  * @property {string[]} doors
@@ -165,6 +169,7 @@
  * @property {(key:string) => boolean} isRevoked
  * @property {() => Policy} policy
  * @property {() => {tz?:string}} [site]
+ * @property {() => (string|null)} [credentialKey]                             clave HMAC del sitio (chunk 'secrets')
  * @property {(id:string) => Area|null} [area]                                 opcional (el edge aún no lo tiene)
  */
 
@@ -203,13 +208,38 @@ const normalizeCredentialValue = (type, raw) => {
 };
 
 /**
- * sha256 hex de `${type}:${valorNormalizado}`. El prefijo de tipo evita que un
- * mismo número como DNI y como tarjeta colisionen. null si el valor queda vacío.
+ * Clave de credenciales del sitio -> Buffer. Buffer/Uint8Array se usan tal cual;
+ * un string se interpreta como base64 (así se guarda en
+ * `sites/{siteId}/secrets/credentialKey` y viaja en el chunk `secrets`).
  */
-const hashCredential = (type, rawValue) => {
+const credentialKeyBytes = (key) => {
+  if (key == null || key === '') return null;
+  if (Buffer.isBuffer(key)) return key.length ? key : null;
+  if (key instanceof Uint8Array) return key.length ? Buffer.from(key) : null;
+  const buf = Buffer.from(String(key), 'base64');
+  return buf.length ? buf : null;
+};
+
+/**
+ * Hash hex de `${type}:${valorNormalizado}`. El prefijo de tipo evita que un
+ * mismo número como DNI y como tarjeta colisionen. null si el valor queda vacío.
+ *  - con `key` (clave por sitio, decisión del dueño): HMAC-SHA256; un DNI no se
+ *    puede adivinar por fuerza bruta sin la clave;
+ *  - sin `key`: sha256 pelado (compatibilidad con snapshots y tests previos).
+ */
+const hashCredential = (type, rawValue, key = null) => {
   const normalized = normalizeCredentialValue(type, rawValue);
   if (!normalized) return null;
+  const keyBytes = credentialKeyBytes(key);
+  if (keyBytes) return crypto.createHmac('sha256', keyBytes).update(`${type}:${normalized}`, 'utf8').digest('hex');
   return crypto.createHash('sha256').update(`${type}:${normalized}`, 'utf8').digest('hex');
+};
+
+/** Huella pública de la clave (no secreta): detecta un cambio de clave sin exponerla. */
+const credentialKeyId = (key) => {
+  const keyBytes = credentialKeyBytes(key);
+  if (!keyBytes) return null;
+  return crypto.createHash('sha256').update(keyBytes).digest('hex').slice(0, 16);
 };
 
 // ───────────────────────────── Validación ─────────────────────────────
@@ -306,6 +336,7 @@ const validators = {
   passes(p, err) {
     if (!isStr(p.id)) err('id (QR) requerido');
     if (p.dni != null && !/^\d+$/.test(String(p.dni))) err('dni debe venir normalizado (solo dígitos)');
+    if (p.dniHash != null && !/^[0-9a-f]{64}$/.test(String(p.dniHash))) err('dniHash debe ser hex de 64');
     if (!Array.isArray(p.doors)) err('doors requerido');
     if (!isTime(p.validFrom) || !isTime(p.validTo)) err('validFrom/validTo requeridos');
   },
@@ -315,11 +346,21 @@ const validators = {
     if (p.apbMode != null && !['off', 'soft', 'hard'].includes(p.apbMode)) err('apbMode inválido');
     if (p.apbResetMin != null && !(isNum(p.apbResetMin) && p.apbResetMin >= 0)) err('apbResetMin inválido');
   },
-  site(s, err) { if (s.tz != null && !isStr(s.tz)) err('tz inválido'); }
+  site(s, err) { if (s.tz != null && !isStr(s.tz)) err('tz inválido'); },
+  operators(o, err) {
+    if (!isStr(o.username)) err('username requerido');
+    if (!isStr(o.hash)) err('hash (bcrypt) requerido');
+    if (Object.prototype.hasOwnProperty.call(o, 'password')) err('la contraseña en claro no puede viajar');
+    if (o.perms != null && !Array.isArray(o.perms)) err('perms debe ser array');
+    if (o.posts != null && !Array.isArray(o.posts)) err('posts debe ser array');
+  },
+  secrets(s, err) {
+    if (s.credentialKey != null && !isStr(s.credentialKey)) err('credentialKey debe ser base64');
+  }
 };
 
 const ENTITY_KINDS = Object.keys(validators);
-const OBJECT_KINDS = new Set(['policy', 'site']);
+const OBJECT_KINDS = new Set(['policy', 'site', 'secrets']);
 const META_KEYS = { bucket: (v) => Number.isInteger(v), date: (v) => YMD.test(String(v || '')) };
 
 /** Claves admitidas por nombre de chunk compuesto. */
@@ -328,6 +369,8 @@ const chunkLayout = (name) => {
   if (/^ch-\d{2}$/.test(name)) return ['bucket', 'cardholders', 'credentials'];
   if (/^grants-\d{8}$/.test(name)) return ['date', 'grants'];
   if (name === 'passes') return ['passes', 'revoked'];
+  if (name === 'operators') return ['operators'];
+  if (name === 'secrets') return ['secrets'];
   if (ENTITY_KINDS.includes(name)) return [name];
   return null;
 };
@@ -402,6 +445,8 @@ module.exports = {
   ENTITY_KINDS,
   chunkLayout,
   normalizeCredentialValue,
+  credentialKeyBytes,
+  credentialKeyId,
   hashCredential,
   validateSnapshotChunk
 };

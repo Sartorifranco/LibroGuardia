@@ -309,7 +309,10 @@ const decide = (input = {}) => {
   if (!manual) {
     const type = credential && credential.type;
     if (!CREDENTIAL_TYPES.includes(type)) return deny('credencial_desconocida');
-    credentialHash = hashCredential(type, credential.value);
+    // Clave HMAC del sitio: explícita o la del snapshot (chunk 'secrets'); sin clave = sha256.
+    const credentialKey = input.credentialKey
+      ?? (typeof snap.credentialKey === 'function' ? snap.credentialKey() : null);
+    credentialHash = hashCredential(type, credential.value, credentialKey);
     if (!credentialHash) return deny('credencial_desconocida');
     if (snap.isRevoked(`cred:${type}:${credentialHash}`)) return deny('credencial_revocada');
 
@@ -318,7 +321,9 @@ const decide = (input = {}) => {
     let passFound = null;
     if (type === 'dni' || type === 'qr') {
       // Pases de visita: por id (= contenido del QR) o por DNI normalizado.
-      const p = snap.pass(normalizeCredentialValue(type, credential.value));
+      // Con clave del sitio los pases traen dniHash (no el DNI en claro).
+      const p = snap.pass(normalizeCredentialValue(type, credential.value))
+        || (credentialKey && type === 'dni' ? snap.pass(credentialHash) : null);
       if (p) {
         passFound = p;
         const closed = CLOSED_PASS.has(p.status) || snap.isRevoked(`pass:${p.id}`) || snap.isRevoked(String(p.id));
