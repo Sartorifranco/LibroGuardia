@@ -5,6 +5,7 @@
 
 const express = require('express');
 const { db, FieldValue } = require('../firestore');
+const { markDirty } = require('../lib/siteCompiler');
 const {
   normalizeAllowedDoorIds,
   addDoorToAllowedList,
@@ -267,6 +268,7 @@ router.post(
       const result = await mergePeople(keepId, mergeId, {
         ignoredSuggestion: req.body?.ignored === true
       });
+      markDirty({ people: [keepId, mergeId] });
       res.json({ ok: true, message: 'Personas unificadas', ...result });
     } catch (err) {
       res.status(err.status || 500).json({
@@ -292,6 +294,7 @@ router.post(
         mode: req.body?.mode === 'clear' ? 'clear' : 'single',
         doorId: req.body?.doorId || null
       });
+      markDirty({ full: true });
       res.json({
         ok: true,
         message: result.mode === 'clear'
@@ -319,6 +322,7 @@ router.post(
   async (_req, res) => {
     try {
       const result = await clearSuspiciousSharedDnis();
+      markDirty({ full: true });
       res.json({
         ok: true,
         message: `Se limpiaron ${result.updated} DNI sospechosos o masivamente compartidos`,
@@ -376,6 +380,7 @@ router.post(
       const cursor = req.body?.cursor ? String(req.body.cursor) : null;
       const batchSize = Number(req.body?.batchSize) || 40;
       const result = await applyRetainSourcesStep({ cursor, batchSize });
+      markDirty({ full: true });
       const message = result.done
         ? `Listo: se dieron de baja ${result.deactivated} en este paso (recorrido terminado)`
         : `Baja parcial: ${result.deactivated} fichas (continúa…)`;
@@ -401,6 +406,7 @@ router.post(
         ? body.actions
         : (body.action ? [body.action] : []);
       const result = await applyCleanupActions(actions);
+      markDirty({ full: true });
       res.json({
         ok: true,
         message: result.report.errors.length
@@ -428,6 +434,7 @@ router.post(
   async (req, res) => {
     try {
       const body = req.body || {};
+      markDirty({ full: true });
       const result = await applyCleanupPlan({
         clearSuspiciousDnis: body.clearSuspiciousDnis === true,
         repairBiostarDoors: body.repairBiostarDoors === true,
@@ -463,6 +470,7 @@ router.post(
       const mode = ['clear', 'default', 'biostar_default_others_clear'].includes(req.body?.mode)
         ? req.body.mode
         : 'biostar_default_others_clear';
+      markDirty({ full: true });
       const result = await repairAllDoorsAccess({
         mode,
         doorId: req.body?.doorId || null,
@@ -514,6 +522,7 @@ router.put(
       const allowedDoorIds = normalizeAllowedDoorIds(req.body?.allowedDoorIds);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
       bumpPeopleQuiet();
+      markDirty({ people: [ref.id] });
       auditAllowedDoors(req, 'person.allowed_doors.update', ref, prevDoors, allowedDoorIds, { via: 'by-dni' });
       const updated = await ref.get();
       res.json({ message: 'Puertas actualizadas', person: personToJSON(updated) });
@@ -599,6 +608,7 @@ router.put(
         updatedAt: FieldValue.serverTimestamp()
       });
       bumpPeopleQuiet();
+      markDirty({ people: [personId] });
       if (Object.prototype.hasOwnProperty.call(patch, 'allowedDoorIds')) {
         auditAllowedDoors(req, 'person.allowed_doors.update', ref, existing.allowedDoorIds, patch.allowedDoorIds);
       }
@@ -675,6 +685,7 @@ router.post(
       const allowedDoorIds = addDoorToAllowedList(prev, doorId);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
       bumpPeopleQuiet();
+      markDirty({ people: [personId] });
       auditAllowedDoors(req, 'person.allowed_doors.add', ref, prev, allowedDoorIds, { doorId });
       const updated = await ref.get();
       res.json({
@@ -708,6 +719,7 @@ router.delete(
       const allowedDoorIds = removeDoorFromAllowedList(prevDoors, doorId);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
       bumpPeopleQuiet();
+      markDirty({ people: [personId] });
       auditAllowedDoors(req, 'person.allowed_doors.remove', ref, prevDoors, allowedDoorIds, { doorId });
       const updated = await ref.get();
       res.json({ message: 'Puerta quitada de la persona', person: personToJSON(updated) });

@@ -1,4 +1,5 @@
 const { db, FieldValue } = require('./firestore');
+const { markDirty } = require('./lib/siteCompiler');
 const { normalizeIdNumber } = require('./dniParser');
 const { normalizePersonName, buildNameTokens } = require('./authorizations');
 const {
@@ -153,6 +154,7 @@ const syncPersonalMaster = async (person) => {
       createdAt: FieldValue.serverTimestamp()
     });
   }
+  if (person.id) markDirty({ people: [person.id] });
 };
 
 const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'empleado', skipPersonalMasterSync = false } = {}) => {
@@ -207,6 +209,7 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
       ...reactivation
     };
     await personDoc.ref.set(merged, { merge: true });
+    markDirty({ people: [personDoc.id] });
     const person = { id: personDoc.id, ...merged };
     if (!skipPersonalMasterSync) {
       await syncPersonalMaster(person);
@@ -218,6 +221,7 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
     ...basePayload,
     createdAt: FieldValue.serverTimestamp()
   });
+  markDirty({ people: [ref.id] });
   const person = { id: ref.id, ...basePayload };
   if (!skipPersonalMasterSync) {
     await syncPersonalMaster(person);
