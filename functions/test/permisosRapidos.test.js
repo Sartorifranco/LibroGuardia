@@ -344,3 +344,84 @@ describe('POST /api/guard/open-door: estanco forzado', () => {
     assert.equal(audit.targetId, 'int');
   });
 });
+
+describe('Login: bloqueo de cuentas técnicas por usuario+IP', () => {
+  let mem;
+  let srv;
+  const KIOSK_PASS = 'Ab3dEf6hIj9kLm2nOp5qRs8t';
+  const HUMAN_PASS = 'Guardia12345';
+
+  before(async () => {
+    process.env.JWT_SECRET = TEST_JWT_SECRET;
+    const bcrypt = require('bcryptjs');
+    mem = setupHarness({
+      initial: {
+        roles: defaultRoleDocs({ kiosk_puerta: ['access.kiosk'] }),
+        users: {
+          'kiosk.p1.l1': user('kiosk_puerta', {
+            username: 'kiosk.p1.l1',
+            password: bcrypt.hashSync(KIOSK_PASS, 4),
+            permissions: ['access.kiosk']
+          }),
+          'estacion.legacy': user('kiosk_puerta', {
+            username: 'estacion.legacy',
+            password: bcrypt.hashSync(KIOSK_PASS, 4)
+          }),
+          guardia: user('guardia', { password: bcrypt.hashSync(HUMAN_PASS, 4) })
+        }
+      }
+    });
+    srv = await startRouters(['routes/auth.js']);
+  });
+
+  after(async () => { await srv.close(); });
+
+  const login = (username, password, ip) => srv.request('POST', '/api/auth/login', {
+    body: { username, password },
+    headers: { 'x-forwarded-for': ip }
+  });
+
+  it('equipo viejo en otra IP: se bloquea solo esa IP, la estación legítima sigue entrando y queda alerta', async () => {
+    const ok = await login('kiosk.p1.l1', KIOSK_PASS, '10.0.0.1');
+    assert.equal(ok.status, 200, ok.text);
+
+    let last;
+    for (let i = 0; i < 6; i += 1) {
+      last = await login('kiosk.p1.l1', 'clave-vieja', '10.9.9.9');
+    }
+    assert.equal(last.status, 429, last.text);
+
+    const legit = await login('kiosk.p1.l1', KIOSK_PASS, '10.0.0.1');
+    assert.equal(legit.status, 200, `la estación legítima no debe quedar bloqueada: ${legit.text}`);
+
+    const stale = await login('kiosk.p1.l1', KIOSK_PASS, '10.9.9.9');
+    assert.equal(stale.status, 429, 'la IP del equipo viejo sigue bloqueada');
+
+    const alert = mem.getDoc('deviceAlerts', 'credenciales_viejas__kiosk.p1.l1__10.9.9.9');
+    assert.ok(alert, 'falta alerta de credenciales viejas');
+    assert.equal(alert.kind, 'credenciales_viejas');
+    assert.equal(alert.username, 'kiosk.p1.l1');
+    assert.equal(alert.ip, '10.9.9.9');
+    assert.equal(alert.lastSuccessIp, '10.0.0.1');
+    assert.equal(typeof alert.at, 'number');
+  });
+
+  it('rol kiosk_puerta sin prefijo kiosk. también se trata como técnica', async () => {
+    for (let i = 0; i < 6; i += 1) {
+      await login('estacion.legacy', 'mala', '10.8.8.8');
+    }
+    const legit = await login('estacion.legacy', KIOSK_PASS, '10.0.0.2');
+    assert.equal(legit.status, 200, legit.text);
+  });
+
+  it('cuentas humanas mantienen el bloqueo por usuario (cualquier IP)', async () => {
+    let last;
+    for (let i = 0; i < 5; i += 1) {
+      last = await login('guardia', 'mala', '10.7.7.7');
+    }
+    assert.equal(last.status, 429, last.text);
+    const other = await login('guardia', HUMAN_PASS, '10.0.0.3');
+    assert.equal(other.status, 429, other.text);
+    assert.equal(mem.hasDoc('deviceAlerts', 'credenciales_viejas__guardia__10.7.7.7'), false);
+  });
+});

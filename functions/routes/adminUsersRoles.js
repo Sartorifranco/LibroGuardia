@@ -30,7 +30,7 @@ const {
   requireAnyPermission,
   sendServerError
 } = require('../middleware/auth');
-const { clearLoginFailures } = require('../lib/loginRateLimit');
+const { clearLoginFailures, isTechnicalAccount } = require('../lib/loginRateLimit');
 const { validateNewPassword } = require('../lib/changePassword');
 
 const router = express.Router();
@@ -381,7 +381,11 @@ router.post(
         return res.status(404).json({ message: 'Usuario no encontrado' });
       }
       const username = String(snap.data()?.username || id).trim().toLowerCase();
-      await clearLoginFailures(db, { username });
+      // Cuentas técnicas: limpia también los bloqueos por usuario+IP.
+      await clearLoginFailures(db, {
+        username,
+        technical: isTechnicalAccount({ username, role: snap.data()?.role })
+      });
       logAdminAction({
         req,
         action: 'user.clear_login_failures',

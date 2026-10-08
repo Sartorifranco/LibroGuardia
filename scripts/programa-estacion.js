@@ -292,9 +292,24 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
     throw new Error('Falta apiBaseUrl (ej. https://mss-guard.web.app/api)');
   }
 
-  const stationUsername = String(fileCfg.username || env.STATION_USERNAME || '').trim();
-  const stationPassword = String(fileCfg.password || env.STATION_PASSWORD || '');
+  const stationUsername = String(
+    fileCfg.stationUsername || fileCfg.username || env.STATION_USERNAME || ''
+  ).trim();
+  const stationPassword = String(
+    fileCfg.stationPassword || fileCfg.password || env.STATION_PASSWORD || ''
+  );
   const estacionId = String(fileCfg.estacionId || env.ESTACION_ID || '').trim();
+  // En la config legacy de un solo lector, fileCfg.username es el usuario DEL LECTOR,
+  // no de una estación: sin estacionId ni stationUsername explícito no hay sync de estación.
+  const explicitStationUsername = String(
+    fileCfg.stationUsername
+    || env.STATION_USERNAME
+    || (isStationFormat ? fileCfg.username : '')
+    || ''
+  ).trim();
+  // La config descargada de Admin → Estaciones trae el id en _meta.estacionId.
+  const metaEstacionId = String(fileCfg._meta?.estacionId || '').trim();
+  const stationSyncEnabled = Boolean(estacionId || metaEstacionId) || Boolean(explicitStationUsername);
 
   if (readers.length === 0) {
     if (!stationUsername || !stationPassword) {
@@ -347,6 +362,7 @@ const normalizeStationConfig = (fileCfg = {}, env = process.env, configPath = ''
     localServerHost,
     localServerSecret,
     estacionId,
+    stationSyncEnabled,
     stationUsername: stationUsername || (readers[0] && readers[0].username) || '',
     stationPassword: stationPassword || (readers[0] && readers[0].password) || '',
     configVersion: Number(fileCfg.configVersion) || 0,
@@ -1080,7 +1096,9 @@ const createApiClient = (cfg, deps = {}) => {
     postOfflineEntries,
     withNetworkRetry,
     startBackgroundLogin: beginBackgroundLogin,
-    getAuthState: () => ({ ...authState })
+    getAuthState: () => ({ ...authState }),
+    ensureToken,
+    invalidateToken: () => { token = null; }
   };
 };
 
@@ -2349,7 +2367,15 @@ const startReaderRuntime = async (cfg, options = {}) => {
     }
   }
 
-  return { stop, cfg, getStatus, openLocal };
+  return {
+    stop,
+    cfg,
+    getStatus,
+    openLocal,
+    // El sync de estación reusa el token del lector si es la misma cuenta.
+    getAuthToken: () => api.ensureToken(),
+    invalidateAuthToken: () => api.invalidateToken()
+  };
 };
 
 const readerFingerprint = (cfg = {}) => [
@@ -2505,7 +2531,9 @@ const main = async () => {
     });
   }
 
+  let stationToken = null;
   const stationLogin = async () => {
+    if (stationToken) return stationToken;
     const res = await requestJson('POST', `${station.apiBaseUrl}/auth/login`, {
       body: { username: station.stationUsername, password: station.stationPassword },
       timeoutMs: 20000
@@ -2513,26 +2541,56 @@ const main = async () => {
     if (res.status < 200 || res.status >= 300 || !res.data?.token) {
       throw new Error(res.data?.message || `Login estación falló (${res.status})`);
     }
-    return res.data.token;
+    stationToken = res.data.token;
+    return stationToken;
   };
 
+  /** Token para el sync: el del lector si es la misma cuenta (no re-login cada 45 s). */
+  const getSyncAuth = async () => {
+    const user = String(station.stationUsername || '').trim().toLowerCase();
+    const shared = runtimes.find((rt) => (
+      rt
+      && typeof rt.getAuthToken === 'function'
+      && String(rt.cfg?.username || '').trim().toLowerCase() === user
+    ));
+    if (shared) {
+      return { token: await shared.getAuthToken(), invalidate: () => shared.invalidateAuthToken() };
+    }
+    return { token: await stationLogin(), invalidate: () => { stationToken = null; } };
+  };
+
+  let syncDisabledLogged = false;
   const syncFromCloud = async (reason = 'poll') => {
+    if (!station.stationSyncEnabled) {
+      if (!syncDisabledLogged) {
+        syncDisabledLogged = true;
+        log(logCfg(), 'info', 'Sync de estación desactivado: la config no tiene estacionId ni usuario de estación (config legacy de un lector). Los lectores funcionan igual.', {
+          username: station.stationUsername || null
+        });
+      }
+      return;
+    }
     try {
-      const token = await stationLogin();
-      const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+      const auth = await getSyncAuth();
+      const headers = { Authorization: `Bearer ${auth.token}`, Accept: 'application/json' };
       const ports = await listDiscoveredSerialPorts();
 
-      await requestJson('POST', `${station.apiBaseUrl}/estaciones/heartbeat`, {
+      const hbRes = await requestJson('POST', `${station.apiBaseUrl}/estaciones/heartbeat`, {
         headers,
         body: { discoveredPorts: ports, configVersionAck: appliedVersion },
         timeoutMs: 20000
       });
+      if (hbRes.status === 401) {
+        auth.invalidate();
+        throw new Error('Token vencido (401) — se renueva en el próximo ciclo');
+      }
 
       const cfgRes = await requestJson('GET', `${station.apiBaseUrl}/estaciones/runtime-config`, {
         headers,
         timeoutMs: 60000
       });
       if (cfgRes.status < 200 || cfgRes.status >= 300) {
+        if (cfgRes.status === 401) auth.invalidate();
         throw new Error(cfgRes.data?.message || `runtime-config HTTP ${cfgRes.status}`);
       }
 
