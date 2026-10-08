@@ -275,8 +275,10 @@ function reduceDoor(prev, ev, p) {
  *          onEffect:(effect:object, state:object)=>void, onState?:(state:object, prev:object)=>void}} opts
  */
 class DoorRunner {
-  constructor({ doorId, params, clock = null, onEffect = () => {}, onState = () => {} }) {
+  constructor({ doorId, params, clock = null, onEffect = () => {}, onState = () => {}, onEmergencyInput = null }) {
     this.doorId = doorId;
+    this.onEmergencyInput = onEmergencyInput;
+    this.emergencyInput = false;
     this.params = params;
     this.clock = clock || { now: () => Date.now(), setTimeout, clearTimeout };
     this.onEffect = onEffect;
@@ -323,22 +325,33 @@ class DoorRunner {
     }
   }
 
-  /** Entrada cruda con debounce: solo se aplica si se mantiene `debounceMs`. Emergencia la maneja el controlador. */
+  /**
+   * Entrada cruda con debounce: solo se aplica si se mantiene `debounceMs`.
+   * 'emergency' no entra al reductor: se entrega a `onEmergencyInput` (el controlador la reparte al grupo).
+   */
   input(name, value) {
     const ms = this.params.debounceMs;
     const pending = this.debounce.get(name);
     if (pending) this.clock.clearTimeout(pending);
     this.debounce.delete(name);
-    const stable = name === 'rex' ? this.state.rex : this.state[name];
+    const stable = name === 'emergency' ? this.emergencyInput : this.state[name];
     if (value === stable && name !== 'rex') return;
+    const apply = (v) => {
+      if (name === 'emergency') {
+        this.emergencyInput = Boolean(v);
+        if (this.onEmergencyInput) this.onEmergencyInput(this.emergencyInput);
+        return;
+      }
+      this.dispatch({ type: 'input', name, value: v });
+    };
     if (!ms) {
-      this.dispatch({ type: 'input', name, value });
+      apply(value);
       return;
     }
     this.pendingValue.set(name, value);
     this.debounce.set(name, this.clock.setTimeout(() => {
       this.debounce.delete(name);
-      this.dispatch({ type: 'input', name, value: this.pendingValue.get(name) });
+      apply(this.pendingValue.get(name));
     }, ms));
   }
 
