@@ -16,6 +16,7 @@ import {
   buildGatePolygonPatch
 } from '../utils/fleetGpsGeofence';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
 import brand from '../config/brand';
 import 'leaflet/dist/leaflet.css';
 
@@ -169,14 +170,19 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
     }
   }, [authToken, active, hasCoords, queryConfig, editable]);
 
+  const livePollingEnabled = Boolean(active && authToken && !isDrawing);
   useEffect(() => {
-    if (!active || !authToken || isDrawing) return undefined;
+    if (!livePollingEnabled) return;
     fetchLive(false);
-    const timer = setInterval(() => {
-      if (!mapViewLockedRef.current) fetchLive(true);
-    }, queryConfig.pollIntervalSeconds * 1000);
-    return () => clearInterval(timer);
-  }, [active, authToken, fetchLive, queryConfig.pollIntervalSeconds, isDrawing]);
+  }, [livePollingEnabled, fetchLive]);
+  const pollLive = useCallback(() => {
+    if (!mapViewLockedRef.current) return fetchLive(true);
+    return undefined;
+  }, [fetchLive]);
+  usePolling(pollLive, queryConfig.pollIntervalSeconds * 1000, {
+    enabled: livePollingEnabled,
+    immediate: false
+  });
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return undefined;

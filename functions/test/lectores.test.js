@@ -357,6 +357,41 @@ describe('lectores â€” helpers', () => {
     assert.equal(stored.inputModeDetectado, 'serial');
   });
 
+  it('heartbeat guarda los chequeos de salud con la hora del último cambio', async () => {
+    const created = await bag.api.createLector({
+      nombre: 'Lector Salud',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso'
+    });
+    const t0 = Date.parse('2026-10-08T12:00:00.000Z');
+    await bag.api.touchHeartbeat({
+      username: created.username,
+      lectorId: created.lector.id,
+      serialPort: 'COM3',
+      healthReport: { serialConnected: false, relayReachable: true, clientTime: t0 + 5000 },
+      nowMs: t0
+    });
+    let stored = bag.lectores.get(created.lector.id);
+    assert.equal(stored.checks.serialConnected.value, false);
+    assert.equal(stored.checks.serialConnected.lastChangeAt, new Date(t0).toISOString());
+    assert.equal(stored.checks.relayReachable.value, true);
+    assert.equal(stored.checks.clockSkewMs.value, 5000);
+
+    // Mismo valor un minuto después: lastChangeAt no se mueve.
+    const touched = await bag.api.touchHeartbeat({
+      username: created.username,
+      lectorId: created.lector.id,
+      healthReport: { serialConnected: false, relayReachable: false },
+      nowMs: t0 + 60000
+    });
+    stored = bag.lectores.get(created.lector.id);
+    assert.equal(stored.checks.serialConnected.lastChangeAt, new Date(t0).toISOString());
+    assert.equal(stored.checks.relayReachable.value, false);
+    assert.equal(stored.checks.relayReachable.lastChangeAt, new Date(t0 + 60000).toISOString());
+    assert.equal(touched.checks.serialConnected.value, false);
+  });
+
   it('heartbeat guarda allowlistGeneratedAt y allowlistEntryCount reportados por la estación', async () => {
     const created = await bag.api.createLector({
       nombre: 'Lector Allowlist',

@@ -10,8 +10,25 @@
   "doorMap": {
     "2": "puerta-p2"
   },
-  "successEventCodes": ["4867", "4102"],
+  "devices": {
+    "544112233": {
+      "doorId": "puerta-p2",
+      "direction": "ingreso"
+    },
+    "544112244": {
+      "doorId": "puerta-p2",
+      "direction": "egreso"
+    }
+  },
+  "successEventCodes": [
+    "4867",
+    "4102"
+  ],
   "pollUsersMs": 900000,
   "pollEventsMs": 30000,
-  "eventsLookbackHours": 24
+  "eventsLookbackHours": 24,
+  "eventsBatchSize": 50,
+  "eventsFetchLimit": 200,
+  "eventsMaxRounds": 20,
+  "usersBatchSize": 50
 }

@@ -31,7 +31,12 @@ export const CONNECTION_STATUS_META = {
   online: {
     label: 'En línea',
     className: 'lector-status lector-status--online',
-    hint: 'Heartbeat en los últimos 10 minutos'
+    hint: 'Heartbeat en los últimos 10 minutos, lector y relé respondiendo'
+  },
+  problem: {
+    label: 'Con problemas',
+    className: 'lector-status lector-status--problem',
+    hint: 'La estación reporta, pero el lector, el relé o las credenciales fallan'
   },
   stale: {
     label: 'Sin señal reciente',
@@ -995,10 +1000,13 @@ function LectoresAdminSection({ pendingAction, runAction }) {
                     </td>
                     <td>{DIRECTION_LABELS[row.direction] || row.direction}</td>
                     <td>
-                      <span className={status.className} title={status.hint}>
+                      <span className={status.className} title={row.connectionReason || status.hint}>
                         <span className="lector-status__dot" aria-hidden />
                         {status.label}
                       </span>
+                      {row.connectionReason && row.connectionStatus !== 'online' ? (
+                        <div className="theme-section-desc lector-status__reason">{row.connectionReason}</div>
+                      ) : null}
                     </td>
                     <td>{formatUltimaConexion(row.ultimaConexion)}</td>
                     <td>
@@ -1076,6 +1084,8 @@ function LectoresAdminSection({ pendingAction, runAction }) {
         }
         .lector-status--online { color: #16a34a; }
         .lector-status--stale { color: #ca8a04; }
+        .lector-status--problem { color: #ea580c; }
+        .lector-status__reason { margin-top: 0.2rem; max-width: 16rem; }
         .lector-status--offline { color: #dc2626; }
         .lector-pairing-code {
           display: flex;

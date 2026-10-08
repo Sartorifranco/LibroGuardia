@@ -11,6 +11,11 @@ const {
   listLectores,
   DEFAULT_API_BASE_URL
 } = require('./lectores');
+const {
+  sanitizeHeartbeatChecks,
+  mergeChecks,
+  recordCheckTransitions
+} = require('./stationHealth');
 
 const ESTACIONES = 'estaciones';
 
@@ -324,7 +329,46 @@ const resolveEstacionForAgentUser = async (username) => {
   return getEstacionById(withStation.estacionId);
 };
 
-const touchEstacionHeartbeat = async ({ username, discoveredPorts = null, configVersionAck = null } = {}) => {
+/**
+ * Estado por lector informado en el heartbeat de la estación (usa las credenciales de la
+ * estación, así llega aunque el login de un lector falle: 'credenciales inválidas').
+ * readers: [{ lectorId?, doorId?, readerId?, loginError?, serialConnected?, offlineQueueLength?, ... }]
+ */
+const applyStationReaderReports = async (estacionId, readers, nowMs = Date.now()) => {
+  if (!Array.isArray(readers) || !readers.length) return 0;
+  const all = await listLectores();
+  const mine = all.filter((l) => String(l.estacionId || '') === String(estacionId));
+  let applied = 0;
+  for (const report of readers.slice(0, 20)) {
+    if (!report || typeof report !== 'object') continue;
+    const lector = mine.find((l) => (report.lectorId && l.id === String(report.lectorId))
+      || (report.doorId && report.readerId
+        && l.doorId === String(report.doorId) && l.readerId === String(report.readerId)));
+    if (!lector) continue;
+    const incoming = sanitizeHeartbeatChecks(report, nowMs);
+    if (!Object.keys(incoming).length) continue;
+    const merged = mergeChecks(lector.checks, incoming, new Date(nowMs).toISOString());
+    await db.collection('lectores').doc(lector.id).set({
+      checks: { ...(lector.checks || {}), ...merged.checks }
+    }, { merge: true });
+    await recordCheckTransitions({
+      lectorId: lector.id,
+      doorId: lector.doorId,
+      readerId: lector.readerId,
+      transitions: merged.transitions
+    });
+    applied += 1;
+  }
+  return applied;
+};
+
+const touchEstacionHeartbeat = async ({
+  username,
+  discoveredPorts = null,
+  configVersionAck = null,
+  readers = null,
+  nowMs = Date.now()
+} = {}) => {
   const estacion = await resolveEstacionForAgentUser(username);
   const patch = {
     ultimaConexion: FieldValue.serverTimestamp(),
@@ -338,6 +382,13 @@ const touchEstacionHeartbeat = async ({ username, discoveredPorts = null, config
     if (Number.isFinite(n)) patch.configVersionAck = n;
   }
   await db.collection(ESTACIONES).doc(estacion.id).set(patch, { merge: true });
+  if (Array.isArray(readers) && readers.length) {
+    try {
+      await applyStationReaderReports(estacion.id, readers, nowMs);
+    } catch (err) {
+      console.warn('[estaciones/heartbeat] estado de lectores', err.message);
+    }
+  }
   const after = await getEstacionById(estacion.id);
   return after;
 };
@@ -359,5 +410,6 @@ module.exports = {
   enrichConfigWithEstacion,
   buildStationConfigForDownload,
   resolveEstacionForAgentUser,
+  applyStationReaderReports,
   touchEstacionHeartbeat
 };

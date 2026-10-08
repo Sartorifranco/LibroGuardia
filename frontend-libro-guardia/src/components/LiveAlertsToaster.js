@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Bell, Info, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
 import {
   filterUnseenAlerts,
   markAlertSeen,
@@ -9,7 +10,8 @@ import {
 } from '../utils/liveAlertDedupe';
 import IdentityVerificationModal from './IdentityVerificationModal';
 
-const POLL_MS = 5000;
+// El servidor cachea /guard/live-alerts 15 s: pedir más seguido no trae nada nuevo.
+const POLL_MS = 15000;
 const DISPLAY_MS = 8000;
 const MAX_VISIBLE = 4;
 const NOTIF_PREF_KEY = 'mss.guard.nativeNotifications';
@@ -117,30 +119,31 @@ function LiveAlertsToaster({ enabled = true, pollMs = POLL_MS }) {
     setIdentityQueue((prev) => prev.filter((a) => a.id !== id));
   }), []);
 
+  const mountedRef = useRef(true);
   useEffect(() => {
-    if (!enabled || !authToken || !currentUser) return undefined;
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const data = await apiFetch('/guard/live-alerts', {
-          token: authToken,
-          allowForbidden: true
-        });
-        if (cancelled) return;
-        enqueue(data.alerts || []);
-      } catch {
-        // silencioso
-      }
-    };
+  const pollAlerts = useCallback(async () => {
+    try {
+      const data = await apiFetch('/guard/live-alerts', {
+        token: authToken,
+        allowForbidden: true
+      });
+      if (!mountedRef.current) return;
+      enqueue(data.alerts || []);
+    } catch {
+      // silencioso
+    }
+  }, [authToken, enqueue]);
 
-    tick();
-    const id = setInterval(tick, Math.max(3000, pollMs));
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [enabled, authToken, currentUser, pollMs, enqueue]);
+  // Con la pestaña oculta se pausa, salvo que estén activos los avisos nativos del sistema
+  // (que justamente se muestran cuando la pestaña no está a la vista).
+  usePolling(pollAlerts, Math.max(3000, pollMs), {
+    enabled: Boolean(enabled && authToken && currentUser),
+    pauseWhenHidden: !notifEnabled
+  });
 
   useEffect(() => () => {
     timers.current.forEach((t) => clearTimeout(t));

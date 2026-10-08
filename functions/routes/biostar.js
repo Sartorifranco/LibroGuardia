@@ -6,7 +6,11 @@ const express = require('express');
 const { auth, requireAnyPermission } = require('../middleware/auth');
 const { logAdminAction } = require('../lib/auditLog');
 const { importBiostarUsers, importBiostarEvents } = require('../lib/biostarImport');
-const { touchBiostarHeartbeat, getBiostarBridgeStatus } = require('../lib/biostarBridgeStatus');
+const {
+  touchBiostarHeartbeat,
+  getBiostarBridgeStatus,
+  recordBiostarEventsImport
+} = require('../lib/biostarBridgeStatus');
 
 const router = express.Router();
 
@@ -49,7 +53,9 @@ router.post('/api/admin/biostar/import-users', auth, canManage, async (req, res)
 
 /**
  * Importa eventos BioStar a entries.
- * Body: { events: [...], defaultDoorId?, doorMap?, successEventCodes?, cursorDatetime? }
+ * Body: { events: [...], defaultDoorId?, doorMap?, devices?, successEventCodes?, cursorDatetime? }
+ * Respuesta: accepted, deviceEvents, skipped, processed, partial, cursorDatetime, lastEventId.
+ * Si partial es true, el puente avanza el cursor hasta cursorDatetime y reenvía el resto.
  */
 router.post('/api/admin/biostar/import-events', auth, canManage, async (req, res) => {
   try {
@@ -57,10 +63,16 @@ router.post('/api/admin/biostar/import-events', auth, canManage, async (req, res
     const result = await importBiostarEvents(events, {
       defaultDoorId: req.body?.defaultDoorId || null,
       doorMap: req.body?.doorMap || {},
+      devices: req.body?.devices || {},
       successEventCodes: req.body?.successEventCodes,
       cursorDatetime: req.body?.cursorDatetime || null
     });
-    res.json({ ok: true, ...result });
+    await recordBiostarEventsImport(result).catch((err) => {
+      console.warn('[biostar] No se pudo registrar la importación', err.message);
+    });
+    // El detalle por evento no le sirve al puente y engorda la respuesta.
+    const { results, ...summary } = result;
+    res.json({ ok: true, ...summary });
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || 'Error al importar eventos BioStar',
@@ -71,9 +83,7 @@ router.post('/api/admin/biostar/import-events', auth, canManage, async (req, res
 
 router.post('/api/admin/biostar/heartbeat', auth, canManage, async (req, res) => {
   try {
-    const status = await touchBiostarHeartbeat({
-      lastError: req.body?.lastError || null
-    });
+    const status = await touchBiostarHeartbeat(req.body || {});
     res.json({ ok: true, ...status });
   } catch (err) {
     res.status(err.status || 500).json({

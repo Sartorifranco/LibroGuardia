@@ -240,6 +240,29 @@ describe('estaciones â€” modelo y config unificada', () => {
     assert.equal(config._meta.direccionRedLocal, '192.168.1.50');
   });
 
+  it('heartbeat de estacion guarda el estado por lector (login fallido llega igual)', async () => {
+    const estacion = await bag.estacionesApi.createEstacion({
+      nombre: 'Estacion Salud',
+      direccionRedLocal: '192.168.1.60'
+    });
+    const a = await bag.lectoresApi.createLector({
+      nombre: 'Lector Salud',
+      doorId: 'puerta-p1',
+      readerId: 'INGRESO_P1',
+      direction: 'ingreso'
+    }, { apiBaseUrl: 'https://mss-guard.web.app/api' });
+    await bag.estacionesApi.setLectoresDeEstacion(estacion.id, [a.lector.id]);
+
+    const applied = await bag.estacionesApi.applyStationReaderReports(estacion.id, [
+      { doorId: 'puerta-p1', readerId: 'INGRESO_P1', loginError: 'Credenciales invalidas', serialConnected: true },
+      { doorId: 'otra', readerId: 'X', serialConnected: false }
+    ], Date.parse('2026-10-08T12:00:00.000Z'));
+    assert.equal(applied, 1);
+    const stored = await bag.lectoresApi.getLectorById(a.lector.id);
+    assert.equal(stored.checks.loginError.value, 'Credenciales invalidas');
+    assert.equal(stored.checks.serialConnected.value, true);
+  });
+
   it('lector sin estacionId sigue siendo vÃ¡lido (retrocompat)', async () => {
     const created = await bag.lectoresApi.createLector({
       nombre: 'Solo',

@@ -418,9 +418,14 @@ function EstacionesAdminSection({ pendingAction, runAction }) {
                       {(() => {
                         const conn = CONNECTION_STATUS_META[row.connectionStatus] || CONNECTION_STATUS_META.offline;
                         return (
-                          <span className={conn.className} title={conn.hint}>
-                            {conn.label}
-                          </span>
+                          <>
+                            <span className={conn.className} title={row.connectionReason || conn.hint}>
+                              {conn.label}
+                            </span>
+                            {row.connectionReason && row.connectionStatus !== 'online' ? (
+                              <div className="theme-section-desc">{row.connectionReason}</div>
+                            ) : null}
+                          </>
                         );
                       })()}
                     </td>

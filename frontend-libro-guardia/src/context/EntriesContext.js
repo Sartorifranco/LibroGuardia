@@ -4,6 +4,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from 'react';
 import { apiFetch } from '../services/api';
@@ -11,10 +12,13 @@ import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { useOfflineQueue } from './OfflineQueueContext';
 import { toLocalYmd } from '../utils/historialFilters';
+import usePolling from '../hooks/usePolling';
 
 const EntriesContext = createContext(null);
 const POLL_MIN_MS = 15000;
 const POLL_MAX_MS = 60000;
+/** Varias pantallas llaman reloadEntries tras cada registro: como mucho 1 request cada 3 s. */
+export const RELOAD_MIN_INTERVAL_MS = 3000;
 
 /** true si el registro quedó guardado o encolado para enviar después. */
 export function wasEntryStored(outcome) {
@@ -29,10 +33,12 @@ export function EntriesProvider({ children }) {
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesRefreshFailed, setEntriesRefreshFailed] = useState(false);
   const [entriesUpdatedAt, setEntriesUpdatedAt] = useState(null);
+  // /auth/me devuelve un objeto nuevo en cada refresco: depender del id, no de la identidad.
+  const userKey = currentUser ? String(currentUser.id || currentUser.username || 'user') : null;
 
   /** Home / KPIs: solo el día local actual (no el histórico completo). */
-  const reloadEntries = useCallback(async (silent = true) => {
-    if (!currentUser || !authToken) {
+  const fetchEntries = useCallback(async (silent = true) => {
+    if (!userKey || !authToken) {
       setEntries([]);
       setEntriesRefreshFailed(false);
       setEntriesUpdatedAt(null);
@@ -64,37 +70,64 @@ export function EntriesProvider({ children }) {
     } finally {
       if (!silent) setEntriesLoading(false);
     }
-  }, [authToken, currentUser, showError]);
+  }, [authToken, userKey, showError]);
+
+  const fetchEntriesRef = useRef(fetchEntries);
+  fetchEntriesRef.current = fetchEntries;
+  const throttleRef = useRef({ lastAt: 0, inflight: null, trailing: null });
+
+  /**
+   * Recarga con throttle: si hubo una hace menos de 3 s (o hay una en curso),
+   * programa UNA sola al final de la ventana para que lo recién registrado aparezca igual.
+   */
+  const reloadEntries = useCallback((silent = true) => {
+    const st = throttleRef.current;
+    const start = () => {
+      st.lastAt = Date.now();
+      const promise = fetchEntriesRef.current(silent).finally(() => {
+        if (st.inflight === promise) st.inflight = null;
+      });
+      st.inflight = promise;
+      return promise;
+    };
+    const wait = st.lastAt + RELOAD_MIN_INTERVAL_MS - Date.now();
+    if (!st.inflight && wait <= 0) return start();
+    if (!st.trailing) {
+      st.trailing = setTimeout(() => {
+        st.trailing = null;
+        if (st.inflight) st.inflight.finally(start);
+        else start();
+      }, Math.max(wait, 0));
+    }
+    return st.inflight || Promise.resolve(true);
+  }, []);
 
   useEffect(() => {
-    if (!currentUser || !authToken) {
+    // Cambio de usuario / token: la próxima recarga no espera el throttle.
+    throttleRef.current.lastAt = 0;
+    if (!userKey || !authToken) {
       setEntries([]);
       setEntriesRefreshFailed(false);
       setEntriesUpdatedAt(null);
-      return undefined;
     }
+  }, [userKey, authToken]);
 
-    let cancelled = false;
-    let timer = null;
-    let delay = POLL_MIN_MS;
+  useEffect(() => () => {
+    const st = throttleRef.current;
+    if (st.trailing) clearTimeout(st.trailing);
+    st.trailing = null;
+  }, []);
 
-    const tick = async () => {
-      const ok = await reloadEntries(true);
-      if (cancelled) return;
-      if (ok) delay = POLL_MIN_MS;
-      timer = setTimeout(tick, delay);
-      if (!ok) delay = Math.min(POLL_MAX_MS, delay * 2);
-    };
-
-    tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [currentUser, authToken, reloadEntries]);
+  const pollEntries = useCallback(() => reloadEntries(true), [reloadEntries]);
+  // Pausa con la pestaña oculta; backoff 15 s → 60 s si falla.
+  usePolling(pollEntries, POLL_MIN_MS, {
+    enabled: Boolean(userKey && authToken),
+    maxBackoffMs: POLL_MAX_MS,
+    resetKey: `${userKey}|${authToken}`
+  });
 
   const addEntry = useCallback(async (type, data) => {
-    if (!currentUser || !authToken) {
+    if (!userKey || !authToken) {
       showError('Debe iniciar sesión para registrar movimientos.');
       return { status: 'error' };
     }
@@ -144,7 +177,7 @@ export function EntriesProvider({ children }) {
     } finally {
       setEntriesLoading(false);
     }
-  }, [authToken, currentUser, enqueueEntry, reloadEntries, showError, showSuccess]);
+  }, [authToken, userKey, enqueueEntry, reloadEntries, showError, showSuccess]);
 
   const clearEntries = useCallback(() => setEntries([]), []);
 

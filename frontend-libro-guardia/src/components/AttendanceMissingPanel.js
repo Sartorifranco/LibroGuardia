@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle,
@@ -8,6 +8,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
 
 const STATUS_LABELS = {
   present: 'En planta',
@@ -41,12 +42,8 @@ function AttendanceMissingPanel({ authToken, enabled = true, pollSeconds = 60, o
     }
   }, [authToken, enabled]);
 
-  useEffect(() => {
-    fetchMissing(false);
-    if (!enabled) return undefined;
-    const timer = setInterval(() => fetchMissing(false), Math.max(pollSeconds, 30) * 1000);
-    return () => clearInterval(timer);
-  }, [fetchMissing, enabled, pollSeconds]);
+  const pollMissing = useCallback(() => fetchMissing(false), [fetchMissing]);
+  usePolling(pollMissing, Math.max(pollSeconds, 30) * 1000, { enabled });
 
   const roster = useMemo(() => data?.roster || data?.missing || [], [data]);
 

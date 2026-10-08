@@ -9,6 +9,11 @@ const { db, FieldValue } = require('../firestore');
 const { getDoorsConfig, findDoorById } = require('./doorsConfig');
 const { getRoleById, createRole, updateRole } = require('../roles');
 const { PERMISSION_KEYS } = require('../permissions');
+const {
+  sanitizeHeartbeatChecks,
+  mergeChecks,
+  recordCheckTransitions
+} = require('./stationHealth');
 
 const LECTORES = 'lectores';
 /** ID legado en Firestore; el label visible es “Estación de acceso”. */
@@ -124,6 +129,7 @@ const toLectorJson = (doc) => {
     allowlistReportedAt: data.allowlistReportedAt || null,
     puertoDetectado: data.puertoDetectado || null,
     inputModeDetectado: data.inputModeDetectado || null,
+    checks: data.checks && typeof data.checks === 'object' ? data.checks : null,
     createdAt: data.createdAt || null,
     updatedAt: data.updatedAt || null
   };
@@ -645,7 +651,9 @@ const touchHeartbeat = async ({
   serialPort = null,
   inputMode = null,
   allowlistGeneratedAt = undefined,
-  allowlistEntryCount = undefined
+  allowlistEntryCount = undefined,
+  healthReport = null,
+  nowMs = Date.now()
 } = {}) => {
   const { ref, beforeData } = await resolveLectorDocForKiosk({
     username,
@@ -685,7 +693,26 @@ const touchHeartbeat = async ({
     }
   }
 
+  // Chequeos de salud (lector serie, relé, cola, login…): antes se descartaban.
+  let transitions = [];
+  if (healthReport && typeof healthReport === 'object') {
+    const incoming = sanitizeHeartbeatChecks(healthReport, nowMs);
+    if (Object.keys(incoming).length) {
+      const merged = mergeChecks(beforeData.checks, incoming, new Date(nowMs).toISOString());
+      patch.checks = { ...(beforeData.checks || {}), ...merged.checks };
+      transitions = merged.transitions;
+    }
+  }
+
   await ref.set(patch, { merge: true });
+  if (transitions.length) {
+    await recordCheckTransitions({
+      lectorId: ref.id,
+      doorId: beforeData.doorId || doorId || null,
+      readerId: beforeData.readerId || readerId || null,
+      transitions
+    });
+  }
 
   const after = await ref.get();
   return {
