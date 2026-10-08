@@ -145,6 +145,7 @@ const markVisitaEstado = async (visitaId, estado) => {
     estado,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
+  require('./siteCompiler').markDirty({ visitas: [visitaId] });
 };
 
 const nextEstadoForMovement = (movementType) =>

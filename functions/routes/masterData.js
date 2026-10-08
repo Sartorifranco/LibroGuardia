@@ -1,5 +1,6 @@
 const express = require('express');
 const { db, FieldValue } = require('../firestore');
+const { markDirty } = require('../lib/siteCompiler');
 const { normalizeIdNumber, normalizePlate } = require('../permissions');
 const { normalizeExpiryYmd } = require('../lib/documentExpiry');
 const {
@@ -167,6 +168,7 @@ router.post('/api/master-data/citaciones', auth, requirePermission('master.citac
       createdAt: FieldValue.serverTimestamp()
     });
 
+    markDirty({ auths: [ref.id] });
     res.status(201).json({ message: 'Citación registrada', citacion: { id: ref.id, ...data } });
   } catch (err) {
     sendServerError(res, err, 'Error al guardar citación');

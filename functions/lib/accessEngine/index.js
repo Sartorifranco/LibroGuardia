@@ -18,6 +18,7 @@ module.exports = {
   createMemorySnapshot,
   mergeChunks,
   hashCredential: schema.hashCredential,
+  credentialKeyId: schema.credentialKeyId,
   normalizeCredentialValue: schema.normalizeCredentialValue,
   validateSnapshotChunk: schema.validateSnapshotChunk,
   localParts: schedule.localParts,

@@ -59,13 +59,15 @@ const mergeChunks = (chunks = {}) => {
     credentials: [],
     grants: [],
     passes: [],
-    revoked: []
+    revoked: [],
+    secrets: {}
   };
   const addBody = (body) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return;
     for (const [key, value] of Object.entries(body)) {
       if (key === 'policy' && value) out.policy = { ...out.policy, ...value };
       else if (key === 'site' && value) out.site = { ...out.site, ...value };
+      else if (key === 'secrets' && value) out.secrets = { ...out.secrets, ...value };
       else if (key === 'revocations') out.revoked.push(...asArray(value));
       else if (key === 'interlocks') out.interlockGroups.push(...asArray(value));
       else if (key === 'holidays' && value && !Array.isArray(value)) {
@@ -198,8 +200,10 @@ const createMemorySnapshot = (chunks = {}) => {
     passesById.set(String(id), p);
   }
   for (const p of passesById.values()) {
-    if (!p.dni) continue;
-    const k = String(p.dni);
+    // Con clave del sitio el pase trae dniHash en lugar del DNI en claro.
+    const dniKey = p.dni || p.dniHash;
+    if (!dniKey) continue;
+    const k = String(dniKey);
     if (!passesByDni.has(k)) passesByDni.set(k, []);
     passesByDni.get(k).push(p);
   }
@@ -254,7 +258,8 @@ const createMemorySnapshot = (chunks = {}) => {
     },
     isRevoked(key) { return revocations.has(String(key)); },
     policy() { return policy; },
-    site() { return site; }
+    site() { return site; },
+    credentialKey() { return data.secrets.credentialKey || null; }
   };
 };
 

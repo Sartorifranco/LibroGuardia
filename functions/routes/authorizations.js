@@ -1,5 +1,6 @@
 const express = require('express');
 const { db, FieldValue } = require('../firestore');
+const { markDirty } = require('../lib/siteCompiler');
 const { normalizeIdNumber } = require('../permissions');
 const {
   buildAuthorizationRecord,
@@ -124,6 +125,7 @@ router.post('/api/admin/citaciones/relink-nomina', auth, requirePermission('mast
   try {
     const dateString = req.body?.date || req.query?.date || undefined;
     const result = await relinkCitacionesWithNomina({ dateString });
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -142,6 +144,7 @@ router.post('/api/admin/citaciones/sync-upload', auth, requirePermission('master
       force: force !== false,
       defaults: { importedBy: 'admin-upload' }
     });
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -154,6 +157,7 @@ router.post('/api/admin/citaciones/sync-upload', auth, requirePermission('master
 router.post('/api/admin/citaciones-imports/:id/reprocess', auth, requirePermission('master.citaciones.write'), async (req, res) => {
   try {
     const result = await reprocessImportBatch(req.params.id, { force: req.body?.force !== false });
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -199,6 +203,7 @@ router.post('/api/admin/authorizations', auth, requirePermission('master.citacio
       authorization: { id: ref.id, ...data, personId: person.id }
     });
     bumpAuthQuiet();
+    markDirty({ auths: [ref.id], people: [person.id] });
   } catch (err) {
     res.status(400).json({ message: err.message || 'Error al guardar autorización' });
   }
@@ -214,6 +219,7 @@ router.delete('/api/admin/authorizations/:id', auth, requirePermission('master.c
     const data = snap.data() || {};
     await ref.update({ active: false, updatedAt: FieldValue.serverTimestamp() });
     bumpAuthQuiet();
+    markDirty({ auths: [req.params.id], people: data.personId ? [data.personId] : [] });
     logActivity(db, FieldValue, {
       actorUsername: req.user.username || req.user.id,
       actorId: req.user.id,
@@ -250,6 +256,7 @@ router.post('/api/admin/authorizations/upload', auth, requirePermission('master.
 
     await batch.commit();
     bumpAuthQuiet();
+    markDirty({ full: true });
     res.status(200).json({
       message: `${parsed.length} autorizaciones cargadas exitosamente`,
       count: parsed.length,
@@ -336,6 +343,7 @@ router.post('/api/bridge/citaciones/sync', async (req, res) => {
   try {
     await verifyCitacionesBridgeRequest(req);
     const result = await syncAuthorizationsFromBridge(req.body || {});
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -380,6 +388,7 @@ router.post('/api/admin/citaciones/upload', auth, requirePermission('master.cita
 
     await batch.commit();
     bumpAuthQuiet();
+    markDirty({ full: true });
     res.status(200).json({ message: `${count} citaciones cargadas exitosamente`, count });
   } catch (err) {
     res.status(500).json({ message: 'Error al cargar citaciones', error: err.message });

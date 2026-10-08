@@ -6,6 +6,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const { markDirty } = require('../lib/siteCompiler');
 const { db, FieldValue, Timestamp } = require('../firestore');
 const {
   auth,
@@ -186,6 +187,7 @@ router.post(
         updatedAt: FieldValue.serverTimestamp()
       };
       await ref.set(doc);
+      markDirty({ visitas: [ref.id] });
 
       res.status(201).json({
         message: autoAuthorize

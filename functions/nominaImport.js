@@ -1,4 +1,5 @@
 const { db, FieldValue } = require('./firestore');
+const { markDirty } = require('./lib/siteCompiler');
 const { parseNominaRow, buildNominaRowFromFields } = require('./lib/nominaParser');
 const { buildAuthorizationRecord } = require('./authorizations');
 const { resolveOrCreatePerson } = require('./people');
@@ -180,6 +181,7 @@ const applyParsedToPersonAndAuth = async (parsed) => {
   }
   await db.collection('people').doc(person.id).set(enrich, { merge: true });
   await syncNominaAuthorization(person, parsed);
+  markDirty({ people: [person.id] });
   return person;
 };
 
@@ -206,10 +208,13 @@ const saveNominaEmployee = async (fields = {}, { id } = {}) => {
       throw err;
     }
     await ref.set(payload, { merge: true });
+    markDirty({ people: [person.id] });
     return { id, created: false, ...payload };
   }
 
-  return upsertPersonalMaster(person.id, parsed);
+  const saved = await upsertPersonalMaster(person.id, parsed);
+  markDirty({ people: [person.id] });
+  return saved;
 };
 
 const deactivateNominaEmployee = async (id) => {
@@ -243,6 +248,7 @@ const deactivateNominaEmployee = async (id) => {
       }, { merge: true })));
   }
 
+  if (data.personId) markDirty({ people: [data.personId] });
   return { id, active: false, name: data.name || '' };
 };
 
@@ -638,6 +644,7 @@ const processNominaImportStep = async (jobId, { batchSize = 5, concurrency = 2 }
   // Paso aparte: replace/bajas (no mezclar con upserts → evita 502 por timeout Hosting 60s).
   if (job.status === 'finalizing') {
     const finalStats = await finalizeNominaReplace(job, stats);
+    markDirty({ full: true });
     await ref.set({
       status: 'done',
       cursor: rows.length || job.rowCount || cursor,
@@ -684,6 +691,7 @@ const processNominaImportStep = async (jobId, { batchSize = 5, concurrency = 2 }
 
   const caches = await loadImportCaches();
   await ref.set({ status: 'processing' }, { merge: true });
+  markDirty({ full: true });
 
   const outcomes = await mapPool(slice, options.concurrency, async (row, index) => {
     const parsed = parseNominaRow(trimNominaRowPayload(row));

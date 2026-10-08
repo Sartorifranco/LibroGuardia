@@ -1,4 +1,5 @@
 const express = require('express');
+const { markDirty } = require('../lib/siteCompiler');
 const { db } = require('../firestore');
 const { parseScanData, normalizeIdNumber } = require('../permissions');
 const { resolveAuthorization } = require('../authorizations');
@@ -285,6 +286,7 @@ router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       await assertDoorsCompatibleWithOfflineLectores(doorsPayload.doors, listLectores);
     }
     const config = await saveDoorsConfig(doorsPayload);
+    markDirty({ doors: true });
     let savedGlobalAccess = null;
     if (globalAccess && typeof globalAccess === 'object') {
       savedGlobalAccess = await saveGlobalAccessSettings(globalAccess);
