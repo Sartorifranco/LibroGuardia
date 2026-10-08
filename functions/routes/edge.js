@@ -83,6 +83,14 @@ const deviceAuth = (kinds = null) => (req, res, next) => {
 };
 
 const hubOnly = deviceAuth(['hub']);
+
+/** Como sendRouteError, pero 503 (compilador no disponible) se expone tal cual. */
+const sendEdgeError = (res, err, fallback) => {
+  if (Number(err?.status) === 503) {
+    return res.status(503).json({ message: err.message, ...(err.code ? { code: err.code } : {}) });
+  }
+  return sendRouteError(res, err, fallback);
+};
 const anyDevice = deviceAuth(['hub', 'controller']);
 
 // ───────────────────────────── Admin: equipos ─────────────────────────────
@@ -202,7 +210,7 @@ router.get('/api/edge/v1/head', anyDevice, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json(await edge.readHead(req.device.siteId));
   } catch (err) {
-    sendRouteError(res, err, 'Error al leer el head');
+    sendEdgeError(res, err, 'Error al leer el head');
   }
 });
 
@@ -211,7 +219,7 @@ router.get('/api/edge/v1/chunks', hubOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json(await edge.readChunks(req.device.siteId, req.query.names));
   } catch (err) {
-    sendRouteError(res, err, 'Error al leer chunks');
+    sendEdgeError(res, err, 'Error al leer chunks');
   }
 });
 
