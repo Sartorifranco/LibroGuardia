@@ -42,17 +42,23 @@ describe('API LAN del controlador (firmada)', { skip: SKIP }, () => {
     assert.ok(Number.isFinite(r.serverTimeMs));
   });
 
-  it('sin firma, con otra clave o repetida → 401', async () => {
+  it('sin firma, con otra clave, equipo desconocido o repetida → rechazo', async () => {
     const plain = await fetch(`${base}/edge/status`);
     assert.equal(plain.status, 401);
     const other = lanSign.generateKeyPair();
     assert.equal((await call('GET', '/edge/status', undefined, { key: other.privateKeyPem })).status, 401);
-    assert.equal((await call('GET', '/edge/status', undefined, { keyId: 'intruso' })).data.code, 'SIG_UNKNOWN_KEY');
-    const headers = lanSign.signRequest({ privateKey: t.hubKeys.privateKeyPem, keyId: 'hub-test', method: 'GET', path: '/edge/status' });
-    assert.equal((await fetch(`${base}/edge/status`, { headers })).status, 200);
-    const replay = await fetch(`${base}/edge/status`, { headers });
+    const unknown = await call('GET', '/edge/status', undefined, { keyId: 'intruso' });
+    assert.equal(unknown.status, 403);
+    assert.equal(unknown.data.code, 'DEVICE_NOT_ENROLLED');
+    const body = JSON.stringify({ version: 1 });
+    const headers = {
+      'content-type': 'application/json',
+      ...lanSign.signRequest({ privateKey: t.hubKeys.privateKeyPem, deviceId: 'hub-test', method: 'POST', path: '/edge/config/notify', body })
+    };
+    assert.equal((await fetch(`${base}/edge/config/notify`, { method: 'POST', headers, body })).status, 202);
+    const replay = await fetch(`${base}/edge/config/notify`, { method: 'POST', headers, body });
     assert.equal(replay.status, 401);
-    assert.equal((await replay.json()).code, 'SIG_REPLAY');
+    assert.equal((await replay.json()).code, 'LAN_SIG_REPLAY');
   });
 
   it('POST /edge/doors/:id/open → pulso real y evento; puerta ajena → 404', async () => {

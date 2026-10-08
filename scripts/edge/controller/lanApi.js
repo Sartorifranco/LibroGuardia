@@ -5,7 +5,7 @@
  *
  *   GET  /edge/status                    estado completo (puertas, salidas, journal, reloj, config, aprobaciones)
  *   POST /edge/config/notify             {version?}  → 202 y sincroniza con el hub en segundo plano
- *   POST /edge/doors/:id/open            {requestedBy, reason, force, permissions?, mode?, side?, commandId?}
+ *   POST /edge/doors/:id/open            {requestedBy, reason, force, permissions?, forceAuthorized?, mode?, side?, commandId?}
  *   POST /edge/approvals/:id             {approve, requestedBy, permissions?, force?, reason?}
  *   POST /edge/sim/input                 {doorId, input:'dps'|'bond'|'rex'|'emergency', value}  (solo simulation.enabled)
  *
@@ -66,7 +66,7 @@ function createLanServer({ controller, config, logger = nullLogger, now = () => 
       });
       if (!v.ok) {
         logger.warn('Request LAN rechazada', { code: v.code, path: url.pathname, from: req.socket.remoteAddress });
-        return send(res, 401, { ok: false, code: v.code, message: v.message });
+        return send(res, v.code === 'DEVICE_NOT_ENROLLED' ? 403 : 401, { ok: false, code: v.code, message: v.message });
       }
     }
     let body = {};
@@ -93,6 +93,7 @@ function createLanServer({ controller, config, logger = nullLogger, now = () => 
         reason: body.reason || '',
         force: body.force === true,
         permissions: Array.isArray(body.permissions) ? body.permissions : null,
+        forceAuthorized: body.forceAuthorized === true,
         mode: body.mode === 'remote' ? 'remote' : 'manual',
         side: body.side === 'out' ? 'out' : 'in',
         commandId: body.commandId || null
@@ -107,6 +108,7 @@ function createLanServer({ controller, config, logger = nullLogger, now = () => 
         approve: body.approve === true,
         requestedBy: body.requestedBy || null,
         permissions: Array.isArray(body.permissions) ? body.permissions : null,
+        forceAuthorized: body.forceAuthorized === true,
         force: body.force === true,
         reason: body.reason || ''
       });

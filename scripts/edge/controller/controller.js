@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const { decide } = require('../../../functions/lib/accessEngine');
 const { reasonMessage } = require('../../../functions/lib/accessEngine/reasons.es');
+const { FORCE_PERMISSION } = require('../../../functions/lib/accessEngine/interlock');
 const { openEdgeDb } = require('../lib/db');
 const lanSign = require('../lib/lanSign');
 const drivers = require('../drivers');
@@ -87,7 +88,7 @@ class Controller {
       clock: this.clock,
       logger: logger.child ? logger.child('eventos') : logger,
       heartbeatMs: config.hub.heartbeatMs,
-      extra: () => ({ configVersion: this.edge.chunks.configVersion(), status: this.shortStatus() })
+      extra: () => ({ configVersionApplied: this.edge.chunks.configVersion(), configVersion: this.edge.chunks.configVersion(), status: this.shortStatus() })
     });
     this.degraded = new DegradedCloudFallback({ controller: this, logger });
     this.buildDoors();
@@ -431,7 +432,7 @@ class Controller {
   /**
    * El guardia (vía hub) aprueba o rechaza. Aprobar abre como apertura manual: respeta el estanco.
    */
-  async resolveApproval(id, { approve, requestedBy = null, permissions = [], force = false, reason = '' } = {}) {
+  async resolveApproval(id, { approve, requestedBy = null, permissions = null, force = false, forceAuthorized = false, reason = '' } = {}) {
     this.pruneApprovals();
     const a = this.approvals.get(id);
     if (!a) return { ok: false, status: 404, code: 'APPROVAL_NOT_FOUND', message: 'La solicitud no existe o venció.' };
@@ -445,7 +446,7 @@ class Controller {
       return { ok: true, decision: 'deny', eventId: evt.id };
     }
     const r = await this.openDoor(a.doorId, {
-      requestedBy, permissions, force, reason: reason || 'Aprobado por guardia', side: a.side, mode: 'manual',
+      requestedBy, permissions, force, forceAuthorized, reason: reason || 'Aprobado por guardia', side: a.side, mode: 'manual',
       approval: a
     });
     if (r.ok) this.approvals.delete(id);
@@ -461,7 +462,8 @@ class Controller {
    *            forcible?:boolean, forced?:boolean, relayConfirmed?:boolean, eventId?:string}}
    */
   async openDoor(doorId, {
-    requestedBy = null, reason = '', force = false, permissions = null, mode = 'manual', side = 'in', commandId = null, approval = null
+    requestedBy = null, reason = '', force = false, permissions = null, forceAuthorized = false,
+    mode = 'manual', side = 'in', commandId = null, approval = null
   } = {}) {
     const d = this.doors.get(doorId);
     if (!d) return { ok: false, status: 404, code: 'DOOR_NOT_FOUND', message: `La puerta ${doorId} no pertenece a este controlador.` };
@@ -471,8 +473,11 @@ class Controller {
     if (last !== undefined && nowMono - last < this.config.cooldownMs) {
       return { ok: false, status: 429, code: 'COOLDOWN', message: 'La puerta se acaba de abrir. Esperá unos segundos.', retryAfterMs: this.config.cooldownMs - (nowMono - last) };
     }
-    const perms = Array.isArray(permissions) ? permissions
+    let perms = Array.isArray(permissions) ? permissions
       : (requestedBy && Array.isArray(requestedBy.permissions) ? requestedBy.permissions : []);
+    // El hub (request firmada) puede atestiguar que el permiso ya se validó arriba (guardia en la LAN
+    // o comando de la nube): `forceAuthorized:true` equivale a tener puertas.estanco.forzar.
+    if (forceAuthorized === true && !perms.includes(FORCE_PERMISSION)) perms = [...perms, FORCE_PERMISSION];
     const actor = { id: actorId(requestedBy), permissions: perms, force: force === true, forceReason: String(reason || '') };
     let decision;
     try {
@@ -549,6 +554,7 @@ class Controller {
       role: 'controller',
       siteId: this.config.siteId,
       configVersion: this.edge.chunks.configVersion(),
+      configVersionApplied: this.edge.chunks.configVersion(),
       config: this.configSync.status,
       clock: this.edgeClock.status(),
       interlock: { mode: this.config.interlock.mode, state: this.interlockState },

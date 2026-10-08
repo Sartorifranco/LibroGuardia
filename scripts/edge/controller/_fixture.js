@@ -72,11 +72,18 @@ function createFakeHub(cloud) {
       hub.bodies = bodies;
       return head;
     },
+    // Mismo contrato que scripts/edge/hub/lanServer.js
+    async getHead() {
+      if (hub.down) throw new Error('Hub inalcanzable: ECONNREFUSED');
+      return hub.head;
+    },
     async getChunks(names = []) {
       if (hub.down) throw new Error('Hub inalcanzable: ECONNREFUSED');
       const chunks = {};
-      for (const n of names) if (hub.bodies[n] !== undefined) chunks[n] = hub.bodies[n];
-      return { head: hub.head, chunks };
+      for (const n of names) {
+        if (hub.bodies[n] !== undefined) chunks[n] = { v: hub.head.chunks[n]?.v ?? 0, hash: hub.head.chunks[n]?.hash ?? null, body: hub.bodies[n] };
+      }
+      return { chunks };
     },
     async pushEvents(payload) {
       if (hub.down) throw new Error('Hub inalcanzable: ECONNREFUSED');
@@ -95,18 +102,23 @@ function createFakeHub(cloud) {
 }
 
 /**
- * @param {{dir?:string, interlockMode?:'sensor'|'timed', interlock?:boolean, apply?:boolean, cloud?:object}} [opts]
+ * @param {{dir?:string, interlockMode?:'sensor'|'timed', interlock?:boolean, apply?:boolean, cloud?:object,
+ *          hub?:object, hubKeys?:object, realHub?:{url:string, deviceId:string, ctlKeys:object}}} [opts]
+ *   realHub: usa HubClient real por HTTP (firmado con ctlKeys) y reloj real.
  */
 async function createTestController(opts = {}) {
   const dir = opts.dir || tmpDir('lg-edge-ctl-');
   const cloud = opts.cloud || lanSign.generateKeyPair();
   const hubKeys = opts.hubKeys || lanSign.generateKeyPair();
-  const clock = createFakeClock();
+  const real = opts.realHub || null;
+  const clock = real ? { now: () => Date.now(), setTimeout, clearTimeout, advance() {} } : createFakeClock();
   const outputs = {};
   const config = normalizeConfig({
     deviceId: DEVICE,
     dataDir: dir,
-    hub: { url: 'http://hub.test:8080', deviceId: 'hub-test', publicKey: hubKeys.publicKeyB64 },
+    hub: real
+      ? { url: real.url, deviceId: real.deviceId, publicKey: hubKeys.publicKeyB64 }
+      : { url: 'http://hub.test:8080', deviceId: 'hub-test', publicKey: hubKeys.publicKeyB64 },
     cloud: { headPublicKeys: { k1: cloud.publicKeyB64 } },
     clock: { trusted: true },
     interlock: { enabled: opts.interlock !== false },
@@ -122,11 +134,11 @@ async function createTestController(opts = {}) {
     role: 'controller', deviceId: DEVICE, myDoorIds: ['p1', 'p2', 'p3'],
     verifyHead: (h) => lanSign.verifyHead(h, { k1: cloud.publicKeyB64 })
   });
-  const hub = opts.hub || createFakeHub(cloud);
+  const hub = real ? null : (opts.hub || createFakeHub(cloud));
   const controller = new Controller({
     config,
     edge,
-    hub,
+    ...(real ? { privateKeyPem: real.ctlKeys.privateKeyPem } : { hub }),
     clock,
     edgeClock: new EdgeClock({ trusted: true, systemNow: () => clock.now() }),
     driverDeps: {
@@ -137,7 +149,7 @@ async function createTestController(opts = {}) {
       }
     }
   });
-  if (opts.apply !== false && !opts.hub) {
+  if (opts.apply !== false && !opts.hub && !real) {
     hub.publish(1, siteBodies({ interlockMode: opts.interlockMode }));
     await controller.configSync.sync('test');
   }
@@ -155,7 +167,7 @@ async function createTestController(opts = {}) {
     controller.close();
     if (!opts.dir) rmDir(dir);
   };
-  return { dir, cloud, hubKeys, clock, outputs, config, edge, hub, controller, events, scan, cleanup };
+  return { dir, cloud, hubKeys, clock, outputs, config, edge, hub: hub || controller.hub, controller, events, scan, cleanup };
 }
 
 module.exports = { SKIP, DEVICE, DNI, siteBodies, makeHead, createFakeHub, createTestController, tmpDir, rmDir };

@@ -235,7 +235,7 @@ describe('controlador: config firmada', { skip: SKIP }, () => {
     t.hub.getChunks = async (names) => { asked.push(names); return orig(names); };
     const r = await t.controller.configSync.sync();
     assert.equal(r.applied, true);
-    assert.deepEqual(asked, [[], ['ch-00']]);
+    assert.deepEqual(asked, [['ch-00']]);
     assert.equal((await t.scan('p1', 'beto')).decision, 'grant');
     assert.equal(t.events('config_applied').at(-1).payload.version, 2);
   });

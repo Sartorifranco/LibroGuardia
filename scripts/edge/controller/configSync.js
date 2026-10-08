@@ -4,9 +4,10 @@
  * Sincronización de config hub → controlador (docs/ETAPA2-DISENO.md §4).
  *
  * Disparo: `POST /edge/config/notify` del hub, al arrancar y cada configPollMs.
- * 1. GET /edge/config/chunks → head. Se verifica la firma Ed25519 de la NUBE (clave fijada en la
- *    config local) antes de bajar nada: el hub solo reparte, no puede inventar derechos.
+ * 1. GET /edge/config/head. Se verifica la firma Ed25519 de la NUBE (clave fijada en la config
+ *    local) antes de bajar nada: el hub solo reparte, no puede inventar derechos.
  * 2. needsChunks(head) → GET /edge/config/chunks?names=… (solo los que cambiaron).
+ *    Si el hub cambió de head entre ambas requests (hash distinto / faltante) se reintenta (máx. 3).
  * 3. chunkStore.applyHead(head, cuerpos): hash por chunk, todo-o-nada, configVersion monotónico
  *    (una versión vieja se rechaza con reason 'stale').
  * Cada aplicación o rechazo queda en el journal (config_applied / config_rejected).
@@ -69,28 +70,35 @@ class ConfigSync {
 
   async syncOnce(trigger) {
     this.status.lastAttemptAt = Date.now();
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const first = await this.hub.getChunks([]);
-      const head = first && first.head;
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      const head = await this.hub.getHead();
+      if (head === null) {
+        this.status.lastResult = { applied: false, reason: 'hub_sin_config' };
+        return this.status.lastResult;
+      }
       if (!head || !Number.isFinite(Number(head.version))) return this.reject(head, 'invalid_head');
       if (!this.verifyHead(head)) return this.reject(head, 'bad_signature');
       const current = this.edge.chunks.configVersion();
       if (Number(head.version) < current) return this.reject(head, 'stale');
       const names = this.edge.chunks.needsChunks(head);
-      let bodies = {};
+      const bodies = {};
       if (names.length) {
         const res = await this.hub.getChunks(names);
-        if (!res || !res.head || Number(res.head.version) !== Number(head.version)) {
-          this.logger.info('El head cambió mientras se bajaban chunks; reintento');
-          continue;
+        for (const [name, entry] of Object.entries((res && res.chunks) || {})) {
+          // Hub: {v, hash, body}. También se acepta el cuerpo pelado.
+          bodies[name] = entry && typeof entry === 'object' && 'body' in entry && 'hash' in entry ? entry.body : entry;
         }
-        bodies = res.chunks || {};
       }
       let r;
       try {
         r = this.edge.chunks.applyHead(head, bodies);
       } catch (err) {
-        if (err instanceof ChunkHashError || err.code === 'CHUNK_HASH_MISMATCH') return this.reject(head, 'hash_mismatch', { chunk: err.chunk });
+        if (err instanceof ChunkHashError || err.code === 'CHUNK_HASH_MISMATCH') {
+          // Puede ser que el hub haya cambiado de head entre las dos requests: se reintenta.
+          if (attempt < MAX_ATTEMPTS) continue;
+          return this.reject(head, 'hash_mismatch', { chunk: err.chunk });
+        }
         throw err;
       }
       this.status.lastOkAt = Date.now();
@@ -109,6 +117,7 @@ class ConfigSync {
         this.status.lastResult = r;
         return r;
       }
+      if (r.reason === 'missing_chunks' && attempt < MAX_ATTEMPTS) continue;
       return this.reject(head, r.reason, r.missing ? { missing: r.missing } : {});
     }
     return { applied: false, reason: 'head_inestable' };

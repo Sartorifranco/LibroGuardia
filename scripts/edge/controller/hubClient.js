@@ -3,12 +3,12 @@
 /**
  * Cliente LAN controlador → hub (requests firmadas con lanSign) + reloj corregido.
  *
- * Contrato con el hub (lo implementa scripts/edge/hub):
- *   GET  /edge/config/chunks              → { head }                    (solo el head firmado por la nube)
- *   GET  /edge/config/chunks?names=a,b    → { head, chunks:{a:body, b:body} }
- *   POST /edge/events  { deviceId, configVersion, status, events:[...] } → { ackSeq }
- *        (events vacío = heartbeat cada heartbeatMs; el hub marca device_offline a los 15 s sin heartbeat)
- * Toda respuesta del hub debería traer `x-mss-time: <ms>` para estimar el desfase de reloj.
+ * Contrato con el hub (scripts/edge/hub/lanServer.js):
+ *   GET  /edge/config/head                → head firmado por la nube (404 NO_CONFIG si no tiene)
+ *   GET  /edge/config/chunks?names=a,b    → { chunks:{ a:{v, hash, body}, ... } }
+ *   POST /edge/events  { deviceId, configVersionApplied, status, events:[...] } → { ackSeq }
+ *        (events vacío = heartbeat cada heartbeatMs: el hub lo usa como lastSeenAt)
+ * La hora del hub se toma de `x-mss-time` (ms) o del header estándar `Date`.
  */
 
 const lanSign = require('../lib/lanSign');
@@ -108,10 +108,20 @@ class HubClient {
     return res.data;
   }
 
-  /** names vacío → solo el head. */
+  /** Head firmado por la nube que el hub tiene aplicado; null si el hub todavía no tiene config (404 NO_CONFIG). */
+  async getHead() {
+    try {
+      const data = await this.request('GET', '/edge/config/head');
+      return data && data.head && !data.version ? data.head : data;
+    } catch (err) {
+      if (err.status === 404) return null;
+      throw err;
+    }
+  }
+
+  /** → { chunks: { name: {v, hash, body} } } */
   getChunks(names = []) {
-    const q = names.length ? `?names=${encodeURIComponent(names.join(','))}` : '';
-    return this.request('GET', `/edge/config/chunks${q}`);
+    return this.request('GET', `/edge/config/chunks?names=${encodeURIComponent(names.join(','))}`);
   }
 
   pushEvents(payload) {

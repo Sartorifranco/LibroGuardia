@@ -8,9 +8,10 @@
  *   node scripts/edge/mss-edge.js --role=hub        --config /etc/mss-edge/hub.json
  *
  * role=controller → ./controller (este repo, T5).
- * role=hub        → ./hub (T6). Contrato: el módulo exporta `main({configPath, args})` (async).
+ * role=hub        → ./hub (T6). Se usa `main({configPath, args})` si existe; si no, `startHub(cfg, {baseDir})`.
  */
 
+const fs = require('fs');
 const path = require('path');
 
 const USAGE = 'Uso: mss-edge --role=controller|hub --config <archivo.json> [opciones]';
@@ -54,9 +55,27 @@ async function run(argv = process.argv.slice(2)) {
     return args.role ? 0 : 2;
   }
   const mod = loadRole(args.role);
-  if (typeof mod.main !== 'function') throw new Error(`El módulo del rol "${args.role}" no exporta main()`);
-  await mod.main({ configPath: args.configPath ? path.resolve(args.configPath) : null, args: args.rest });
-  return 0;
+  const configPath = args.configPath ? path.resolve(args.configPath) : null;
+  if (typeof mod.main === 'function') {
+    await mod.main({ configPath, args: args.rest });
+    return 0;
+  }
+  if (typeof mod.startHub === 'function') {
+    // Hub de T6: exporta startHub(cfg, {baseDir}) (mismo arranque que scripts/edge/hub/run.js).
+    if (!configPath) throw new Error('Falta --config <archivo.json>');
+    const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8').replace(/^﻿/, ''));
+    delete cfg._comentarios;
+    const hub = await mod.startHub(cfg, { baseDir: path.dirname(configPath) });
+    const shutdown = async (sig) => {
+      // eslint-disable-next-line no-console
+      console.log(`[mss-edge] ${sig}: cerrando hub`);
+      try { await hub.stop(); } finally { process.exit(0); }
+    };
+    process.once('SIGINT', () => shutdown('SIGINT'));
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    return 0;
+  }
+  throw new Error(`El módulo del rol "${args.role}" no exporta main() ni startHub()`);
 }
 
 if (require.main === module) {
