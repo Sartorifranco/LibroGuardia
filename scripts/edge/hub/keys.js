@@ -17,7 +17,7 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
 function decodeLoose(str) {
   const s = String(str).trim();
-  if (/^[0-9a-f]{64}$/i.test(s)) return Buffer.from(s, 'hex');
+  if (/^([0-9a-f]{64}|[0-9a-f]{128})$/i.test(s)) return Buffer.from(s, 'hex');
   return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
