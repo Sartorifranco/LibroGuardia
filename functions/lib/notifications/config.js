@@ -7,7 +7,8 @@ const EVENT_TYPES = [
   'repeated_denials',
   'door_relay_failure',
   'admin_sensitive',
-  'bridge_offline'
+  'bridge_offline',
+  'duress_access'
 ];
 
 const DEFAULT_EVENT = () => ({

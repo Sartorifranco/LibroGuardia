@@ -12,6 +12,7 @@ const installMock = () => {
   const people = new Map();
   const entries = new Map();
   const deviceEvents = new Map();
+  const deviceAlerts = new Map();
   const ops = { reads: 0, queries: 0, getAll: 0, commits: 0, writes: 0 };
   let autoId = 0;
 
@@ -19,6 +20,7 @@ const installMock = () => {
     if (name === 'people') return people;
     if (name === 'entries') return entries;
     if (name === 'deviceEvents') return deviceEvents;
+    if (name === 'deviceAlerts') return deviceAlerts;
     return new Map();
   };
 
@@ -128,7 +130,7 @@ const installMock = () => {
     biostarMatchPath,
     peopleAlertsPath
   ].forEach((p) => { delete require.cache[p]; });
-  return { people, entries, deviceEvents, ops };
+  return { people, entries, deviceEvents, deviceAlerts, ops };
 };
 
 describe('biostarImport', () => {
@@ -309,6 +311,58 @@ describe('biostarImport', () => {
     }], { defaultDoorId: 'puerta-p1', successEventCodes: ['4867'] });
     assert.equal(result.accepted, 1);
     assert.equal(entries.get(eventDocId('evt-fp')).authorized, true);
+  });
+
+  describe('coacción (huella de pánico)', () => {
+    const notificationsPath = require.resolve('../lib/notifications');
+    let sent;
+    let deviceAlerts;
+
+    beforeEach(() => {
+      sent = [];
+      require.cache[notificationsPath] = {
+        id: notificationsPath,
+        filename: notificationsPath,
+        loaded: true,
+        exports: { notifySafe: (type, payload) => sent.push({ type, payload }) }
+      };
+      ({ deviceAlerts } = installMock());
+      ({ importBiostarEvents, eventDocId } = require('../lib/biostarImport'));
+
+    });
+
+    afterEach(() => { delete require.cache[notificationsPath]; });
+
+    it('abre, marca coacción y avisa por mail si es reciente', async () => {
+      const now = new Date();
+      const result = await importBiostarEvents([{
+        id: 'evt-duress',
+        datetime: now.toISOString(),
+        user_id: { user_id: '9', name: 'Ana' },
+        event_type_id: { code: String(0x1500) }
+      }], { defaultDoorId: 'puerta-p1' });
+      assert.equal(result.accepted, 1);
+      const alert = deviceAlerts.get(`coaccion__${eventDocId('evt-duress')}`);
+      assert.ok(alert, 'falta la alerta de coacción');
+      assert.equal(alert.kind, 'coaccion');
+      assert.equal(alert.notified, true);
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].type, 'duress_access');
+    });
+
+    it('coacción vieja (atraso) queda registrada sin mail', async () => {
+      const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      await importBiostarEvents([{
+        id: 'evt-duress-old',
+        datetime: old.toISOString(),
+        user_id: { user_id: '9' },
+        event_type_id: { code: String(0x1200) }
+      }], { defaultDoorId: 'puerta-p1' });
+      const alert = deviceAlerts.get(`coaccion__${eventDocId('evt-duress-old')}`);
+      assert.ok(alert);
+      assert.equal(alert.notified, false);
+      assert.equal(sent.length, 0);
+    });
   });
 
   it('eventos de equipo (puerta forzada, desconocidos) van a deviceEvents y no a entries', async () => {

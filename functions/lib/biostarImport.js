@@ -270,6 +270,14 @@ const SUCCESS_CODE_RANGES = [
   [0x1500, 0x16FF]
 ];
 
+/** Coacción (huella de pánico): abre igual, pero dispara una alarma silenciosa. */
+const DURESS_CODE_RANGES = [
+  [0x1200, 0x12FF],
+  [0x1500, 0x15FF]
+];
+/** Solo se avisa por mail si la coacción es reciente (al drenar atraso no hay falsas alarmas). */
+const DURESS_ALERT_MAX_AGE_MS = 60 * 60 * 1000;
+
 const inRanges = (n, ranges) => ranges.some(([a, b]) => n >= a && n <= b);
 
 const classifyBiostarEventCode = (code, successCodes = new Set()) => {
@@ -278,9 +286,10 @@ const classifyBiostarEventCode = (code, successCodes = new Set()) => {
   const configuredSuccess = Boolean(str) && successCodes.has(str);
   const isIdentification = configuredSuccess
     || (Number.isInteger(n) && n >= IDENTIFICATION_CODE_MIN && n <= IDENTIFICATION_CODE_MAX);
-  if (!isIdentification) return { isIdentification: false, authorized: false };
+  if (!isIdentification) return { isIdentification: false, authorized: false, duress: false };
   const authorized = configuredSuccess || (Number.isInteger(n) && inRanges(n, SUCCESS_CODE_RANGES));
-  return { isIdentification: true, authorized };
+  const duress = Number.isInteger(n) && inRanges(n, DURESS_CODE_RANGES);
+  return { isIdentification: true, authorized, duress };
 };
 
 /** door_id puede venir como {id}, [{id}] o escalar según versión de BioStar. */
@@ -443,6 +452,45 @@ const normalizeDevicesMap = (devices) => {
  * Corta por presupuesto de tiempo y devuelve éxito parcial (`partial`, `processed`)
  * con el cursor del último evento procesado, para que el puente avance igual.
  */
+/**
+ * Alarma silenciosa por coacción: deja una alerta visible y avisa por mail
+ * solo si el evento es reciente (al ponerse al día con atraso no se dispara).
+ */
+const raiseDuressAlerts = async (items = [], { nowMs = Date.now() } = {}) => {
+  if (!items.length) return;
+  const { notifySafe } = require('./notifications');
+  await Promise.all(items.map(async (item) => {
+    const recent = nowMs - item.at.getTime() <= DURESS_ALERT_MAX_AGE_MS;
+    try {
+      await db.collection('deviceAlerts').doc(`coaccion__${item.docId}`).set({
+        kind: 'coaccion',
+        severity: 'critica',
+        source: 'biostar',
+        entryId: item.docId,
+        biostarEventId: item.eventId,
+        doorId: item.doorId || null,
+        personId: item.personId,
+        name: item.name,
+        deviceId: item.deviceId,
+        at: Timestamp.fromDate(item.at),
+        notified: recent,
+        message: `Huella de coacción de ${item.name} en ${item.doorId || 'puerta sin mapear'}`,
+        createdAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    } catch (err) {
+      console.error('[biostar] No se pudo guardar la alerta de coacción', err.message);
+    }
+    if (recent) {
+      notifySafe('duress_access', {
+        name: item.name,
+        doorId: item.doorId,
+        at: item.at.toISOString(),
+        entryId: item.docId
+      });
+    }
+  }));
+};
+
 const importBiostarEvents = async (events = [], options = {}) => {
   if (!Array.isArray(events)) throw httpError(400, 'events debe ser un array');
   if (events.length > MAX_EVENTS_PER_REQUEST) {
@@ -467,6 +515,7 @@ const importBiostarEvents = async (events = [], options = {}) => {
 
   const results = [];
   let accepted = 0;
+  const duressEvents = [];
   let deviceEventsStored = 0;
   let skipped = 0;
   let processed = 0;
@@ -497,7 +546,7 @@ const importBiostarEvents = async (events = [], options = {}) => {
         return;
       }
       const eventCode = extractBiostarEventCode(raw);
-      const { isIdentification, authorized } = classifyBiostarEventCode(eventCode, successCodes);
+      const { isIdentification, authorized, duress } = classifyBiostarEventCode(eventCode, successCodes);
       const deviceId = extractBiostarDeviceId(raw);
       const biostarDoorId = extractBiostarDoorId(raw);
       const deviceCfg = deviceId ? devices[deviceId] || null : null;
@@ -512,6 +561,7 @@ const importBiostarEvents = async (events = [], options = {}) => {
         eventCode,
         isIdentification,
         authorized,
+        duress,
         deviceId,
         deviceCfg,
         biostarDoorId,
@@ -627,8 +677,20 @@ const importBiostarEvents = async (events = [], options = {}) => {
         biostarDeviceId: p.deviceId || null,
         biostarSyncedAt: FieldValue.serverTimestamp(),
         relayMode: 'device',
-        relayTriggered: authorized
+        relayTriggered: authorized,
+        duress: Boolean(p.duress)
       });
+      if (p.duress) {
+        duressEvents.push({
+          eventId: p.eventId,
+          docId,
+          at: p.datetime,
+          doorId: p.doorId,
+          personId: person?.id || null,
+          name: nameSnapshot,
+          deviceId: p.deviceId || null
+        });
+      }
       accepted += 1;
       results.push({
         status: 'created',
@@ -640,6 +702,7 @@ const importBiostarEvents = async (events = [], options = {}) => {
 
     if (ops > 0) commits.push(batch.commit());
     await Promise.all(commits);
+    await raiseDuressAlerts(duressEvents.splice(0), { nowMs: Date.now() });
 
     // El cursor avanza solo con lo ya escrito (BioStar entrega en orden ascendente).
     parsed.forEach((p) => {

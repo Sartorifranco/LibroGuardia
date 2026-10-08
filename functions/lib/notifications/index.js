@@ -95,6 +95,18 @@ const buildMessage = (eventType, payload = {}) => {
           'Si la PC de planta está apagada, encenderla. Si está encendida, correr scripts/02-reiniciar-estacion.cmd como administrador (ver docs/CONTINGENCIA-BRIDGES.md).'
         ].join('\n')
       };
+    case 'duress_access':
+      return {
+        subject: `${brand}: ALERTA — ingreso bajo coacción`,
+        text: [
+          'Una persona marcó la huella de coacción (pánico). La puerta se abrió para no ponerla en riesgo.',
+          `Persona: ${payload.name || '—'}`,
+          `Puerta: ${payload.doorId || '—'}`,
+          `Hora: ${payload.at || '—'}`,
+          `Registro: ${payload.entryId || '—'}`,
+          'Actuar según el protocolo de seguridad. No llamar a la persona por teléfono.'
+        ].join('\n')
+      };
     case 'admin_sensitive':
       return {
         subject: `${brand}: cambio administrativo sensible`,
