@@ -120,6 +120,7 @@ class Hub {
       intervalMs: config.cloud.commandsPollMs, log: this.log, now: this.now
     }) : null;
     this.headSource = deps.headSource || (this.client ? new PollHeadSource({ client: this.client, intervalMs: config.cloud.headPollMs, log: this.log }) : null);
+    if (this.headSource && !this.headSource.onHead) this.headSource.onHead = (head, extras) => this.onHead(head, extras);
     this.verifier = new LanVerifier({ publicKeyFor: (id) => this.controllers.publicKeyFor(id), now: this.now });
     this.server = null;
     this.heartbeatTimer = null;
