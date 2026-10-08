@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Fingerprint, RefreshCw } from 'lucide-react';
 import { apiFetch } from '../../../services/api';
+import usePolling from '../../../hooks/usePolling';
 
 const POLL_MS = 20000;
 
@@ -78,15 +79,13 @@ function BiostarSyncStatus({ authToken }) {
 
   useEffect(() => {
     mounted.current = true;
-    load();
-    const poll = setInterval(load, POLL_MS);
     const clock = setInterval(() => setTick((n) => n + 1), 1000);
     return () => {
       mounted.current = false;
-      clearInterval(poll);
       clearInterval(clock);
     };
-  }, [load]);
+  }, []);
+  usePolling(load, POLL_MS, { enabled: Boolean(authToken) });
 
   if (loadError && !status) {
     return (
@@ -104,11 +103,13 @@ function BiostarSyncStatus({ authToken }) {
   const users = status.users || {};
   const events = status.events || {};
   const meta = STATE_META[status.state] || STATE_META.unknown;
+  // Motivo en castellano calculado por el servidor (heartbeat vivo ≠ huellas importando).
+  const health = status.health || {};
   // Las antigüedades del backend envejecen entre polls: se recalculan acá.
   const ageOf = (entry) => (entry?.at ? Date.now() - new Date(entry.at).getTime() : null);
   const usersAge = ageOf(users);
   const eventsAge = ageOf(events);
-  const lastAny = [users.at, events.at]
+  const lastAny = [users.at, events.at, status.lastHeartbeatAt]
     .filter(Boolean)
     .sort()
     .pop() || null;
@@ -140,6 +141,13 @@ function BiostarSyncStatus({ authToken }) {
           {loading ? ' Actualizando…' : ' Actualizar'}
         </button>
       </div>
+
+      {health.reason && health.status !== 'online' && (
+        <p className="biostar-sync__error" role="alert">{health.reason}</p>
+      )}
+      {health.notice && (
+        <p className="biostar-sync__notice">{health.notice}</p>
+      )}
 
       <div className="access-gps-admin__stats" aria-label="Estado de sincronización BioStar">
         <div className={`access-gps-admin__stat${TONE_CLASS[STATE_META[users.state]?.tone] || ''}`}>
@@ -174,6 +182,12 @@ function BiostarSyncStatus({ authToken }) {
           <div className="access-gps-admin__stat access-gps-admin__stat--wide">
             <span className="access-gps-admin__stat-label">Historial al día hasta</span>
             <strong className="access-gps-admin__stat-value">{formatMoment(events.cursorDatetime)}</strong>
+          </div>
+        )}
+        {Number(status.backlogEstimate) > 0 && (
+          <div className="access-gps-admin__stat access-gps-admin__stat--warn">
+            <span className="access-gps-admin__stat-label">Pases pendientes</span>
+            <strong className="access-gps-admin__stat-value">{status.backlogEstimate}+</strong>
           </div>
         )}
         {status.bridge?.biostarHost && (
