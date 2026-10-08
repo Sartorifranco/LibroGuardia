@@ -184,7 +184,7 @@ export const ROLE_TEMPLATES = {
       'users.view',
       'users.create',
       'users.edit',
-      'users.delete',
+      // D12: borrar usuarios queda solo para Sistemas (admin); el supervisor desactiva.
       'roles.view',
       'access.manual_override',
       'access.manual_open',

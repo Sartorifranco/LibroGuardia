@@ -75,6 +75,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.kiosk',
     'access.manual_open',
     'access.exceptional_entry',
+    // D4: el guardia puede forzar el estanco con motivo obligatorio (queda auditado).
+    'puertas.estanco.forzar',
     'fleet.gps.read',
     'attendance.alerts.read',
     'guard.doors.panel'
@@ -101,7 +103,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'users.view',
     'users.create',
     'users.edit',
-    'users.delete',
+    // D12: borrar usuarios queda solo para Sistemas (admin); el supervisor desactiva.
     'roles.view',
     'access.manual_override',
     'access.manual_open',

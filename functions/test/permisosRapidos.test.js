@@ -257,7 +257,9 @@ describe('POST /api/guard/open-door: estanco forzado', () => {
         users: {
           admin: user('admin'),
           guardia: user('guardia'),
-          supervisor: user('supervisor')
+          supervisor: user('supervisor'),
+          // Rol sin el permiso de forzar: solo apertura manual.
+          operador: user('operador_puertas', { username: 'operador', permissions: ['access.manual_open'] })
         }
       },
       stubs: {
@@ -310,13 +312,24 @@ describe('POST /api/guard/open-door: estanco forzado', () => {
     assert.equal('bypassAirlock' in calls[0], false);
   });
 
-  it('guardia sin puertas.estanco.forzar no puede forzar (403)', async () => {
+  it('sin puertas.estanco.forzar no puede forzar (403)', async () => {
     const res = await srv.request('POST', '/api/guard/open-door', {
-      token: tokenFor('guardia', 'guardia'),
+      token: tokenFor('operador', 'operador_puertas'),
       body: { doorId: 'int', forceAirlock: true, forceReason: 'Emergencia médica' }
     });
     assert.equal(res.status, 403, res.text);
     assert.equal(calls.length, 0);
+  });
+
+  it('guardia (decisión D4) puede forzar con motivo y queda auditado', async () => {
+    const res = await srv.request('POST', '/api/guard/open-door', {
+      token: tokenFor('guardia', 'guardia'),
+      body: { doorId: 'int', forceAirlock: true, forceReason: 'Emergencia médica' }
+    });
+    assert.equal(res.status, 200, res.text);
+    const audit = await waitAudit(mem, (d) => d.action === 'door.airlock.force_open' && d.actorId === 'guardia');
+    assert.ok(audit, 'falta auditoría del forzado del guardia');
+    assert.equal(audit.after.reason, 'Emergencia médica');
   });
 
   it('supervisor: motivo obligatorio (400)', async () => {
@@ -336,7 +349,7 @@ describe('POST /api/guard/open-door: estanco forzado', () => {
     assert.equal(res.status, 200, res.text);
     assert.equal(calls[0].forceAirlock, true);
     assert.match(calls[0].reason, /Evacuación por humo/);
-    const audit = await waitAudit(mem, (d) => d.action === 'door.airlock.force_open');
+    const audit = await waitAudit(mem, (d) => d.action === 'door.airlock.force_open' && d.actorId === 'supervisor');
     assert.ok(audit, 'falta auditoría del forzado');
     assert.equal(audit.actorId, 'supervisor');
     assert.equal(audit.after.reason, 'Evacuación por humo');
