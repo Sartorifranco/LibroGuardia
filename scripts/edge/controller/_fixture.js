@@ -20,13 +20,16 @@ const { createFakeClock } = require('./_testkit');
 const DEVICE = 'ctl-test';
 const DNI = { ana: '30111222', beto: '30222333', carlos: '30333444' };
 
-function siteBodies({ interlockMode = 'sensor' } = {}) {
+/** @param {{interlockMode?:'sensor'|'timed', credentialKey?:string|null}} [opts] credentialKey = clave HMAC del sitio (base64) */
+function siteBodies({ interlockMode = 'sensor', credentialKey = null } = {}) {
   const door = (id, name, extra = {}) => ({
     id, name, enabled: true, sides: ['in', 'out'], controllerId: DEVICE, unlockSec: 3, heldOpenSec: 10,
     readers: [{ id: `${id}-in`, side: 'in' }, { id: `${id}-out`, side: 'out' }], ...extra
   });
-  const cred = (dni) => [{ type: 'dni', valueHash: hashCredential('dni', dni), status: 'active' }];
+  const cred = (dni) => [{ type: 'dni', valueHash: hashCredential('dni', dni, credentialKey), status: 'active' }];
+  const secrets = credentialKey ? { secrets: { secrets: { credentialKey, keyId: 'test', alg: 'HMAC-SHA256' } } } : {};
   return {
+    ...secrets,
     doors: {
       site: { id: 'principal', tz: 'America/Argentina/Buenos_Aires' },
       policy: {},

@@ -241,6 +241,49 @@ describe('controlador: config firmada', { skip: SKIP }, () => {
   });
 });
 
+describe('controlador: clave HMAC de credenciales del sitio (chunk secrets)', { skip: SKIP }, () => {
+  let t;
+  afterEach(async () => { if (t) await t.cleanup(); t = null; });
+  const KEY = Buffer.alloc(32, 7).toString('base64');
+
+  it('con el chunk secrets verificado decide con HMAC; la clave no va al journal', async () => {
+    t = await createTestController({ apply: false });
+    t.hub.publish(1, siteBodies({ credentialKey: KEY }));
+    const r = await t.controller.configSync.sync();
+    assert.equal(r.applied, true);
+    assert.equal(t.controller.configSync.credentialKey(), KEY);
+    assert.equal((await t.scan('p1', 'ana')).decision, 'grant');
+    assert.ok(!JSON.stringify(t.events()).includes(KEY));
+    assert.equal(t.controller.status().config.credentialKey.present, true);
+  });
+
+  it('si el hub no entrega secrets: alarma credential_key_missing y no adivina', async () => {
+    t = await createTestController({ apply: false });
+    const bodies = siteBodies({ credentialKey: KEY });
+    t.hub.publish(1, bodies);
+    delete t.hub.bodies.secrets;
+    await t.controller.configSync.sync();
+    assert.equal(t.edge.chunks.configVersion(), 1);
+    assert.equal(t.controller.configSync.credentialKey(), null);
+    assert.ok(t.events('alarm').some((e) => e.reason === 'credential_key_missing'));
+    assert.equal((await t.scan('p1', 'ana')).reason, 'credencial_desconocida');
+    // el hub lo corrige: al próximo sync baja solo secrets y queda operativo
+    t.hub.bodies.secrets = siteBodies({ credentialKey: KEY }).secrets;
+    await t.controller.configSync.sync();
+    assert.equal(t.controller.configSync.credentialKey(), KEY);
+    t.clock.advance(3100);
+    assert.equal((await t.scan('p1', 'ana')).decision, 'grant');
+  });
+
+  it('secrets alterado por el hub (hash distinto al firmado) se ignora', async () => {
+    t = await createTestController({ apply: false });
+    t.hub.publish(1, siteBodies({ credentialKey: KEY }));
+    t.hub.bodies.secrets = { secrets: { credentialKey: Buffer.alloc(32, 9).toString('base64') } };
+    await t.controller.configSync.sync();
+    assert.equal(t.controller.configSync.credentialKey(), null);
+  });
+});
+
 describe('controlador: eventos al hub, reinicio y cortes', { skip: SKIP }, () => {
   let t;
   afterEach(async () => { if (t) await t.cleanup(); t = null; });

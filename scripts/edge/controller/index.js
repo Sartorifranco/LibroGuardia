@@ -53,7 +53,9 @@ async function main({ configPath, args = [] } = {}) {
     const bundle = JSON.parse(fs.readFileSync(path.resolve(bundleFile), 'utf8'));
     const ok = controller.verifyHead(bundle.head);
     if (!ok) throw new Error('Bundle rechazado: firma de la nube inválida');
-    const r = controller.edge.chunks.applyHead(bundle.head, bundle.chunks || {});
+    const { secrets, ...bodies } = bundle.chunks || {};
+    const r = controller.edge.chunks.applyHead(bundle.head, bodies);
+    if (r.applied || r.reason === 'up_to_date') controller.configSync.applySecrets(bundle.head, secrets);
     controller.edge.snapshot.refresh();
     if (r.applied) controller.record({ type: 'config_applied', reason: 'config_aplicada', payload: { version: r.version, changed: r.changed, source: 'import-bundle' } });
     // eslint-disable-next-line no-console

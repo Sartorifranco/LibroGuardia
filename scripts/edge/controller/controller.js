@@ -332,6 +332,7 @@ class Controller {
       decision = decide({
         snap,
         credential: { type: cred.type, value: cred.value },
+        ...(this.configSync.credentialKey() ? { credentialKey: this.configSync.credentialKey() } : {}),
         doorId: cred.doorId,
         ...(readerKnown ? { readerId: cred.readerId } : { side }),
         at,
@@ -555,7 +556,7 @@ class Controller {
       siteId: this.config.siteId,
       configVersion: this.edge.chunks.configVersion(),
       configVersionApplied: this.edge.chunks.configVersion(),
-      config: this.configSync.status,
+      config: { ...this.configSync.status, credentialKey: this.configSync.credentialKeyStatus() },
       clock: this.edgeClock.status(),
       interlock: { mode: this.config.interlock.mode, state: this.interlockState },
       doors,

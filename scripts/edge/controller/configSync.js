@@ -13,8 +13,40 @@
  * Cada aplicación o rechazo queda en el journal (config_applied / config_rejected).
  */
 
-const { ChunkHashError } = require('../lib/db/chunkStore');
+const { ChunkHashError, hashBody } = require('../lib/db/chunkStore');
+const { readMeta, writeMeta } = require('../lib/db/migrations');
 const { nullLogger } = require('../drivers/logger');
+
+const META_KEY = 'controller_credential_key';
+const META_KEY_HASH = 'controller_credential_key_chunk_hash';
+const normHash = (h) => (h ? String(h).replace(/^sha256:/i, '').toLowerCase() : null);
+
+/**
+ * Clave HMAC de credenciales del sitio (chunk 'secrets' del bundle firmado; ver siteCompiler/README).
+ * El ChunkStore no guarda ese chunk: el controlador lo baja aparte, verifica su hash contra el head
+ * firmado y guarda solo la clave en meta. TODO fase 2: chunk cifrado a la clave del equipo.
+ */
+class CredentialKeyStore {
+  constructor(db) {
+    this.db = db;
+    this.cache = undefined;
+  }
+
+  get() {
+    if (this.cache === undefined) this.cache = readMeta(this.db, META_KEY) || null;
+    return this.cache;
+  }
+
+  chunkHash() {
+    return readMeta(this.db, META_KEY_HASH) || null;
+  }
+
+  set(key, chunkHash) {
+    writeMeta(this.db, META_KEY, key || '');
+    writeMeta(this.db, META_KEY_HASH, chunkHash || '');
+    this.cache = key || null;
+  }
+}
 
 class ConfigSync {
   /**
@@ -31,7 +63,51 @@ class ConfigSync {
     this.running = null;
     this.again = false;
     this.lastRejectKey = null;
+    this.lastKeyAlarm = null;
+    this.keys = new CredentialKeyStore(edge.db);
     this.status = { lastAttemptAt: null, lastOkAt: null, lastResult: null, lastError: null, appliedVersion: edge.chunks.configVersion() };
+  }
+
+  /** Clave HMAC vigente (null = sitio sin clave o todavía no recibida). */
+  credentialKey() {
+    return this.keys.get();
+  }
+
+  credentialKeyStatus(head = null) {
+    const declared = head ? Boolean(head.chunks && head.chunks.secrets) : Boolean(this.keys.chunkHash());
+    return { present: Boolean(this.keys.get()), declared };
+  }
+
+  /**
+   * Después de aplicar (o si ya estaba al día): guarda la clave del chunk 'secrets' si vino y su
+   * hash coincide con el head firmado; si el head la declara y no llegó → alarma (una vez por versión).
+   */
+  applySecrets(head, secretsBody) {
+    const meta = head.chunks && head.chunks.secrets;
+    if (!meta) {
+      if (this.keys.get()) this.keys.set(null, null);
+      return;
+    }
+    const want = normHash(meta.hash);
+    if (secretsBody !== undefined && secretsBody !== null) {
+      if (hashBody(secretsBody) !== want) {
+        this.logger.error('Chunk secrets con hash distinto al del head firmado: se ignora');
+      } else {
+        const key = secretsBody.secrets ? secretsBody.secrets.credentialKey : secretsBody.credentialKey;
+        if (key) {
+          this.keys.set(String(key), want);
+          this.lastKeyAlarm = null;
+          return;
+        }
+      }
+    }
+    if (this.keys.chunkHash() === want && this.keys.get()) return;
+    const tag = `${head.version}|${want}`;
+    if (this.lastKeyAlarm !== tag) {
+      this.lastKeyAlarm = tag;
+      this.logger.error('El bundle usa clave de credenciales pero el hub no entregó el chunk "secrets": los DNI/QR no van a coincidir');
+      this.journal({ type: 'alarm', reason: 'credential_key_missing', payload: { state: 'raised', version: Number(head.version) } });
+    }
   }
 
   reject(head, reason, extra = {}) {
@@ -82,14 +158,20 @@ class ConfigSync {
       const current = this.edge.chunks.configVersion();
       if (Number(head.version) < current) return this.reject(head, 'stale');
       const names = this.edge.chunks.needsChunks(head);
+      const secretsMeta = head.chunks && head.chunks.secrets;
+      const wantSecrets = Boolean(secretsMeta)
+        && (!this.keys.get() || this.keys.chunkHash() !== normHash(secretsMeta.hash));
+      const ask = wantSecrets ? [...names, 'secrets'] : names;
       const bodies = {};
-      if (names.length) {
-        const res = await this.hub.getChunks(names);
+      if (ask.length) {
+        const res = await this.hub.getChunks(ask);
         for (const [name, entry] of Object.entries((res && res.chunks) || {})) {
           // Hub: {v, hash, body}. También se acepta el cuerpo pelado.
           bodies[name] = entry && typeof entry === 'object' && 'body' in entry && 'hash' in entry ? entry.body : entry;
         }
       }
+      const secretsBody = bodies.secrets;
+      delete bodies.secrets;
       let r;
       try {
         r = this.edge.chunks.applyHead(head, bodies);
@@ -103,6 +185,7 @@ class ConfigSync {
       }
       this.status.lastOkAt = Date.now();
       this.status.lastError = null;
+      if (r.applied || r.reason === 'up_to_date') this.applySecrets(head, secretsBody);
       if (r.applied) {
         this.edge.snapshot.refresh();
         this.status.appliedVersion = r.version;
@@ -124,4 +207,4 @@ class ConfigSync {
   }
 }
 
-module.exports = { ConfigSync };
+module.exports = { ConfigSync, CredentialKeyStore };
