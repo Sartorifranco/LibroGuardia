@@ -123,7 +123,13 @@ const normalizePlate = (value = '') => String(value).replace(/[\s-]/g, '').toUpp
 
 const resolvePermissions = (role, customPermissions = [], roleTemplates = null) => {
   const templates = roleTemplates || DEFAULT_ROLE_PERMISSIONS;
-  const rolePerms = templates[role] || templates.guardia || [];
+  // Fail-closed: un rol desconocido (sin plantilla en Firestore ni default) no hereda
+  // permisos de otro rol. Solo cuenta lo explícito del usuario (customPermissions).
+  const roleKey = String(role || '');
+  const rolePerms = Object.prototype.hasOwnProperty.call(templates, roleKey)
+    && Array.isArray(templates[roleKey])
+    ? templates[roleKey]
+    : [];
   const merged = new Set([...rolePerms, ...(Array.isArray(customPermissions) ? customPermissions : [])]);
   return [...merged];
 };

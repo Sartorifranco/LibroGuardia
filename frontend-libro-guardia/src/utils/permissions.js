@@ -267,7 +267,6 @@ export const getDashboardProfile = (user) =>
 export const canAccessAdmin = (user) =>
   hasPermission(user, 'users.view') ||
   hasPermission(user, 'roles.view') ||
-  hasPermission(user, 'master.personal.write') ||
   hasPermission(user, 'master.vehicles.write') ||
   hasPermission(user, 'master.citaciones.write') ||
   hasPermission(user, 'master.nomina.write') ||
@@ -319,11 +318,26 @@ export const canManageUsers = (user) =>
   hasPermission(user, 'users.edit') ||
   hasPermission(user, 'users.delete');
 
-export const canManageTargetUser = (actor, targetUser) => {
+/**
+ * Misma regla que el backend (functions/roles.js canManageTargetRole):
+ * - admin: cualquier usuario (la UI además evita tocar a otros admins).
+ * - perfil supervisor: guardia/monitoreo o roles no-sistema, nunca admin, y solo si los
+ *   permisos del rol destino están incluidos en los permisos efectivos del actor.
+ * @param {object[]} roles roles del sistema (GET /admin/roles) con permissions/isSystem.
+ */
+export const canManageTargetUser = (actor, targetUser, roles = []) => {
   if (!actor || !targetUser) return false;
   if (actor.role === 'admin') return targetUser.role !== 'admin' || actor.id === targetUser.id;
-  if (actor.role === 'supervisor') return ['guardia', 'monitoreo'].includes(targetUser.role);
-  return false;
+  if (targetUser.role === 'admin') return false;
+  if (getDashboardProfile(actor) !== 'supervisor') return false;
+  const targetRole = Array.isArray(roles) ? roles.find((r) => r.id === targetUser.role) : null;
+  const allowedKind = ['guardia', 'monitoreo'].includes(targetUser.role)
+    || (targetRole ? targetRole.isSystem !== true : false);
+  if (!allowedKind) return false;
+  // Sin datos del rol no se puede verificar el subconjunto: el backend decide.
+  if (!targetRole || !Array.isArray(targetRole.permissions)) return true;
+  const own = new Set(Array.isArray(actor.permissions) ? actor.permissions : []);
+  return targetRole.permissions.every((p) => own.has(p));
 };
 
 /** Rol técnico de lectores físicos (ID legado en Firestore). */

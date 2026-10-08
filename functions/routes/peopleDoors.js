@@ -42,6 +42,7 @@ const {
 } = require('../lib/peopleListCache');
 const { getDoorsConfig } = require('../lib/doorsConfig');
 const { auth, requireAnyPermission } = require('../middleware/auth');
+const { logAdminAction } = require('../lib/auditLog');
 
 const router = express.Router();
 
@@ -50,6 +51,18 @@ const personToJSON = personToAdminJSON;
 const bumpPeopleQuiet = () => bumpPeopleVersion().catch((err) => {
   console.warn('[peopleDoors] bumpPeopleVersion', err.message);
 });
+
+/** Auditoría de cambios de puertas permitidas (no rompe el flujo si falla). */
+const auditAllowedDoors = (req, action, personRef, beforeDoors, afterDoors, extra = {}) => {
+  logAdminAction({
+    req,
+    action,
+    targetType: 'person',
+    targetId: personRef?.id || null,
+    before: { allowedDoorIds: normalizeAllowedDoorIds(beforeDoors), ...extra },
+    after: { allowedDoorIds: normalizeAllowedDoorIds(afterDoors), ...extra }
+  }).catch((err) => console.error('[peopleDoors] audit', err.message));
+};
 
 const canPeopleManage = requireAnyPermission([
   'access.doors.manage',
@@ -469,6 +482,47 @@ router.post(
   }
 );
 
+// Debe registrarse antes de /api/admin/people/:id/allowed-doors: si no, Express
+// interpreta "by-dni" como :id y esta ruta nunca se alcanza.
+/**
+ * Sincroniza allowedDoorIds en people a partir de DNI (usado desde master-data / Personal).
+ * Cuerpo: { idNumber, name?, allowedDoorIds }
+ * Mismo permiso que la asignación de puertas en Admin → Personas (no basta entries.create:
+ * un guardia no puede habilitarse puertas a sí mismo ni a terceros).
+ */
+router.put(
+  '/api/admin/people/by-dni/allowed-doors',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const idNumber = String(req.body?.idNumber || '').replace(/\D/g, '');
+      if (idNumber.length < 7) {
+        return res.status(400).json({ message: 'DNI inválido' });
+      }
+      const snap = await db.collection('people')
+        .where('dniNormalized', '==', idNumber)
+        .limit(1)
+        .get();
+      if (snap.empty) {
+        return res.status(404).json({
+          message: 'No hay registro en people con ese DNI. Importá nómina o registrá un acceso primero.'
+        });
+      }
+      const ref = snap.docs[0].ref;
+      const prevDoors = snap.docs[0].data()?.allowedDoorIds;
+      const allowedDoorIds = normalizeAllowedDoorIds(req.body?.allowedDoorIds);
+      await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
+      bumpPeopleQuiet();
+      auditAllowedDoors(req, 'person.allowed_doors.update', ref, prevDoors, allowedDoorIds, { via: 'by-dni' });
+      const updated = await ref.get();
+      res.json({ message: 'Puertas actualizadas', person: personToJSON(updated) });
+    } catch (err) {
+      res.status(500).json({ message: 'Error al actualizar por DNI', error: err.message });
+    }
+  }
+);
+
 /**
  * Actualiza datos básicos + puertas en un solo PUT.
  * Body opcional: name, legajo, idNumber, active, notas, allowedDoorIds
@@ -545,6 +599,9 @@ router.put(
         updatedAt: FieldValue.serverTimestamp()
       });
       bumpPeopleQuiet();
+      if (Object.prototype.hasOwnProperty.call(patch, 'allowedDoorIds')) {
+        auditAllowedDoors(req, 'person.allowed_doors.update', ref, existing.allowedDoorIds, patch.allowedDoorIds);
+      }
       const updated = await ref.get();
       res.json({ message: 'Persona actualizada', person: personToJSON(updated) });
     } catch (err) {
@@ -618,6 +675,7 @@ router.post(
       const allowedDoorIds = addDoorToAllowedList(prev, doorId);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
       bumpPeopleQuiet();
+      auditAllowedDoors(req, 'person.allowed_doors.add', ref, prev, allowedDoorIds, { doorId });
       const updated = await ref.get();
       res.json({
         message: hadNoDoors
@@ -646,48 +704,15 @@ router.delete(
       if (!snap.exists) {
         return res.status(404).json({ message: 'Persona no encontrada' });
       }
-      const allowedDoorIds = removeDoorFromAllowedList(snap.data().allowedDoorIds, doorId);
+      const prevDoors = snap.data().allowedDoorIds;
+      const allowedDoorIds = removeDoorFromAllowedList(prevDoors, doorId);
       await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
       bumpPeopleQuiet();
+      auditAllowedDoors(req, 'person.allowed_doors.remove', ref, prevDoors, allowedDoorIds, { doorId });
       const updated = await ref.get();
       res.json({ message: 'Puerta quitada de la persona', person: personToJSON(updated) });
     } catch (err) {
       res.status(500).json({ message: 'Error al desvincular persona', error: err.message });
-    }
-  }
-);
-
-/**
- * Sincroniza allowedDoorIds en people a partir de DNI (usado desde master-data / Personal).
- * Cuerpo: { idNumber, name?, allowedDoorIds }
- */
-router.put(
-  '/api/admin/people/by-dni/allowed-doors',
-  auth,
-  requireAnyPermission(['access.doors.manage', 'access.control', 'master.nomina.write', 'entries.create']),
-  async (req, res) => {
-    try {
-      const idNumber = String(req.body?.idNumber || '').replace(/\D/g, '');
-      if (idNumber.length < 7) {
-        return res.status(400).json({ message: 'DNI inválido' });
-      }
-      const snap = await db.collection('people')
-        .where('dniNormalized', '==', idNumber)
-        .limit(1)
-        .get();
-      if (snap.empty) {
-        return res.status(404).json({
-          message: 'No hay registro en people con ese DNI. Importá nómina o registrá un acceso primero.'
-        });
-      }
-      const ref = snap.docs[0].ref;
-      const allowedDoorIds = normalizeAllowedDoorIds(req.body?.allowedDoorIds);
-      await ref.update({ allowedDoorIds, updatedAt: FieldValue.serverTimestamp() });
-      bumpPeopleQuiet();
-      const updated = await ref.get();
-      res.json({ message: 'Puertas actualizadas', person: personToJSON(updated) });
-    } catch (err) {
-      res.status(500).json({ message: 'Error al actualizar por DNI', error: err.message });
     }
   }
 );
