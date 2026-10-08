@@ -70,6 +70,7 @@ app.use(require('./routes/entries'));
 app.use(require('./routes/peopleDoors'));
 app.use(require('./routes/biostar'));
 app.use(require('./routes/system'));
+app.use(require('./routes/edge'));
 
 app.use((req, res, next) => {
   if (req.path.startsWith('/api')) {
