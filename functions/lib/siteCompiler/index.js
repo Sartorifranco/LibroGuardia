@@ -5,7 +5,8 @@
  *
  * Contrato para T4 (routes/edge.js) y T6 (hub):
  *   getHead(siteId)                 → head firmado (compila antes si hay cambios pendientes)
- *   getChunks(siteId, names)        → { name: {name, v, hash, body, json} }
+ *   getChunks(siteId, names)        → { name: body }   (getChunkDocs → con v/hash/json)
+ *   Firma: Ed25519 sobre canonicalJson({version, chunks}) (./canonical.js), head.keyId + head.sig (base64)
  *   compileSite(siteId, {full})     → { head, version, changed, removed, mode }
  *   getSigningPublicKey()           → { alg:'Ed25519', keyId, publicKeyPem, ephemeral }
  *   verifyHead(head, publicKeyPem)  → boolean
@@ -26,6 +27,7 @@ const instance = createSiteCompiler();
 module.exports = {
   getHead: instance.getHead,
   getChunks: instance.getChunks,
+  getChunkDocs: instance.getChunkDocs,
   compileSite: instance.compileSite,
   compileDirtySites: instance.compileDirtySites,
   markDirty: instance.markDirty,

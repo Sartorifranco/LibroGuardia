@@ -551,10 +551,14 @@ const createSiteCompiler = (opts = {}) => {
     return res.head;
   };
 
-  /**
-   * Cuerpos de chunks por nombre → { name: {name, v, hash, body, json} } (los que no existen se omiten).
-   */
+  /** Cuerpos de chunks por nombre → { name: body } (los que no existen se omiten). */
   const getChunks = async (siteId = defaultSiteId(), names = []) => {
+    const docs = await getChunkDocs(siteId, names);
+    return Object.fromEntries(Object.entries(docs).map(([n, c]) => [n, c.body]));
+  };
+
+  /** Igual que getChunks pero con metadatos → { name: {name, v, hash, body, json} }. */
+  const getChunkDocs = async (siteId = defaultSiteId(), names = []) => {
     const { db } = deps();
     const r = refs(db, siteId);
     const list = [...new Set((names || []).map(String))];
@@ -670,7 +674,7 @@ const createSiteCompiler = (opts = {}) => {
       const names = Object.keys(head.chunks).filter((n) => n !== 'operators');
       for (const n of Object.keys(bodies)) if (!head.chunks[n] || n === 'operators') delete bodies[n];
       const missing = names.filter((n) => !bodies[n] || bodies[n].hash !== head.chunks[n].hash);
-      const got = await getChunks(siteId, missing);
+      const got = await getChunkDocs(siteId, missing);
       for (const n of missing) {
         const c = got[n];
         if (!c || chunkHash(c.body) !== head.chunks[n].hash) {
@@ -693,6 +697,7 @@ const createSiteCompiler = (opts = {}) => {
     compileDirtySites,
     getHead,
     getChunks,
+    getChunkDocs,
     markDirty,
     getCloudSnapshot,
     getSigningPublicKey: () => {

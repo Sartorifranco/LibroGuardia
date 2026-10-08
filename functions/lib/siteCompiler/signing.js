@@ -9,15 +9,17 @@
  * los equipos NO aceptarían esos heads después de un reinicio. Cómo generar la
  * clave: ver README.md de esta carpeta.
  *
- * Lo firmado es el JSON canónico de los campos SIGNED_FIELDS del head (no `sig`
- * ni campos de servidor). `keyId` = primeros 16 hex del sha256 de la clave
+ * Lo firmado es exactamente `canonicalJson({version, chunks})` (canonical.js:
+ * claves ordenadas, sin espacios); el resto del head (siteId, day, tz,
+ * credentialKeyId, compiledAt, mode) es informativo y no está firmado. `keyId` = primeros 16 hex del sha256 de la clave
  * pública DER (SPKI), para rotar claves sin ambigüedad.
  */
 
 const crypto = require('node:crypto');
 const { canonicalJson } = require('./canonical');
 
-const SIGNED_FIELDS = ['siteId', 'version', 'day', 'tz', 'chunks', 'keyId', 'credentialKeyId', 'compiledAt'];
+/** Acordado con el hub (T6): Ed25519 sobre canonicalJson({version, chunks}). */
+const SIGNED_FIELDS = ['version', 'chunks'];
 
 let cached = null;
 let warnedEphemeral = false;
