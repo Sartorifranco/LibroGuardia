@@ -107,3 +107,65 @@ describe('reserveDoorOpen (transacción compartida entre instancias)', () => {
     assert.ok(ok);
   });
 });
+
+describe('apertura manual y estanco (nunca ambas puertas abiertas)', () => {
+  it('manual interior con exterior abierto → 409 AIRLOCK_OTHER_OPEN, sin tocar el estado', async () => {
+    const store = createSharedStore();
+    const ctl = loadInstance(store);
+    await ctl.reserveDoorOpen({ door: outer, group, airlockApplies: true, nowMs: 100_000 });
+    await assert.rejects(
+      () => ctl.reserveDoorOpen({
+        door: inner, group, airlockApplies: true, manual: true, otherDoorName: 'Exterior', nowMs: 100_300
+      }),
+      (err) => err.status === 409
+        && err.code === 'AIRLOCK_OTHER_OPEN'
+        && /Exterior/.test(err.message)
+        && err.airlock?.forcible === true
+    );
+    assert.equal(store.col('doorAirlockStates').get('estanco-1').phase, 'outer_open');
+  });
+
+  it('manual exterior con interior abierto → 409', async () => {
+    const store = createSharedStore();
+    const ctl = loadInstance(store);
+    await ctl.reserveDoorOpen({ door: inner, group, airlockApplies: true, manual: true, nowMs: 200_000 });
+    await assert.rejects(
+      () => ctl.reserveDoorOpen({ door: outer, group, airlockApplies: true, manual: true, nowMs: 200_500 }),
+      (err) => err.status === 409
+    );
+  });
+
+  it('manual registra el estado: después de abrir el interior a mano, el exterior automático queda bloqueado', async () => {
+    const store = createSharedStore();
+    const ctl = loadInstance(store);
+    await ctl.reserveDoorOpen({ door: inner, group, airlockApplies: true, manual: true, nowMs: 300_000 });
+    assert.equal(store.col('doorAirlockStates').get('estanco-1').phase, 'inner_open');
+    await assert.rejects(
+      () => ctl.reserveDoorOpen({ door: { ...outer, id: 'ext-auto' }, group, airlockApplies: true, nowMs: 300_500 }),
+      (err) => err.status === 423
+    );
+  });
+
+  it('forceAirlock (manual) abre igual y devuelve forcedAirlock para auditar', async () => {
+    const store = createSharedStore();
+    const ctl = loadInstance(store);
+    await ctl.reserveDoorOpen({ door: outer, group, airlockApplies: true, nowMs: 400_000 });
+    const res = await ctl.reserveDoorOpen({
+      door: inner, group, airlockApplies: true, manual: true, forceAirlock: true, otherDoorName: 'Exterior', nowMs: 400_200
+    });
+    assert.equal(res.airlockCheck.forced, true);
+    assert.equal(res.forcedAirlock.code, 'AIRLOCK_OTHER_OPEN');
+    assert.equal(res.forcedAirlock.phase, 'outer_open');
+    assert.equal(store.col('doorAirlockStates').get('estanco-1').phase, 'inner_open');
+  });
+
+  it('forceAirlock no aplica a aperturas automáticas (siguen en 423)', async () => {
+    const store = createSharedStore();
+    const ctl = loadInstance(store);
+    await ctl.reserveDoorOpen({ door: outer, group, airlockApplies: true, nowMs: 500_000 });
+    await assert.rejects(
+      () => ctl.reserveDoorOpen({ door: inner, group, airlockApplies: true, forceAirlock: true, nowMs: 500_200 }),
+      (err) => err.status === 423
+    );
+  });
+});

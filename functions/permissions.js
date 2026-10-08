@@ -27,6 +27,8 @@ const PERMISSION_KEYS = [
   'access.manual_override',
   'access.exceptional_entry',
   'access.kiosk',
+  // Forzar apertura manual con la otra puerta del estanco abierta (motivo obligatorio, auditado).
+  'puertas.estanco.forzar',
   'master.citaciones.preregister',
   'fleet.gps.read',
   'master.nomina.read',
@@ -103,6 +105,7 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'roles.view',
     'access.manual_override',
     'access.manual_open',
+    'puertas.estanco.forzar',
     'access.kiosk',
     'access.exceptional_entry',
     'attendance.alerts.read',

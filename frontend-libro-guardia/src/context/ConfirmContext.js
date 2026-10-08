@@ -45,6 +45,15 @@ export function ConfirmProvider({ children }) {
     });
   }, []);
 
+  /**
+   * Confirmación con motivo obligatorio (textarea). Resuelve el motivo (string)
+   * o null si se cancela. El foco inicial sigue en Cancelar.
+   */
+  const confirmWithReason = useCallback((options = {}) => confirm({
+    reasonLabel: 'Motivo',
+    ...options
+  }).then((result) => (typeof result === 'string' && result ? result : null)), [confirm]);
+
   /** Aviso de un solo botón (Entendido). Siempre resuelve true. */
   const alert = useCallback((options = {}) => confirm({
     title: 'Atención',
@@ -55,7 +64,7 @@ export function ConfirmProvider({ children }) {
     ...options
   }), [confirm]);
 
-  const value = useMemo(() => ({ confirm, alert }), [confirm, alert]);
+  const value = useMemo(() => ({ confirm, alert, confirmWithReason }), [confirm, alert, confirmWithReason]);
 
   return (
     <ConfirmContext.Provider value={value}>
@@ -68,7 +77,9 @@ export function ConfirmProvider({ children }) {
         cancelLabel={state.options.cancelLabel}
         tone={state.options.tone}
         autoFocusConfirm={state.options.autoFocusConfirm === true}
-        onConfirm={() => close(true)}
+        reasonLabel={state.options.reasonLabel || null}
+        minReasonLength={state.options.minReasonLength || 5}
+        onConfirm={(reason) => close(state.options.reasonLabel ? reason : true)}
         onCancel={() => close(false)}
       />
     </ConfirmContext.Provider>

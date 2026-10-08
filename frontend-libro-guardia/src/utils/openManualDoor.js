@@ -38,7 +38,9 @@ export async function openManualDoor({
   doorId,
   door = null,
   reason = 'apertura_manual_guardia',
-  bypassAirlock = true,
+  /** Forzar con la otra puerta del estanco abierta (permiso puertas.estanco.forzar + motivo). */
+  forceAirlock = false,
+  forceReason = '',
   /** Forzar solo nube/cola (default). */
   forceCloud = false,
   /** Forzar HTTP LAN directo (diagnóstico). */
@@ -110,7 +112,9 @@ export async function openManualDoor({
     const data = await apiFetch('/guard/open-door', {
       method: 'POST',
       token: authToken,
-      body: { reason, doorId: id, bypassAirlock }
+      body: forceAirlock
+        ? { reason, doorId: id, forceAirlock: true, forceReason }
+        : { reason, doorId: id }
     });
     const via = data?.relay?.via || data?.via || 'cloud';
     const result = {
@@ -150,7 +154,9 @@ export async function openManualDoor({
     );
   } catch (cloudErr) {
     // Fallback LAN solo si la API no responde y hay estación (misma red).
-    if (canLocal && isNetworkishError(cloudErr) && !forceCloud) {
+    // Un rechazo del servidor (p.ej. 409 estanco) NUNCA cae a la estación local.
+    const serverRejected = Number(cloudErr?.status) >= 400 && Number(cloudErr?.status) < 500;
+    if (canLocal && !serverRejected && isNetworkishError(cloudErr) && !forceCloud) {
       try {
         return await openLocalDirect('cloudFailed_fallbackLocal');
       } catch (localErr) {
@@ -175,5 +181,42 @@ export async function openManualDoor({
       isNetworkError: Boolean(cloudErr.isNetworkError || isNetworkishError(cloudErr))
     });
     throw cloudErr;
+  }
+}
+
+/** true si el error es el rechazo de estanco de una apertura manual (HTTP 409). */
+export const isAirlockBusyError = (err) => Number(err?.status) === 409
+  && err?.data?.code === 'AIRLOCK_OTHER_OPEN';
+
+/**
+ * Apertura manual con manejo del estanco:
+ * - si la API responde 409 (la otra puerta del estanco está abierta) y el usuario
+ *   no puede forzar, se relanza el error con el mensaje del servidor;
+ * - si puede forzar (puertas.estanco.forzar), ofrece "Forzar apertura (queda
+ *   registrado)" pidiendo motivo y reintenta con forceAirlock.
+ * @param {object} opts mismas opciones que openManualDoor + canForceAirlock y confirmWithReason.
+ * @returns resultado de la apertura, o { cancelled: true } si no se forzó.
+ */
+export async function openManualDoorWithAirlock({
+  canForceAirlock = false,
+  confirmWithReason = null,
+  ...opts
+} = {}) {
+  try {
+    return await openManualDoor(opts);
+  } catch (err) {
+    if (!isAirlockBusyError(err) || !canForceAirlock || typeof confirmWithReason !== 'function') {
+      throw err;
+    }
+    const forceReason = await confirmWithReason({
+      title: 'Estanco ocupado',
+      message: `${err.message}\n\n¿Forzar la apertura igual? Queda registrado con tu usuario y el motivo.`,
+      confirmLabel: 'Forzar apertura (queda registrado)',
+      cancelLabel: 'Cancelar',
+      reasonLabel: 'Motivo (obligatorio)',
+      tone: 'danger'
+    });
+    if (!forceReason) return { cancelled: true, airlockBlocked: true };
+    return openManualDoor({ ...opts, forceAirlock: true, forceReason });
   }
 }

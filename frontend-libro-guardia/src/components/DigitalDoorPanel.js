@@ -38,7 +38,7 @@ import { useToast } from '../context/ToastContext';
 
 import { apiFetch } from '../services/api';
 
-import { openManualDoor } from '../utils/openManualDoor';
+import { openManualDoorWithAirlock } from '../utils/openManualDoor';
 
 import { doorOpenUserMessage, lastPulseStatusWord } from '../utils/doorOpenStatus';
 
@@ -138,7 +138,7 @@ function DigitalDoorPanel({
 
   const { authToken, currentUser } = useAuth();
 
-  const { confirm } = useConfirm();
+  const { confirm, confirmWithReason } = useConfirm();
 
   const { showSuccess, showError } = useToast();
 
@@ -302,7 +302,10 @@ function DigitalDoorPanel({
 
         const forceLocal = connectivityMode === 'local-fallback' || connectivityMode === 'offline';
 
-        const data = await openManualDoor({
+        // 409 estanco: muestra el motivo; con puertas.estanco.forzar ofrece forzar con motivo.
+        const data = await openManualDoorWithAirlock({
+          canForceAirlock: hasPermission(currentUser, 'puertas.estanco.forzar'),
+          confirmWithReason,
 
           authToken,
 
@@ -314,7 +317,7 @@ function DigitalDoorPanel({
 
         });
 
-        showSuccess(doorOpenUserMessage(data, label));
+        if (!data?.cancelled) showSuccess(doorOpenUserMessage(data, label));
 
         reload();
 
@@ -334,7 +337,7 @@ function DigitalDoorPanel({
 
     }
 
-  }, [authToken, confirm, reload, showError, showSuccess, connectivityMode]);
+  }, [authToken, confirm, confirmWithReason, currentUser, reload, showError, showSuccess, connectivityMode]);
 
 
 

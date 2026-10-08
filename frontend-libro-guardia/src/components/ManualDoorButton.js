@@ -3,7 +3,7 @@ import { DoorOpen } from 'lucide-react';
 import { hasPermission } from '../utils/permissions';
 import { useConfirm } from '../context/ConfirmContext';
 import { apiFetch } from '../services/api';
-import { openManualDoor } from '../utils/openManualDoor';
+import { openManualDoorWithAirlock } from '../utils/openManualDoor';
 import { doorOpenUserMessage } from '../utils/doorOpenStatus';
 
 function ManualDoorButton({
@@ -14,7 +14,7 @@ function ManualDoorButton({
   onSuccess,
   onError
 }) {
-  const { confirm } = useConfirm();
+  const { confirm, confirmWithReason } = useConfirm();
   const openingLockRef = useRef(false);
   const [opening, setOpening] = useState(false);
   const [doors, setDoors] = useState([]);
@@ -73,11 +73,14 @@ function ManualDoorButton({
 
       setOpening(true);
       try {
-        const data = await openManualDoor({
+        // 409 estanco: muestra el motivo; con puertas.estanco.forzar ofrece forzar con motivo.
+        const data = await openManualDoorWithAirlock({
+          canForceAirlock: hasPermission(currentUser, 'puertas.estanco.forzar'),
+          confirmWithReason,
           authToken,
           doorId: selectedDoorId
         });
-        onSuccess?.(doorOpenUserMessage(data, label));
+        if (!data?.cancelled) onSuccess?.(doorOpenUserMessage(data, label));
       } catch (err) {
         onError?.(err.message || 'Error al abrir la puerta');
       } finally {

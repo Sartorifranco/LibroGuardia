@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import ConfirmDialog from './ConfirmDialog';
 
 function renderDialog(extra = {}) {
@@ -27,5 +27,19 @@ describe('ConfirmDialog', () => {
   test('autoFocusConfirm pone el foco en el botón de confirmar', () => {
     renderDialog({ autoFocusConfirm: true });
     expect(screen.getByRole('button', { name: 'Abrir puerta' })).toHaveFocus();
+  });
+});
+
+describe('ConfirmDialog con motivo', () => {
+  test('foco en Cancelar; confirmar deshabilitado hasta escribir el motivo', () => {
+    const onConfirm = jest.fn();
+    renderDialog({ reasonLabel: 'Motivo (obligatorio)', confirmLabel: 'Forzar apertura (queda registrado)', onConfirm });
+    expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveFocus();
+    const forceBtn = screen.getByRole('button', { name: 'Forzar apertura (queda registrado)' });
+    expect(forceBtn).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Motivo (obligatorio)'), { target: { value: 'Evacuación por humo' } });
+    expect(forceBtn).not.toBeDisabled();
+    fireEvent.click(forceBtn);
+    expect(onConfirm).toHaveBeenCalledWith('Evacuación por humo');
   });
 });

@@ -24,6 +24,7 @@ export const PERMISSION_LABELS = {
   'access.control': `Configurar GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`,
   'access.doors.manage': 'Configurar puertas, estancos y dispositivos',
   'access.manual_open': 'Abrir la puerta a mano',
+  'puertas.estanco.forzar': 'Forzar apertura del estanco con la otra puerta abierta (con motivo, queda registrado)',
   'access.manual_override': 'Autorizar un ingreso y abrir la puerta sin citación',
   'access.exceptional_entry': 'Registrar un ingreso excepcional, con motivo',
   'access.kiosk': 'Usar la estación de acceso (lector)',
@@ -88,6 +89,7 @@ export const PERMISSION_CATEGORIES = [
       'access.control',
       'access.doors.manage',
       'access.manual_open',
+      'puertas.estanco.forzar',
       'access.manual_override',
       'monitoring.doors.panel',
       'guard.doors.panel'
@@ -186,6 +188,7 @@ export const ROLE_TEMPLATES = {
       'roles.view',
       'access.manual_override',
       'access.manual_open',
+      'puertas.estanco.forzar',
       'access.kiosk',
       'access.exceptional_entry',
       'attendance.alerts.read',

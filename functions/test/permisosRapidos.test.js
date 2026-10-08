@@ -243,3 +243,104 @@ describe('Rutas de puertas por DNI y administración de usuarios/roles', () => {
     });
   });
 });
+
+describe('POST /api/guard/open-door: estanco forzado', () => {
+  let mem;
+  let srv;
+  const calls = [];
+
+  before(async () => {
+    process.env.JWT_SECRET = TEST_JWT_SECRET;
+    mem = setupHarness({
+      initial: {
+        roles: defaultRoleDocs(),
+        users: {
+          admin: user('admin'),
+          guardia: user('guardia'),
+          supervisor: user('supervisor')
+        }
+      },
+      stubs: {
+        'accessControl.js': {
+          triggerAccessIfAuthorized: async () => ({ authorized: false }),
+          processKioskScan: async () => ({}),
+          validarAcceso: async () => ({ autorizado: false }),
+          evaluatePersonalAccess: async () => ({ authorized: false }),
+          manualOpenDoor: async (args) => {
+            calls.push(args);
+            if (!args.forceAirlock) {
+              const err = new Error('No se puede abrir: la otra puerta del estanco (Exterior) está abierta. Esperá a que se cierre.');
+              err.status = 409;
+              err.code = 'AIRLOCK_OTHER_OPEN';
+              err.airlock = { allowed: false, forcible: true };
+              throw err;
+            }
+            return {
+              message: 'Interior abierta manualmente',
+              door: { id: 'int', name: 'Interior' },
+              airlock: { groupId: 'estanco-1' },
+              forcedAirlock: { phase: 'outer_open', otherDoorName: 'Exterior' }
+            };
+          }
+        },
+        'lib/guardLocalStations.js': {
+          enrichDoorsWithLocalStations: async (doors) => doors
+        }
+      }
+    });
+    srv = await startRouters(['routes/access.js']);
+  });
+
+  after(async () => { await srv.close(); });
+
+  beforeEach(() => {
+    calls.length = 0;
+    require('../lib/passwordVersion')._clearPasswordVersionCacheForTests();
+  });
+
+  it('sin forzar: 409 con mensaje y code; bypassAirlock del body se ignora', async () => {
+    const res = await srv.request('POST', '/api/guard/open-door', {
+      token: tokenFor('guardia', 'guardia'),
+      body: { doorId: 'int', bypassAirlock: true }
+    });
+    assert.equal(res.status, 409, res.text);
+    assert.equal(res.body.code, 'AIRLOCK_OTHER_OPEN');
+    assert.match(res.body.message, /Esperá a que se cierre/);
+    assert.equal(calls[0].forceAirlock, false);
+    assert.equal('bypassAirlock' in calls[0], false);
+  });
+
+  it('guardia sin puertas.estanco.forzar no puede forzar (403)', async () => {
+    const res = await srv.request('POST', '/api/guard/open-door', {
+      token: tokenFor('guardia', 'guardia'),
+      body: { doorId: 'int', forceAirlock: true, forceReason: 'Emergencia médica' }
+    });
+    assert.equal(res.status, 403, res.text);
+    assert.equal(calls.length, 0);
+  });
+
+  it('supervisor: motivo obligatorio (400)', async () => {
+    const res = await srv.request('POST', '/api/guard/open-door', {
+      token: tokenFor('supervisor', 'supervisor'),
+      body: { doorId: 'int', forceAirlock: true, forceReason: '  ' }
+    });
+    assert.equal(res.status, 400, res.text);
+    assert.equal(calls.length, 0);
+  });
+
+  it('supervisor con motivo: abre forzado y queda auditado', async () => {
+    const res = await srv.request('POST', '/api/guard/open-door', {
+      token: tokenFor('supervisor', 'supervisor'),
+      body: { doorId: 'int', forceAirlock: true, forceReason: 'Evacuación por humo' }
+    });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(calls[0].forceAirlock, true);
+    assert.match(calls[0].reason, /Evacuación por humo/);
+    const audit = await waitAudit(mem, (d) => d.action === 'door.airlock.force_open');
+    assert.ok(audit, 'falta auditoría del forzado');
+    assert.equal(audit.actorId, 'supervisor');
+    assert.equal(audit.after.reason, 'Evacuación por humo');
+    assert.equal(audit.after.forcedAirlock, true);
+    assert.equal(audit.targetId, 'int');
+  });
+});

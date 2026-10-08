@@ -52,6 +52,7 @@ const {
   auth,
   requirePermission,
   requireAnyPermission,
+  userHasAnyPermission,
   sendServerError,
   sendRouteError
 } = require('../middleware/auth');
@@ -103,8 +104,8 @@ router.post('/api/access/test-relay', auth, requireAnyPermission(['access.contro
     const result = await openDoor({
       doorId,
       username: req.user?.username,
+      // El pulso de prueba abre la puerta de verdad: respeta el estanco como cualquier apertura manual.
       manual: true,
-      bypassAirlock: true,
       force: true,
       reason: 'test_relay',
       pulseSeconds: Number.isFinite(pulseSeconds) && pulseSeconds > 0 ? pulseSeconds : null,
@@ -125,20 +126,55 @@ router.post('/api/access/test-relay', auth, requireAnyPermission(['access.contro
   }
 });
 
+const FORCE_AIRLOCK_PERMISSION = 'puertas.estanco.forzar';
+const MIN_FORCE_REASON_LENGTH = 5;
+
 router.post('/api/guard/open-door', auth, requirePermission('access.manual_open'), async (req, res) => {
   try {
+    // bypassAirlock del body ya no se acepta: la apertura manual respeta el estanco.
+    // Forzar requiere permiso puertas.estanco.forzar + motivo, y queda auditado.
+    const forceAirlock = req.body?.forceAirlock === true;
+    const forceReason = String(req.body?.forceReason || '').trim().slice(0, 500);
+    if (forceAirlock) {
+      if (!(await userHasAnyPermission(req, [FORCE_AIRLOCK_PERMISSION]))) {
+        return res.status(403).json({ message: 'No tenés permiso para forzar la apertura del estanco.' });
+      }
+      if (forceReason.length < MIN_FORCE_REASON_LENGTH) {
+        return res.status(400).json({ message: 'Indicá el motivo para forzar la apertura del estanco.' });
+      }
+    }
     const result = await manualOpenDoor({
       username: req.user?.username || req.user?.id,
       userId: req.user?.id || null,
-      reason: req.body?.reason || 'apertura_manual_guardia',
+      reason: forceAirlock
+        ? `estanco_forzado: ${forceReason}`
+        : (req.body?.reason || 'apertura_manual_guardia'),
       doorId: req.body?.doorId || null,
-      bypassAirlock: req.body?.bypassAirlock === true
+      forceAirlock
     });
+    if (result?.forcedAirlock) {
+      logAdminAction({
+        req,
+        action: 'door.airlock.force_open',
+        targetType: 'door',
+        targetId: result.door?.id || req.body?.doorId || null,
+        before: null,
+        after: {
+          forcedAirlock: true,
+          reason: forceReason,
+          doorName: result.door?.name || null,
+          airlockGroupId: result.airlock?.groupId || null,
+          phaseBefore: result.forcedAirlock.phase || null,
+          otherDoorName: result.forcedAirlock.otherDoorName || null
+        }
+      }).catch((err) => console.error('auditLog door.airlock.force_open:', err.message));
+    }
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || 'Error al abrir la puerta',
       error: err.message,
+      ...(err.code ? { code: err.code } : {}),
       airlock: err.airlock || undefined
     });
   }
