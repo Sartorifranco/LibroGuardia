@@ -331,6 +331,16 @@ const buildPersonEntry = ({ person, auths = [], employee = null, key = null, tz 
     }
   }
 
+  // Sin ninguna base de tiempo (ni permanente, ni nómina, ni grants en la
+  // ventana): hoy se rechaza con `sin_citacion_para_hoy`. Se modela como
+  // citación obligatoria sobre sus puertas → el motor da el mismo código.
+  const hasBasis = Boolean(nomina) || direct.size > 0 || grants.length > 0
+    || person.accessAll === true || (Array.isArray(person.accessLevels) && person.accessLevels.length > 0);
+  if (!hasBasis && D.length) {
+    requiresGrant = true;
+    addDoors(D, '24x7');
+  }
+
   const credentials = [];
   const dni = personDni(person);
   if (dni) credentials.push(credentialEntry('dni', dni, key));
