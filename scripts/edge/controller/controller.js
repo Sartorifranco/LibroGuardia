@@ -284,9 +284,11 @@ class Controller {
         relayError = `Puerta ${a.doorId} no pertenece a este controlador`;
         continue;
       }
+      // `output.pulseSeconds` local (si está) manda sobre unlockSec del snapshot: es un dato del hardware.
+      const ms = Number(d.cfg.output.pulseSeconds) > 0 ? Math.round(Number(d.cfg.output.pulseSeconds) * 1000) : a.ms;
       let r;
       if (d.runner.state.emergency) r = { ok: true, relayConfirmed: true, detail: { emergencyHold: true } };
-      else r = await d.output.pulse(a.ms);
+      else r = await d.output.pulse(ms);
       relayOk = relayOk && r.ok;
       relayConfirmed = relayConfirmed && Boolean(r.ok && r.relayConfirmed);
       if (!r.ok) {
@@ -294,7 +296,7 @@ class Controller {
         continue;
       }
       this.lastPulseAt.set(a.doorId, this.clock.now());
-      d.runner.dispatch({ type: 'unlock', ms: a.ms, source });
+      d.runner.dispatch({ type: 'unlock', ms, source });
     }
     if (!actions.length) {
       relayOk = false;
