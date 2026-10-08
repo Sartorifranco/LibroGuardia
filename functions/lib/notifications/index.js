@@ -107,6 +107,25 @@ const buildMessage = (eventType, payload = {}) => {
           'Actuar según el protocolo de seguridad. No llamar a la persona por teléfono.'
         ].join('\n')
       };
+    case 'edge_alarm': {
+      const titles = {
+        door_forced: 'puerta forzada',
+        emergency: 'botón de emergencia activado',
+        interlock_violation: 'dos puertas del estanco abiertas a la vez'
+      };
+      const title = titles[payload.alarmType] || payload.alarmType || 'alarma de puerta';
+      return {
+        subject: `${brand}: ALARMA — ${title}`,
+        text: [
+          `Alarma: ${title}.`,
+          `Puerta: ${payload.doorName || payload.doorId || '—'}`,
+          `Equipo: ${payload.deviceId || '—'}`,
+          `Hora: ${payload.at || '—'}`,
+          payload.message ? `Detalle: ${payload.message}` : null,
+          'Verificar en el lugar y reconocer la alarma en el sistema con una nota.'
+        ].filter(Boolean).join('\n')
+      };
+    }
     case 'admin_sensitive':
       return {
         subject: `${brand}: cambio administrativo sensible`,

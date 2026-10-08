@@ -42,9 +42,9 @@ const ALARM_TYPES = new Set([
 const CRITICAL_ALARM_NOTIFY = {
   duress: 'duress_access',
   device_offline: 'bridge_offline',
-  door_forced: null,
-  emergency: null,
-  interlock_violation: null
+  door_forced: 'edge_alarm',
+  emergency: 'edge_alarm',
+  interlock_violation: 'edge_alarm'
 };
 
 const COMMAND_RESULT_STATUSES = ['done', 'failed'];
@@ -176,6 +176,15 @@ const notifyCriticalAlarm = (notifySafe, ev, alarm) => {
     notifySafe(eventType, { name: p.name || ev.cardholderId || null, doorId: ev.doorId, at, entryId: ev.id });
   } else if (eventType === 'bridge_offline') {
     notifySafe(eventType, { name: p.name || alarm.deviceId, id: alarm.deviceId, kind: 'edge', lastAt: at });
+  } else if (eventType === 'edge_alarm') {
+    notifySafe(eventType, {
+      alarmType: ev.type,
+      doorId: ev.doorId || null,
+      doorName: p.doorName || null,
+      deviceId: alarm.deviceId || ev.deviceId || null,
+      at,
+      message: p.message || null
+    });
   }
   return true;
 };
