@@ -28,6 +28,17 @@ const {
   listDoorIdsForKioskUser
 } = require('../lib/lectores');
 const { createPairingCode } = require('../lib/lectorPairing');
+const { resolveLectorHealth } = require('../lib/stationHealth');
+
+/** Estado para la UI: 'en línea' solo con heartbeat fresco y lector/relé OK. */
+const withHealth = (lector, now = Date.now()) => {
+  const health = resolveLectorHealth(lector, now);
+  return {
+    ...lector,
+    connectionStatus: health.connectionStatus,
+    connectionReason: health.reason
+  };
+};
 
 /**
  * Si el lector ya está en una estación, avisar antes de instalarlo en otra:
@@ -65,10 +76,7 @@ router.get('/api/admin/lectores', auth, requirePermission('lectores.manage'), as
     const lectores = await listLectores();
     const now = Date.now();
     res.json({
-      lectores: lectores.map((l) => ({
-        ...l,
-        connectionStatus: resolveConnectionStatus(l.ultimaConexion, now)
-      }))
+      lectores: lectores.map((l) => withHealth(l, now))
     });
   } catch (err) {
     res.status(500).json({ message: err.message || 'Error al listar lectores' });
@@ -116,10 +124,7 @@ router.put('/api/admin/lectores/:id', auth, requirePermission('lectores.manage')
     }).catch(() => {});
     res.json({
       message: 'Lector actualizado. Si cambiaste puerta/readerId, actualizá el JSON en la mini PC.',
-      lector: {
-        ...lector,
-        connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
-      },
+      lector: withHealth(lector),
       ...(previousEstacionId ? { previousEstacionId, warning } : {})
     });
   } catch (err) {
@@ -279,10 +284,7 @@ router.post(
       }).catch(() => {});
       res.json({
         message: 'Resincronización pedida. La mini PC la aplica en unos segundos (poll ~2 s) y reporta la lista al instante.',
-        lector: {
-          ...lector,
-          connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
-        }
+        lector: withHealth(lector)
       });
     } catch (err) {
       res.status(err.status || 500).json({
@@ -310,7 +312,8 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       serialPort: req.body?.serialPort || req.body?.puertoDetectado || null,
       inputMode: req.body?.inputMode || req.body?.inputModeDetectado || null,
       allowlistGeneratedAt: req.body?.allowlistGeneratedAt,
-      allowlistEntryCount: req.body?.allowlistEntryCount
+      allowlistEntryCount: req.body?.allowlistEntryCount,
+      healthReport: req.body || null
     });
 
     let pendingOpens = [];

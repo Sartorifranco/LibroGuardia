@@ -58,6 +58,32 @@ const buildMessage = (eventType, payload = {}) => {
         ].join('\n')
       };
     case 'bridge_offline':
+      if (payload.variant === 'problem') {
+        return {
+          subject: `${brand}: equipo de planta con problemas — ${payload.name || payload.kind || ''}`.trim(),
+          text: [
+            'Un equipo de planta sigue reportando, pero tiene un problema.',
+            `Qué: ${payload.name || payload.kind || '—'}`,
+            `Problema: ${payload.reason || '—'}`,
+            `Id: ${payload.id || '—'}`,
+            `Tipo: ${payload.kind || '—'}`,
+            `Última señal: ${payload.lastAt || '—'}`,
+            'Revisar el cable USB del lector, la placa de relé o la contraseña de la estación según el problema (ver docs/CONTINGENCIA-BRIDGES.md).'
+          ].join('\n')
+        };
+      }
+      if (payload.variant === 'recovered') {
+        return {
+          subject: `${brand}: recuperado — ${payload.name || payload.kind || ''}`.trim(),
+          text: [
+            'El equipo de planta volvió a funcionar normalmente.',
+            `Qué: ${payload.name || payload.kind || '—'}`,
+            `Id: ${payload.id || '—'}`,
+            `Tipo: ${payload.kind || '—'}`,
+            `Última señal: ${payload.lastAt || '—'}`
+          ].join('\n')
+        };
+      }
       return {
         subject: `${brand}: puente local sin señal`,
         text: [
