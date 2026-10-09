@@ -42,7 +42,7 @@ const DIRTY_LISTS = ['people', 'auths', 'visitas'];
  * (p. ej. apbMode o repeatWindowSec). Un head guardado con otro número
  * dispara compilado completo aunque nadie haya marcado _dirty.
  */
-const COMPILER_VERSION = 1;
+const COMPILER_VERSION = 2;
 
 const headCompilerMismatch = (head) => !head || (Number(head.compilerVersion) || 0) !== COMPILER_VERSION;
 
@@ -150,6 +150,33 @@ const createSiteCompiler = (opts = {}) => {
   const loadSiteDoc = async (db, siteId) => docData(await refs(db, siteId).site.get()) || {};
   const loadDoorsConfig = async (db) => docData(await db.collection('settings').doc('doorsConfig').get()) || {};
 
+  /** Catálogo profesional (grupos, horarios, feriados). Colecciones chicas: un query cada una. */
+  const loadAccessCatalog = async (db) => {
+    const [groupsSnap, schedSnap, holSnap] = await Promise.all([
+      db.collection('accessGroups').limit(200).get(),
+      db.collection('schedules').limit(200).get(),
+      db.collection('holidays').limit(20).get()
+    ]);
+    return {
+      accessGroups: groupsSnap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) })),
+      schedules: schedSnap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) })),
+      holidays: holSnap.docs.flatMap((d) => {
+        const dates = (d.data() || {}).dates;
+        return Array.isArray(dates) ? dates : [];
+      })
+    };
+  };
+
+  const doorsChunk = (siteId, site, doorsConfig, autoSchedules, catalog) => build.buildDoorsChunk({
+    siteId,
+    site,
+    doorsConfig,
+    schedules: autoSchedules,
+    configuredSchedules: (catalog && catalog.schedules) || [],
+    configuredGroups: (catalog && catalog.accessGroups) || [],
+    configuredHolidays: (catalog && catalog.holidays) || []
+  });
+
   const loadRoleTemplates = async (db) => {
     const { DEFAULT_ROLE_PERMISSIONS } = require('../../permissions');
     const templates = { ...DEFAULT_ROLE_PERMISSIONS };
@@ -185,7 +212,7 @@ const createSiteCompiler = (opts = {}) => {
     const win = visitaWindow(days, tz);
     const auths = db.collection('authorizations');
 
-    const [peopleSnap, permSnap, citSnap, rangeSnap, nominaSnap, visitasSnap, operators] = await Promise.all([
+    const [peopleSnap, permSnap, citSnap, rangeSnap, nominaSnap, visitasSnap, operators, catalog] = await Promise.all([
       db.collection('people').where('active', '==', true).get(),
       auths.where('active', '==', true).where('type', '==', 'permanent').get(),
       // Rango sobre un solo campo (índice automático); tipo/activa se filtran en memoria.
@@ -194,7 +221,8 @@ const createSiteCompiler = (opts = {}) => {
       db.collection('personalMaster').where('source', '==', 'nomina').get(),
       db.collection('visitas').where('fechaHoraEsperada', '>=', new Date(win.from - 2 * 3600 * 1000))
         .where('fechaHoraEsperada', '<=', new Date(win.to)).get(),
-      loadOperators(db)
+      loadOperators(db),
+      loadAccessCatalog(db)
     ]);
 
     const authByPerson = new Map();
@@ -252,7 +280,7 @@ const createSiteCompiler = (opts = {}) => {
     }
 
     const next = {};
-    next.doors = build.buildDoorsChunk({ siteId, site, doorsConfig, schedules: [...schedules.values()] });
+    next.doors = doorsChunk(siteId, site, doorsConfig, [...schedules.values()], catalog);
     for (const [b, list] of buckets) next[build.bucketChunkName(b)] = { bucket: b, cardholders: sortById(list) };
     for (const [d, list] of grantsByDay) {
       if (list.length) next[build.grantsChunkName(d)] = { date: d, grants: sortById(list).map(grantForChunk) };
@@ -289,8 +317,13 @@ const createSiteCompiler = (opts = {}) => {
     if (!doorsBody) return null; // sin chunk doors no hay delta posible → completo
 
     if (dirty.doors) {
-      const [site, doorsConfig] = await Promise.all([loadSiteDoc(db, siteId), loadDoorsConfig(db)]);
-      doorsBody = build.buildDoorsChunk({ siteId, site, doorsConfig, schedules: doorsBody.schedules || [] });
+      const [site, doorsConfig, catalog] = await Promise.all([
+        loadSiteDoc(db, siteId),
+        loadDoorsConfig(db),
+        loadAccessCatalog(db)
+      ]);
+      const kept = (doorsBody.schedules || []).filter((s) => s && s.catalog !== true && s.id !== '24x7');
+      doorsBody = doorsChunk(siteId, site, doorsConfig, kept, catalog);
       if ((doorsBody.policy && doorsBody.policy.tz) !== tz) return null; // cambió la zona → completo
       next.doors = doorsBody;
     }

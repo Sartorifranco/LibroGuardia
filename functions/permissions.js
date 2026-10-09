@@ -43,7 +43,11 @@ const PERMISSION_KEYS = [
   'visitas.create',
   'visitas.request',
   'visitas.approve',
-  'visitas.view.own'
+  'visitas.view.own',
+  // Grupos, horarios y feriados (jefe y Sistemas).
+  'access.groups.manage',
+  // Asignar grupos y acceso total a una persona (D3: jefe y Sistemas).
+  'personas.puertas.asignar'
 ];
 
 const TECHNICAL_PERMISSIONS = [
@@ -111,7 +115,9 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.kiosk',
     'access.exceptional_entry',
     'attendance.alerts.read',
-    'visitas.approve'
+    'visitas.approve',
+    'access.groups.manage',
+    'personas.puertas.asignar'
   ],
   'empleado-visitas': [
     'visitas.create',
