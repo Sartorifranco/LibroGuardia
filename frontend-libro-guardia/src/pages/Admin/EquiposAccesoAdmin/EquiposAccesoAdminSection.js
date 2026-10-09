@@ -98,8 +98,7 @@ function EquiposAccesoAdminSection({
               <li>
                 <strong>Puertas</strong>
                 {' — '}
-                Creá cada puerta, indicá si abre en planta o a distancia, con placa SR201 o por URL,
-                y qué métodos acepta (DNI, tarjeta, biométrico).
+                Creá cada puerta e indicá desde dónde se llega y a qué lugar se entra.
               </li>
               <li>
                 <strong>Lectores</strong>

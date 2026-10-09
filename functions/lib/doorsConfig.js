@@ -137,14 +137,29 @@ const normalizeDevice = (device = {}) => {
  * Si vienen readers y readerIds, se prioriza el orden de readerIds y se
  * conservan directions conocidas por id.
  */
+const sideOfReader = (item) => {
+  if (item?.side === 'in' || item?.side === 'out') return item.side;
+  if (item?.direction === 'ingreso') return 'in';
+  if (item?.direction === 'egreso') return 'out';
+  return null;
+};
+
+const directionOfReader = (item) => {
+  if (item?.direction === 'ingreso' || item?.direction === 'egreso') return item.direction;
+  const side = sideOfReader(item);
+  if (item?.direction === 'ambos' && !side) return 'ambos';
+  if (side === 'in') return 'ingreso';
+  if (side === 'out') return 'egreso';
+  return 'ambos';
+};
+
 const normalizeReaders = (door = {}) => {
   const prevById = new Map();
   if (Array.isArray(door.readers)) {
     door.readers.forEach((item) => {
       const id = String(item?.id || '').trim();
       if (!id) return;
-      const direction = READER_DIRECTIONS.includes(item.direction) ? item.direction : 'ambos';
-      prevById.set(id, { id, direction });
+      prevById.set(id, { id, direction: directionOfReader(item), side: sideOfReader(item) });
     });
   }
 
@@ -159,12 +174,14 @@ const normalizeReaders = (door = {}) => {
 
   const readers = ids.map((id) => {
     const prev = prevById.get(id);
-    return {
-      id,
-      direction: prev?.direction && READER_DIRECTIONS.includes(prev.direction)
-        ? prev.direction
-        : 'ambos'
-    };
+    const direction = prev?.direction && READER_DIRECTIONS.includes(prev.direction)
+      ? prev.direction
+      : 'ambos';
+    const reader = { id, direction };
+    if (prev?.side === 'in' || prev?.side === 'out') reader.side = prev.side;
+    else if (direction === 'ingreso') reader.side = 'in';
+    else if (direction === 'egreso') reader.side = 'out';
+    return reader;
   });
 
   return {
@@ -264,6 +281,7 @@ const normalizeDoor = (door = {}, index = 0, { strict = false } = {}) => {
   delete normalized.placeB;
   delete normalized.airlockEnabled;
   delete normalized.airlockPartnerId;
+  delete normalized.readersMode;
 
   normalized.kind = DOOR_KINDS.includes(door.kind) ? door.kind : 'door';
   const sides = normalizeSides(door.sides, { strict });

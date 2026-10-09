@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { EmptyState, PageHeader } from '../../../components/admin-ui';
+import { EmptyState, Modal, PageContainer, PageHeader } from '../../../components/admin-ui';
 import { apiFetch } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { useToast } from '../../../context/ToastContext';
 
 const SUGGESTED = ['Planta', 'Oficinas', 'Tesorería'];
+const PLACE_HELP = 'Un lugar es una zona del predio separada por puertas (Planta, Oficinas, Tesorería). \'Exterior\' es todo lo que queda afuera del predio.';
 
 function LugaresAdminSection() {
   const { authToken } = useAuth();
@@ -15,8 +16,7 @@ function LugaresAdminSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
-  const [draftName, setDraftName] = useState('');
-  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -42,39 +42,38 @@ function LugaresAdminSection() {
     return list.filter((area) => area.name.toLowerCase().includes(q));
   }, [areas, query]);
 
-  const create = async (name) => {
-    const clean = String(name || '').trim();
+  const openCreate = (name = '') => {
+    setForm({ mode: 'create', id: '', name, initial: name });
+  };
+
+  const openEdit = (area) => {
+    setForm({ mode: 'edit', id: area.id, name: area.name, initial: area.name });
+  };
+
+  const save = async () => {
+    if (!form) return;
+    const clean = String(form.name || '').trim();
     if (clean.length < 2) {
       showError('Escribí un nombre de al menos 2 letras. Por ejemplo, Oficinas.');
       return;
     }
     setBusy(true);
     try {
-      await apiFetch('/admin/areas', { method: 'POST', token: authToken, body: { name: clean } });
-      setDraftName('');
-      showSuccess(`Lugar “${clean}” creado.`);
+      if (form.mode === 'edit') {
+        await apiFetch(`/admin/areas/${form.id}`, {
+          method: 'PUT',
+          token: authToken,
+          body: { name: clean }
+        });
+        showSuccess('Lugar actualizado.');
+      } else {
+        await apiFetch('/admin/areas', { method: 'POST', token: authToken, body: { name: clean } });
+        showSuccess(`Lugar “${clean}” creado.`);
+      }
+      setForm(null);
       await load();
     } catch (err) {
-      showError(err.message || 'No se pudo crear el lugar.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const saveEdit = async () => {
-    if (!editing) return;
-    setBusy(true);
-    try {
-      await apiFetch(`/admin/areas/${editing.id}`, {
-        method: 'PUT',
-        token: authToken,
-        body: { name: editing.name }
-      });
-      setEditing(null);
-      showSuccess('Lugar actualizado.');
-      await load();
-    } catch (err) {
-      showError(err.message || 'No se pudo guardar.');
+      showError(err.message || 'No se pudo guardar el lugar.');
     } finally {
       setBusy(false);
     }
@@ -101,17 +100,17 @@ function LugaresAdminSection() {
   };
 
   return (
-    <div>
+    <PageContainer width="medium">
       <PageHeader
         title="Lugares"
-        purpose="Un lugar es una zona del predio. Cada puerta conecta dos lugares."
+        purpose={PLACE_HELP}
         howTo={[
-          'El exterior ya está: es el afuera.',
+          'El exterior ya está: es todo lo que queda afuera del predio.',
           'Agregá las zonas de adentro, como Planta u Oficinas.',
-          'Después, en Puertas, elegís qué lugares conecta cada una.'
+          'Después, en Puertas, elegís desde dónde se llega y a dónde se entra.'
         ]}
         action={custom.length > 0 ? (
-          <button type="button" className="btn btn-primary" onClick={() => create(draftName)} disabled={busy}>
+          <button type="button" className="btn btn-primary" onClick={() => openCreate('')}>
             Crear lugar
           </button>
         ) : null}
@@ -128,23 +127,16 @@ function LugaresAdminSection() {
       {!loading && !error && custom.length === 0 ? (
         <EmptyState
           title="Todavía no cargaste lugares."
-          text="Un lugar es una zona del predio, como Oficinas o Tesorería. El exterior ya está."
+          text={PLACE_HELP}
           actionLabel="Crear el primero"
-          onAction={() => create('Planta')}
+          onAction={() => openCreate('Planta')}
         />
       ) : null}
 
       {!loading && !error ? (
         <>
-          <div className="aui-toolbar">
-            <input
-              className="input-field"
-              value={draftName}
-              onChange={(event) => setDraftName(event.target.value)}
-              placeholder="Nombre del lugar"
-              aria-label="Nombre del lugar"
-            />
-            {query || custom.length > 0 ? (
+          {custom.length > 0 ? (
+            <div className="aui-toolbar">
               <input
                 className="input-field"
                 value={query}
@@ -152,48 +144,64 @@ function LugaresAdminSection() {
                 placeholder="Buscar"
                 aria-label="Buscar lugares"
               />
-            ) : null}
-          </div>
-          {custom.length === 0 ? (
+            </div>
+          ) : (
             <div className="aui-toolbar">
               {SUGGESTED.map((name) => (
-                <button key={name} type="button" className="btn btn-secondary" disabled={busy} onClick={() => create(name)}>
+                <button key={name} type="button" className="btn btn-secondary" disabled={busy} onClick={() => openCreate(name)}>
                   {name}
                 </button>
               ))}
             </div>
-          ) : null}
-          <article className="aui-card" style={{ marginBottom: '0.75rem' }}>
-            <h4 className="aui-card__title">Exterior</h4>
-            <p className="aui-card__meta">Siempre está. Es el afuera del predio y no se borra.</p>
-          </article>
-          <div className="aui-cards">
+          )}
+          <div className="aui-card-grid">
+            <article className="aui-card">
+              <h4 className="aui-card__title">Exterior</h4>
+              <p className="aui-card__meta">Siempre está. Es todo lo que queda afuera del predio y no se borra.</p>
+            </article>
             {filtered.map((area) => (
               <article key={area.id} className="aui-card">
-                {editing?.id === area.id ? (
-                  <>
-                    <input
-                      className="input-field"
-                      value={editing.name}
-                      onChange={(event) => setEditing({ ...editing, name: event.target.value })}
-                      aria-label="Nuevo nombre"
-                    />
-                    <button type="button" className="btn btn-secondary" disabled={busy} onClick={saveEdit}>Guardar nombre</button>
-                    <button type="button" className="btn btn-secondary" onClick={() => setEditing(null)}>Cancelar</button>
-                  </>
-                ) : (
-                  <>
-                    <h4 className="aui-card__title">{area.name}</h4>
-                    <button type="button" className="btn btn-secondary" onClick={() => setEditing({ id: area.id, name: area.name })}>Renombrar</button>
-                    <button type="button" className="btn btn-danger-small" disabled={busy} onClick={() => remove(area)}>Borrar</button>
-                  </>
-                )}
+                <h4 className="aui-card__title">{area.name}</h4>
+                <button type="button" className="btn btn-secondary" onClick={() => openEdit(area)}>Cambiar nombre</button>
+                <button type="button" className="btn btn-danger-small" disabled={busy} onClick={() => remove(area)}>Borrar</button>
               </article>
             ))}
           </div>
         </>
       ) : null}
-    </div>
+
+      <Modal
+        open={Boolean(form)}
+        size="sm"
+        title={form?.mode === 'edit' ? 'Cambiar nombre del lugar' : 'Nuevo lugar'}
+        description={PLACE_HELP}
+        dirty={Boolean(form) && form.name !== form.initial}
+        onClose={() => setForm(null)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" data-aui-cancel="true" onClick={() => setForm(null)}>
+              Cancelar
+            </button>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={save}>
+              {form?.mode === 'edit' ? 'Guardar' : 'Crear lugar'}
+            </button>
+          </>
+        )}
+      >
+        {form ? (
+          <label className="aui-field">
+            <span className="aui-field__label">Nombre del lugar</span>
+            <input
+              className="input-field"
+              value={form.name}
+              onChange={(event) => setForm({ ...form, name: event.target.value })}
+              placeholder="Oficinas"
+              aria-label="Nombre del lugar"
+            />
+          </label>
+        ) : null}
+      </Modal>
+    </PageContainer>
   );
 }
 
