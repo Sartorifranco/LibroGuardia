@@ -208,6 +208,12 @@
   line-height: 1.35;
 }
 
+.aui-card__meta a {
+  color: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+}
+
 .aui-status {
   display: inline-flex;
   align-items: center;

@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Save, Trash2 } from 'lucide-react';
 import PendingButton from './PendingButton';
 import DoorPeoplePanel from './DoorPeoplePanel';
 import { AdvancedSection, EmptyState, HelpTip, Modal, PageContainer, PageHeader } from './admin-ui';
 import { apiFetch } from '../services/api';
 import { useConfirm } from '../context/ConfirmContext';
+import { adminPath } from '../utils/navigation';
 import {
   offlineNeedsLocalRelayMessage,
   OFFLINE_NEEDS_LOCAL_RELAY_TITLE
@@ -16,6 +18,7 @@ import {
   kindLabel,
   placesFromDoor,
   readersForDraft,
+  placesNeedChoice,
   readersModeOf,
   sidesFromPlaces,
   swapPlaces,
@@ -23,6 +26,8 @@ import {
 } from '../pages/Admin/DoorsAdmin/doorForm';
 
 const SIDES_HELP = 'Esto le dice al sistema si la persona ENTRÓ o SALIÓ, y quién está dentro de cada lugar (sirve para saber quién está en la planta en una evacuación).';
+const NEW_PLACE = '__crear_lugar__';
+const PLACE_HELP = 'Un lugar es una zona del predio separada por puertas.';
 
 const createLocalId = (prefix = 'item') =>
   (typeof crypto !== 'undefined' && crypto.randomUUID
@@ -152,6 +157,8 @@ function Field({ label, help, error, children }) {
 
 function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onError, onGlobalAccessSaved }) {
   const { alert, confirm } = useConfirm();
+  const navigate = useNavigate();
+  const placeSelectRef = useRef(null);
   const [doors, setDoors] = useState([]);
   const [areas, setAreas] = useState([{ id: 'exterior', name: 'Exterior', fixed: true }]);
   const [airlockGroups, setAirlockGroups] = useState([]);
@@ -163,6 +170,11 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
   const [query, setQuery] = useState('');
   const [physicalById, setPhysicalById] = useState({});
   const [deviceNames, setDeviceNames] = useState({});
+  const [placeModal, setPlaceModal] = useState(null);
+  const [newPlaceName, setNewPlaceName] = useState('');
+  const [placeError, setPlaceError] = useState('');
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
 
   const loadConfig = useCallback(async () => {
     const data = await apiFetch('/admin/doors-config', { token: authToken, allowForbidden: true });
@@ -242,6 +254,8 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     setDraft(null);
     setDirty(false);
     setFieldErrors({});
+    setPlaceModal(null);
+    setLeaveOpen(false);
   };
 
   const persistDoors = async (nextDoors, nextDefaultId = defaultDoorId, nextGlobal = globalAccess, nextGroups = airlockGroups) => {
@@ -437,6 +451,101 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     patchDraft({ readersMode, readers: next, readerIds: next.map((reader) => reader.id) });
   };
 
+  const focusPlaceSelect = () => {
+    const node = placeSelectRef.current;
+    setTimeout(() => node?.focus(), 0);
+  };
+
+  const onPlaceSelect = (side) => (event) => {
+    const value = event.target.value;
+    if (value === NEW_PLACE) {
+      placeSelectRef.current = event.target;
+      setNewPlaceName('');
+      setPlaceError('');
+      setPlaceModal({ side, previous: draft?.[side] || '' });
+      return;
+    }
+    patchDraft({ [side]: value });
+  };
+
+  const cancelPlace = () => {
+    const modal = placeModal;
+    if (modal) {
+      setDraft((prev) => (prev ? { ...prev, [modal.side]: modal.previous } : prev));
+    }
+    setPlaceModal(null);
+    setNewPlaceName('');
+    setPlaceError('');
+    focusPlaceSelect();
+  };
+
+  const createPlace = async () => {
+    const clean = String(newPlaceName || '').trim().replace(/\s+/g, ' ');
+    if (clean.length < 2) {
+      setPlaceError('Escribí un nombre de al menos 2 letras. Por ejemplo, Oficinas.');
+      return;
+    }
+    if (clean.length > 60) {
+      setPlaceError('El nombre es muy largo. Usá hasta 60 letras.');
+      return;
+    }
+    const id = slugify(clean);
+    if (!id) {
+      setPlaceError('Usá letras o números en el nombre del lugar.');
+      return;
+    }
+    if (areas.some((area) => area.id === id || slugify(area.name) === id)) {
+      setPlaceError('Ya existe un lugar con ese nombre.');
+      return;
+    }
+    const side = placeModal?.side;
+    setPlaceBusy(true);
+    setPlaceError('');
+    try {
+      const data = await apiFetch('/admin/areas', {
+        method: 'POST',
+        token: authToken,
+        body: { name: clean }
+      });
+      const created = data.area;
+      if (!created?.id) throw new Error('No se pudo crear el lugar.');
+      let list = null;
+      try {
+        const fresh = await apiFetch('/admin/areas', { token: authToken, allowForbidden: true });
+        if (Array.isArray(fresh.areas) && fresh.areas.length) list = fresh.areas;
+      } catch {
+        // Queda el lugar recién creado aunque no se pueda releer la lista.
+      }
+      setAreas((current) => {
+        const base = list || current;
+        return base.some((area) => area.id === created.id) ? base : [...base, created];
+      });
+      if (side) patchDraft({ [side]: created.id });
+      setPlaceModal(null);
+      setNewPlaceName('');
+      setPlaceError('');
+      focusPlaceSelect();
+      onSuccess?.(`Lugar “${created.name || clean}” creado.`);
+    } catch (err) {
+      setPlaceError(err.message || 'No se pudo crear el lugar.');
+    } finally {
+      setPlaceBusy(false);
+    }
+  };
+
+  const onLugaresClick = (event) => {
+    if (!dirty) return;
+    event.preventDefault();
+    setLeaveOpen(true);
+  };
+
+  const placeOptions = (prefix) => (
+    <>
+      {areas.map((area) => <option key={`${prefix}-${area.id}`} value={area.id}>{area.name}</option>)}
+      <option value={NEW_PLACE}>+ Crear un lugar nuevo…</option>
+    </>
+  );
+
   return (
     <PageContainer width="medium">
       <div className="doors-admin-simple">
@@ -494,6 +603,9 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                           <strong>{door.placeB ? placeName(areas, door.placeB) : '—'}</strong>
                         </div>
                       </div>
+                      {placesNeedChoice(door.placeA, door.placeB) ? (
+                        <p className="aui-status is-warn" role="status">Falta indicar qué lugares conecta</p>
+                      ) : null}
                       <p className="aui-card__meta">La maneja: {managedBy(door)}</p>
                       <p>
                         <span className={`aui-status${door.airlockEnabled ? ' is-warn' : ' is-ok'}`}>{status}</span>
@@ -564,24 +676,28 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                 <strong>{draft.placeB ? placeName(areas, draft.placeB) : 'Elegí el lugar'}</strong>
               </div>
             </div>
+            <p className="aui-card__meta">
+              ¿No está el lugar que buscás? Elegí «+ Crear un lugar nuevo…» en la lista, o administrá todos en{' '}
+              <Link to={adminPath('lugares')} onClick={onLugaresClick}>Puertas y equipos → Lugares</Link>.
+            </p>
             <Field label="¿Desde dónde se llega a esta puerta?" error={fieldErrors.placeA}>
               <select
                 className="input-field aui-select-lg"
                 value={draft.placeA || ''}
-                onChange={(event) => patchDraft({ placeA: event.target.value })}
+                onChange={onPlaceSelect('placeA')}
               >
                 <option value="">Elegir lugar de afuera</option>
-                {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
+                {placeOptions('a')}
               </select>
             </Field>
             <Field label="¿A qué lugar se entra al pasarla?" error={fieldErrors.placeB}>
               <select
                 className="input-field aui-select-lg"
                 value={draft.placeB || ''}
-                onChange={(event) => patchDraft({ placeB: event.target.value })}
+                onChange={onPlaceSelect('placeB')}
               >
                 <option value="">Elegir lugar de adentro</option>
-                {areas.map((area) => <option key={`b-${area.id}`} value={area.id}>{area.name}</option>)}
+                {placeOptions('b')}
               </select>
             </Field>
             <button
@@ -780,6 +896,60 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
             </AdvancedSection>
           </>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(placeModal)}
+        size="sm"
+        title="Crear un lugar nuevo"
+        description={PLACE_HELP}
+        onClose={cancelPlace}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" data-aui-cancel="true" onClick={cancelPlace}>
+              Cancelar
+            </button>
+            <button type="button" className="btn btn-primary" disabled={placeBusy} onClick={createPlace}>
+              Crear
+            </button>
+          </>
+        )}
+      >
+        <Field label="Nombre del lugar" error={placeError}>
+          <input
+            className="input-field"
+            value={newPlaceName}
+            onChange={(event) => { setNewPlaceName(event.target.value); setPlaceError(''); }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                createPlace();
+              }
+            }}
+            placeholder="Tesorería, Playa de camiones, Oficinas"
+            aria-label="Nombre del lugar"
+          />
+        </Field>
+      </Modal>
+
+      <Modal
+        open={leaveOpen}
+        size="sm"
+        title="Cambios sin guardar"
+        description="Si salís ahora, se pierde lo que cargaste en esta puerta."
+        onClose={() => setLeaveOpen(false)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" data-aui-cancel="true">
+              Seguir acá
+            </button>
+            <button type="button" className="btn btn-primary" onClick={() => navigate(adminPath('lugares'))}>
+              Salir sin guardar
+            </button>
+          </>
+        )}
+      >
+        <p>¿Querés ir a Lugares igual?</p>
       </Modal>
     </PageContainer>
   );

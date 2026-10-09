@@ -19,6 +19,15 @@ const FOCUSABLE = [
 ].join(', ');
 
 const NARROW_QUERY = '(max-width: 639px)';
+const modalStack = [];
+
+/** El diálogo de arriba es el último [aria-modal] del documento (los anidados van en portales). */
+function ownsTopLayer(dialog) {
+  if (!dialog || !dialog.isConnected) return false;
+  const layers = document.querySelectorAll('[aria-modal="true"]');
+  const top = layers[layers.length - 1];
+  return Boolean(top) && (top === dialog || dialog.contains(top));
+}
 
 function focusableIn(root) {
   if (!root) return [];
@@ -80,6 +89,9 @@ export function Modal({
   const titleId = useId();
   const descId = useId();
   const dialogRef = useRef(null);
+  const backdropRef = useRef(null);
+  const layerIdRef = useRef(null);
+  if (layerIdRef.current == null) layerIdRef.current = Symbol('aui-modal');
   const onCloseRef = useRef(onClose);
   const dirtyRef = useRef(dirty);
   const [askDiscard, setAskDiscard] = useState(false);
@@ -94,6 +106,35 @@ export function Modal({
 
   useEffect(() => {
     if (!open) return undefined;
+    const id = layerIdRef.current;
+    modalStack.push(id);
+    const layer = modalStack.length;
+    if (backdropRef.current) {
+      backdropRef.current.style.zIndex = String(1200 + Math.max(0, layer - 1));
+    }
+    return () => {
+      const index = modalStack.lastIndexOf(id);
+      if (index >= 0) modalStack.splice(index, 1);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const previousFocus = document.activeElement;
+    return () => {
+      if (
+        previousFocus
+        && previousFocus !== document.body
+        && typeof previousFocus.focus === 'function'
+        && previousFocus.isConnected
+      ) {
+        previousFocus.focus();
+      }
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const root = dialogRef.current;
@@ -101,6 +142,7 @@ export function Modal({
     target?.focus();
 
     const onKey = (event) => {
+      if (!ownsTopLayer(dialogRef.current)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
@@ -157,7 +199,12 @@ export function Modal({
 
   const maxWidth = WIDTH[size] || WIDTH.md;
   const dialog = (
-    <div className={`aui-modal-backdrop${narrow ? ' is-full' : ''}`} role="presentation">
+    <div
+      ref={backdropRef}
+      className={`aui-modal-backdrop${narrow ? ' is-full' : ''}`}
+      role="presentation"
+      style={{ zIndex: 1200 }}
+    >
       <div
         ref={dialogRef}
         className={`aui-modal aui-modal--${size}${narrow ? ' aui-modal--full' : ''}`}
