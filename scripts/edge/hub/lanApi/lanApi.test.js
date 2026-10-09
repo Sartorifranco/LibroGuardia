@@ -267,6 +267,50 @@ describe('API LAN del hub para la app de guardia', { skip: k.SKIP }, () => {
     assert.equal(res.data.page.limit, 200);
   });
 
+  it('lastPulse ignora denegados y pasos sin pulso, y refleja relayConfirmed', async () => {
+    const now = Date.now();
+    const journal = built.hub.edge.journal;
+    const pulseOf = async (id) => {
+      const doors = await api(built.url, '/api/guard/doors', { token });
+      return doors.data.doors.find((d) => d.id === id).lastPulse;
+    };
+    journal.append({
+      type: 'access', decision: 'deny', reason: 'credencial_desconocida', doorId: 'p2', ts: now,
+      payload: { relayOk: false, relayConfirmed: false }
+    });
+    assert.equal(await pulseOf('p2'), null);
+
+    journal.append({
+      type: 'access', decision: 'grant', reason: 'nivel_acceso', doorId: 'p2', ts: now + 1000,
+      payload: { relayOk: true, relayConfirmed: true, pulseAttempted: true }
+    });
+    let pulse = await pulseOf('p2');
+    assert.equal(pulse.relayConfirmed, true);
+    assert.equal(pulse.relayStatus, 'confirmado');
+    assert.equal(pulse.at, new Date(now + 1000).toISOString());
+
+    journal.append({
+      type: 'access', decision: 'deny', reason: 'puerta_no_autorizada', doorId: 'p2', ts: now + 2000,
+      payload: { relayOk: false, relayConfirmed: false }
+    });
+    journal.append({
+      type: 'access', decision: 'grant', reason: 'paso_registrado_puerta_abierta', doorId: 'p2', ts: now + 3000,
+      payload: { relayOk: true, relayConfirmed: true, extended: true }
+    });
+    pulse = await pulseOf('p2');
+    assert.equal(pulse.at, new Date(now + 1000).toISOString());
+    assert.equal(pulse.relayConfirmed, true);
+
+    journal.append({
+      type: 'manual_open', decision: 'grant', reason: 'apertura_manual', doorId: 'p2', ts: now + 4000,
+      payload: { relayOk: true, relayConfirmed: false, pulseAttempted: true }
+    });
+    pulse = await pulseOf('p2');
+    assert.equal(pulse.relayConfirmed, false);
+    assert.equal(pulse.relayStatus, 'sin_confirmacion');
+    assert.equal(pulse.at, new Date(now + 4000).toISOString());
+  });
+
   it('live-alerts lista la alarma abierta y el ack exige nota', async () => {
     const now = Date.now();
     built.hub.edge.db.run(

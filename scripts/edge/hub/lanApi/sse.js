@@ -5,6 +5,8 @@
  * Keep-alive `: ping` cada 20 s. Los eventos salen del bus del hub (ingesta, config, nube, ack).
  */
 
+const { maskIdNumber } = require('./entries');
+
 const PING_MS = 20 * 1000;
 
 function safeWrite(res, chunk) {
@@ -59,18 +61,21 @@ function publishIngested(hub, res, events) {
     try {
       if (ev.type === 'door_state') {
         const payload = ev.payload || {};
+        const sinceRaw = Number(payload.since);
         sendEvent(res, 'door', {
           doorId: ev.doorId || null,
           state: payload.state || ev.state || null,
           dps: payload.dps ?? null,
           bond: payload.bond ?? null,
-          since: ev.ts ?? null
+          since: Number.isFinite(sinceRaw) ? sinceRaw : (ev.ts ?? null)
         });
       } else if (ev.type === 'access' || ev.type === 'passage') {
         const payload = ev.payload || {};
+        const idNumber = maskIdNumber(payload.idNumberMasked || payload.idNumber || '');
         sendEvent(res, 'access', {
           id: ev.id,
           name: personName(hub, ev),
+          idNumber,
           doorId: ev.doorId || null,
           doorName: doorName(hub, ev.doorId, payload),
           side: ev.side || null,

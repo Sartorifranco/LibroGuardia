@@ -1,6 +1,6 @@
 import React from 'react';
 import { useEntries } from '../context/EntriesContext';
-import { movementVerb } from '../utils/accessEventText';
+import { movementVerb, passageDisplayName } from '../utils/accessEventText';
 import EntryNotes from './EntryNotes';
 
 function formatHour(entry) {
@@ -22,7 +22,7 @@ function DayPassages() {
       {!entriesLoading && !list.length ? <p>Todavía no hay pasos hoy.</p> : null}
       <div className="day-passages__list">
         {list.map((entry, index) => {
-          const name = entry.name || entry.nameSnapshot || 'Persona';
+          const name = passageDisplayName(entry);
           const key = entry.id || entry.eventId || `${entry.timestamp}-${name}-${index}`;
           return (
             <article key={key} className="day-passage">

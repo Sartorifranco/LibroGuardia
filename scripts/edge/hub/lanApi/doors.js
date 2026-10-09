@@ -82,6 +82,26 @@ function authMethodsOf(door) {
   return ['dni'];
 }
 
+/**
+ * Solo intentos reales de pulso: grant de access/passage que accionó el relé,
+ * y aperturas manuales o remotas concedidas. Un deny, o un paso con la puerta
+ * ya destrabada (`extended` / `alreadyOpen` / paso_registrado_puerta_abierta), no cuenta.
+ */
+const PULSE_SQL = `
+  door_id IS NOT NULL
+  AND decision = 'grant'
+  AND type IN ('manual_open','remote_open','access','passage')
+  AND ifnull(reason, '') != 'paso_registrado_puerta_abierta'
+  AND ifnull(json_extract(payload_json, '$.extended'), 0) != 1
+  AND ifnull(json_extract(payload_json, '$.alreadyOpen'), 0) != 1
+  AND (
+    type IN ('manual_open','remote_open')
+    OR json_extract(payload_json, '$.pulseAttempted') = 1
+    OR json_extract(payload_json, '$.relayOk') = 1
+    OR json_extract(payload_json, '$.relayError') IS NOT NULL
+  )
+`;
+
 function latestPulses(db) {
   const map = new Map();
   const rows = db.all(
@@ -89,7 +109,7 @@ function latestPulses(db) {
        SELECT door_id, ts, type, decision, payload_json,
               ROW_NUMBER() OVER (PARTITION BY door_id ORDER BY ts DESC, id DESC) AS rn
        FROM events
-       WHERE door_id IS NOT NULL AND type IN ('manual_open','remote_open','access','passage')
+       WHERE ${PULSE_SQL}
      ) WHERE rn = 1`
   );
   for (const row of rows) map.set(row.door_id, row);

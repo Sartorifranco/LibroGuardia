@@ -112,6 +112,32 @@ export function normalizeAccessEntry(entry = {}) {
   };
 }
 
+/** Últimos 3 dígitos visibles: 30123456 → *****456. Si ya viene enmascarado, se deja. */
+export function maskIdNumber(raw) {
+  if (raw == null || raw === '') return '';
+  const text = String(raw).trim();
+  if (!text) return '';
+  if (text.includes('*')) return text.slice(0, 20);
+  const digits = text.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 3) return '*'.repeat(digits.length);
+  return `${'*'.repeat(digits.length - 3)}${digits.slice(-3)}`;
+}
+
+/**
+ * Nombre del feed. Credencial desconocida sin nombre: "DNI no registrado *****456".
+ * El resto de los vacíos sigue como Persona.
+ */
+export function passageDisplayName(entry = {}) {
+  const name = String(entry.name || entry.nameSnapshot || '').trim();
+  if (name) return name;
+  const reason = String(entry.accessReason || entry.denialReason || entry.reason || '').trim();
+  if (reason !== 'credencial_desconocida') return 'Persona';
+  const masked = maskIdNumber(entry.idNumber || entry.dniSnapshot || entry.idNumberMasked || '');
+  if (masked && /\d/.test(masked)) return `DNI no registrado ${masked}`;
+  return 'DNI no registrado';
+}
+
 export function movementVerb(entry = {}) {
   const raw = entryMovement(entry);
   if (raw.includes('egreso') || raw.includes('salida')) return 'Egreso';

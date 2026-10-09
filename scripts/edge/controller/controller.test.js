@@ -38,6 +38,39 @@ describe('controlador: decisión local → pulso → journal', { skip: SKIP }, (
     assert.equal((await t.scan('p1', 'carlos')).reason, 'persona_inactiva');
     assert.deepEqual(pulses(t.outputs.p1), []);
     assert.deepEqual(t.events('access').map((e) => e.decision), ['deny', 'deny']);
+    const unknown = t.events('access')[0];
+    assert.equal(unknown.payload.idNumberMasked, '*****777');
+    assert.ok(!JSON.stringify(unknown).includes('99888777'));
+  });
+
+  it('journalea door_state: DESBLOQUEADA y, tras el pulso, SEGURA', async () => {
+    t = await createTestController();
+    await t.scan('p1', 'ana');
+    assert.equal(t.events('door_state').length, 0, 'la transición espera la ventana de 200 ms');
+    t.clock.advance(200);
+    const unlocked = t.events('door_state');
+    assert.equal(unlocked.length, 1);
+    assert.equal(unlocked[0].doorId, 'p1');
+    assert.equal(unlocked[0].payload.state, 'DESBLOQUEADA');
+    assert.equal(unlocked[0].payload.dps, 'closed');
+    assert.equal(unlocked[0].payload.bond, 'engaged');
+    assert.equal(typeof unlocked[0].payload.since, 'number');
+    t.clock.advance(2800);
+    assert.equal(t.controller.doors.get('p1').runner.state.state, 'SEGURA');
+    assert.equal(t.events('door_state').length, 1);
+    t.clock.advance(200);
+    assert.deepEqual(t.events('door_state').map((e) => e.payload.state), ['DESBLOQUEADA', 'SEGURA']);
+  });
+
+  it('coalesce: destrabar y abrir la hoja en menos de 200 ms deja un solo door_state', async () => {
+    t = await createTestController();
+    await t.scan('p1', 'ana');
+    t.controller.simInput('p1', 'dps', 'open');
+    t.clock.advance(200);
+    const evs = t.events('door_state');
+    assert.equal(evs.length, 1);
+    assert.equal(evs[0].payload.state, 'ABIERTA_AUT');
+    assert.equal(evs[0].payload.dps, 'open');
   });
 
   it('egreso: credencial conocida y activa sin derechos sale; inactiva no', async () => {
@@ -153,6 +186,26 @@ describe('controlador: anti-colado (puerta abierta)', { skip: SKIP }, () => {
     const denied = t.events('access').filter((e) => e.decision === 'deny');
     assert.equal(denied.length, 1);
     assert.ok(denied[0].payload.warnings.includes('intento_con_puerta_abierta'));
+  });
+});
+
+describe('controlador: aviso con puerta destrabada', { skip: SKIP }, () => {
+  let t;
+  afterEach(async () => { if (t) await t.cleanup(); t = null; });
+
+  it('quien no está autorizado, con la hoja todavía cerrada, lleva intento_con_puerta_abierta', async () => {
+    t = await createTestController();
+    assert.equal((await t.scan('p1', 'ana')).reason, 'nivel_acceso');
+    assert.equal(t.controller.doors.get('p1').runner.state.state, 'DESBLOQUEADA');
+    const stranger = await t.scan('p1', '99888777');
+    assert.equal(stranger.decision, 'deny');
+    assert.equal(stranger.reason, 'credencial_desconocida');
+    const denied = t.events('access').find((e) => e.reason === 'credencial_desconocida');
+    assert.ok(denied.payload.warnings.includes('intento_con_puerta_abierta'));
+    const known = await t.scan('p1', 'beto');
+    assert.equal(known.decision, 'deny');
+    assert.equal(known.reason, 'puerta_no_autorizada');
+    assert.ok(t.events('access').find((e) => e.reason === 'puerta_no_autorizada').payload.warnings.includes('intento_con_puerta_abierta'));
   });
 });
 

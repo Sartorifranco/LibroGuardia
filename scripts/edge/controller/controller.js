@@ -19,8 +19,9 @@ const { FORCE_PERMISSION } = require('../../../functions/lib/accessEngine/interl
 const { openEdgeDb } = require('../lib/db');
 const lanSign = require('../lib/lanSign');
 const drivers = require('../drivers');
-const { nullLogger } = require('../drivers/logger');
+const { nullLogger, maskIdNumber } = require('../drivers/logger');
 const { DoorRunner, doorParams } = require('./doorStateMachine');
+const { DoorStateReporter } = require('./doorStateReport');
 const { ConfigSync } = require('./configSync');
 const { EventPusher } = require('./eventPusher');
 const { HubClient, EdgeClock } = require('./hubClient');
@@ -90,6 +91,10 @@ class Controller {
       heartbeatMs: config.hub.heartbeatMs,
       extra: () => ({ configVersionApplied: this.edge.chunks.configVersion(), configVersion: this.edge.chunks.configVersion(), status: this.shortStatus() })
     });
+    this.doorStatesReport = new DoorStateReporter({
+      clock: this.clock,
+      record: (evt) => this.record(evt)
+    });
     this.degraded = new DegradedCloudFallback({ controller: this, logger });
     this.buildDoors();
   }
@@ -155,6 +160,7 @@ class Controller {
   async stop() {
     this.started = false;
     if (this.pollTimer) clearInterval(this.pollTimer);
+    this.doorStatesReport.stop();
     this.pusher.stop();
     this.degraded.stop();
     for (const d of this.doors.values()) {
@@ -219,6 +225,7 @@ class Controller {
     } catch (err) {
       this.logger.warn('No se pudo guardar door_state', { error: err.message });
     }
+    this.doorStatesReport.note(st);
   }
 
   onDoorEffect(doorId, e) {
@@ -269,12 +276,13 @@ class Controller {
 
   /**
    * Ejecuta las acciones de un grant: pulso → efectos de estanco solo si el comando salió → máquina de estados.
-   * @returns {{relayOk:boolean, relayConfirmed:boolean, relayError?:string}}
+   * @returns {{relayOk:boolean, relayConfirmed:boolean, pulseAttempted:boolean, relayError?:string}}
    */
   async executeGrant(decision, { source }) {
     let relayOk = true;
     let relayConfirmed = true;
     let relayError = null;
+    let pulseAttempted = false;
     const actions = decision.actions || [];
     for (const a of actions) {
       if (a.type !== 'unlock') continue;
@@ -285,6 +293,7 @@ class Controller {
         relayError = `Puerta ${a.doorId} no pertenece a este controlador`;
         continue;
       }
+      pulseAttempted = true;
       // `output.pulseSeconds` local (si está) manda sobre unlockSec del snapshot: es un dato del hardware.
       const ms = Number(d.cfg.output.pulseSeconds) > 0 ? Math.round(Number(d.cfg.output.pulseSeconds) * 1000) : a.ms;
       let r;
@@ -305,7 +314,7 @@ class Controller {
     }
     // Estanco: el efecto se aplica solo si el pulso realmente salió (confirmado o no).
     if (relayOk) this.applyInterlockEffect(decision);
-    return { relayOk, relayConfirmed, ...(relayError ? { relayError } : {}) };
+    return { relayOk, relayConfirmed, pulseAttempted, ...(relayError ? { relayError } : {}) };
   }
 
   /** Efecto de estanco del motor, si el paso quedó registrado. */
@@ -373,9 +382,9 @@ class Controller {
         if (st === 'DESBLOQUEADA') {
           const ms = (decision.actions && decision.actions[0] && decision.actions[0].ms) || d.runner.params.unlockMs;
           d.runner.dispatch({ type: 'unlock', ms, source: 'grant' });
-          relay = { relayOk: true, relayConfirmed: true, extended: true };
+          relay = { relayOk: true, relayConfirmed: true, extended: true, pulseAttempted: false };
         } else {
-          relay = { relayOk: true, relayConfirmed: true, alreadyOpen: true };
+          relay = { relayOk: true, relayConfirmed: true, alreadyOpen: true, pulseAttempted: false };
         }
         this.applyInterlockEffect(decision);
       } else {
@@ -385,6 +394,7 @@ class Controller {
       approvalId = this.addApproval({ cred, decision, side: decision.side || side, at });
     }
 
+    const idNumberMasked = maskIdNumber(cred.type === 'dni' ? cred.value : '');
     const evt = this.record({
       doorId: cred.doorId,
       side: decision.side || side,
@@ -405,7 +415,11 @@ class Controller {
         stateEffects: decision.stateEffects && Object.keys(decision.stateEffects).length ? decision.stateEffects : null,
         relayOk: relay.relayOk,
         relayConfirmed: relay.relayConfirmed,
+        ...(relay.pulseAttempted ? { pulseAttempted: true } : {}),
+        ...(relay.extended ? { extended: true } : {}),
+        ...(relay.alreadyOpen ? { alreadyOpen: true } : {}),
         ...(relay.relayError ? { relayError: relay.relayError } : {}),
+        ...(idNumberMasked ? { idNumberMasked } : {}),
         ...(approvalId ? { approvalId } : {}),
         configVersion: this.edge.chunks.configVersion(),
         latencyMs: Date.now() - t0

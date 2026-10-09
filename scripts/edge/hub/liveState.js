@@ -206,15 +206,19 @@ class LiveState {
   }
 
   updateDoorState(e) {
-    const state = (e.payload && e.payload.state) || e.state;
+    const payload = e.payload || {};
+    const state = payload.state || e.state;
     if (!state || !e.doorId) return;
-    const ts = Number(e.ts) || this.now();
+    const sinceRaw = Number(payload.since);
+    const ts = Number.isFinite(sinceRaw) ? sinceRaw : (Number(e.ts) || this.now());
     const cur = this.db.get('SELECT since FROM door_state WHERE door_id = ?', e.doorId);
     if (cur && Number(cur.since) > ts) return; // evento viejo fuera de orden
+    const dps = payload.dps !== undefined ? payload.dps : null;
+    const bond = payload.bond !== undefined ? payload.bond : null;
     this.db.run(
       `INSERT INTO door_state(door_id, state, since, dps, bond) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(door_id) DO UPDATE SET state = excluded.state, since = excluded.since, dps = excluded.dps, bond = excluded.bond`,
-      e.doorId, String(state), ts, e.payload?.dps ?? null, e.payload?.bond ?? null
+      e.doorId, String(state), ts, dps, bond
     );
     if (state === 'SEGURA') {
       for (const type of RESTORED_BY_SECURE) {

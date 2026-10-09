@@ -68,8 +68,8 @@ const pickFailure = (reasons) => reasons.slice().sort((a, b) => rankOf(a) - rank
 const CLOSED_PASS = new Set(['cancelada', 'revocada']);
 /** Puerta ya liberada: un escaneo autorizado registra el paso (no es un error). */
 const PASSAGE_STATES = new Set(['DESBLOQUEADA', 'ABIERTA_AUT', 'RETENIDA']);
-/** Hoja abierta: un intento de quien no está autorizado lleva aviso. */
-const LEAF_OPEN_STATES = new Set(['ABIERTA_AUT', 'RETENIDA', 'FORZADA']);
+/** Destrabada o con la hoja abierta: un intento de quien no está autorizado lleva aviso. */
+const LEAF_OPEN_STATES = new Set(['DESBLOQUEADA', 'ABIERTA_AUT', 'RETENIDA', 'FORZADA']);
 
 /** ms epoch | ISO | {_seconds} → ms o null (las filas del edge ya vienen en ms; los pases pueden traer ISO). */
 const toMs = (v) => {
