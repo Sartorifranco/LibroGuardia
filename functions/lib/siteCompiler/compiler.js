@@ -4,7 +4,7 @@
  * Compilador por sitio (docs/ETAPA2-DISENO.md §3, tarea T2).
  *
  * Firestore:
- *   sites/{s}/compiled/head          {siteId, version, day, tz, chunks:{name:{v,hash}}, keyId,
+ *   sites/{s}/compiled/head          {siteId, version, day, tz, compilerVersion, chunks:{name:{v,hash}}, keyId,
  *                                     credentialKeyId, compiledAt, sig, mode}
  *   sites/{s}/compiled/_dirty        {people[], auths[], visitas[], doors, operators, full, at, rev}
  *   sites/{s}/compiledChunks/{name}  {name, v, hash, json}   (json = JSON canónico del body)
@@ -17,7 +17,9 @@
  * único batch con precondición (lastUpdateTime) sobre head y _dirty: si entra
  * otra mutación mientras se compila, el batch falla y se reintenta (no se pierde
  * ningún cambio). Cambio de día → compilado completo (ventana de grants D-1..D+7
- * y red de seguridad para mutaciones sin hook).
+ * y red de seguridad para mutaciones sin hook). Si `compilerVersion` del head
+ * guardado no coincide con COMPILER_VERSION (formato o default de política),
+ * getHead / compilado perezoso hace un compilado completo.
  */
 
 const crypto = require('node:crypto');
@@ -34,6 +36,15 @@ const HEAD_CHECK_MS = 15000;
 const AUTO_COMPILE_DEBOUNCE_MS = 5000;
 const RANGE_TYPES = ['visita', 'visit', 'temporal'];
 const DIRTY_LISTS = ['people', 'auths', 'visitas'];
+
+/**
+ * Subir cuando cambie el formato de un chunk o un default de política
+ * (p. ej. apbMode o repeatWindowSec). Un head guardado con otro número
+ * dispara compilado completo aunque nadie haya marcado _dirty.
+ */
+const COMPILER_VERSION = 1;
+
+const headCompilerMismatch = (head) => !head || (Number(head.compilerVersion) || 0) !== COMPILER_VERSION;
 
 const defaultSiteId = () => String(process.env.SITE_ID || DEFAULT_SITE_ID);
 
@@ -435,7 +446,8 @@ const createSiteCompiler = (opts = {}) => {
 
     const sk = signingKey();
     const nothingChanged = !changed.length && !removed.length && head && head.version
-      && head.day === plan.day && head.keyId === sk.keyId && (head.credentialKeyId || null) === credentialKeyId(key);
+      && head.day === plan.day && head.keyId === sk.keyId && (head.credentialKeyId || null) === credentialKeyId(key)
+      && !headCompilerMismatch(head);
     const batch = db.batch();
     const dirtyPrecondition = dirtySnap && dirtySnap.exists ? { lastUpdateTime: dirtySnap.updateTime } : null;
 
@@ -455,6 +467,7 @@ const createSiteCompiler = (opts = {}) => {
       version,
       day: plan.day,
       tz: plan.tz,
+      compilerVersion: COMPILER_VERSION,
       chunks,
       credentialKeyId: credentialKeyId(key),
       compiledAt: now()
@@ -471,6 +484,7 @@ const createSiteCompiler = (opts = {}) => {
 
   const needsFull = (head, dirty, today, key) => {
     if (!head || !head.version || !head.chunks || !head.chunks.doors) return 'sin_head';
+    if (headCompilerMismatch(head)) return 'version_compilador';
     if (head.day !== today) return 'cambio_de_dia';
     if (dirty && dirty.full) return 'marcado_completo';
     if (head.keyId !== signingKey().keyId) return 'clave_de_firma';
@@ -545,7 +559,8 @@ const createSiteCompiler = (opts = {}) => {
     const head = docData(headSnap);
     if (head) delete head.id;
     if (!compile) return head;
-    const stale = !head || !head.version || head.day !== build.ymdOf(now(), head.tz || build.DEFAULT_TZ);
+    const stale = !head || !head.version || headCompilerMismatch(head)
+      || head.day !== build.ymdOf(now(), head.tz || build.DEFAULT_TZ);
     if (!dirtySnap.exists && !stale) return head;
     const res = await compileSite(siteId);
     return res.head;
@@ -640,7 +655,8 @@ const createSiteCompiler = (opts = {}) => {
         const r = refs(db, siteId);
         const [dirtySnap, headSnap] = await Promise.all([r.dirty.get(), r.head.get()]);
         const head = docData(headSnap);
-        const stale = !head || head.day !== build.ymdOf(now(), (head && head.tz) || build.DEFAULT_TZ);
+        const stale = !head || headCompilerMismatch(head)
+          || head.day !== build.ymdOf(now(), (head && head.tz) || build.DEFAULT_TZ);
         results[siteId] = dirtySnap.exists || stale
           ? await compileSite(siteId)
           : { mode: 'noop', version: head && head.version, changed: [], removed: [] };
@@ -712,4 +728,6 @@ const createSiteCompiler = (opts = {}) => {
   };
 };
 
-module.exports = { createSiteCompiler, DEFAULT_SITE_ID, MAX_DIRTY_IDS, HEAD_CHECK_MS, defaultSiteId };
+module.exports = {
+  createSiteCompiler, DEFAULT_SITE_ID, MAX_DIRTY_IDS, HEAD_CHECK_MS, defaultSiteId, COMPILER_VERSION
+};

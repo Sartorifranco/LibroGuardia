@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 
 const { createCountingFirestore, FieldValue, Timestamp } = require('./helpers/countingFirestore');
-const { createSiteCompiler } = require('../lib/siteCompiler/compiler');
+const { createSiteCompiler, COMPILER_VERSION } = require('../lib/siteCompiler/compiler');
 const { canonicalJson, chunkHash } = require('../lib/siteCompiler/canonical');
 const signing = require('../lib/siteCompiler/signing');
 const build = require('../lib/siteCompiler/build');
@@ -47,6 +47,7 @@ test('compilado completo: chunks válidos, hash canónico, firma y sin secretos 
   assert.equal(res.version, 1);
   const head = headOf(fs);
   assert.equal(head.version, 1);
+  assert.equal(head.compilerVersion, COMPILER_VERSION);
   assert.equal(head.day, TODAY);
   assert.equal(head.keyId, signingKey.keyId);
   assert.ok(signing.verifyHead(head, signingKey.publicKeyPem), 'firma válida');
@@ -100,6 +101,7 @@ test('compilado completo: chunks válidos, hash canónico, firma y sin secretos 
   assert.deepEqual(doors.doors.find((d) => d.id === 'P1').readers, [{ id: 'INGRESO_P1', side: 'in' }, { id: 'EGRESO_P1', side: 'out' }]);
   assert.ok(doors.schedules.some((s) => s.id === 'sch_sin_turno'));
   assert.equal(doors.policy.apbMode, 'soft');
+  assert.equal(doors.policy.repeatWindowSec, 15);
 
   const ops = chunkBody(fs, 'operators').operators;
   assert.deepEqual(ops.map((o) => o.username), ['guardia1', 'operador']);
@@ -262,6 +264,24 @@ test('delta: visitas, puertas y operadores', async () => {
   res = await compiler.compileSite(SITE);
   assert.deepEqual(res.changed, ['operators']);
   assert.ok(chunkBody(fs, 'operators').operators.some((o) => o.username === 'guardia2'));
+});
+
+test('compilerVersion distinto fuerza compilado completo', async () => {
+  const { fs, compiler } = setup();
+  let head = await compiler.getHead(SITE);
+  assert.equal(head.compilerVersion, COMPILER_VERSION);
+  assert.equal(head.mode, 'full');
+  const version = head.version;
+  fs.poke(`sites/${SITE}/compiled/head`, { ...headOf(fs), compilerVersion: COMPILER_VERSION - 1 });
+  head = await compiler.getHead(SITE);
+  assert.equal(head.mode, 'full');
+  assert.equal(head.compilerVersion, COMPILER_VERSION);
+  assert.equal(head.version, version + 1);
+  assert.ok(signing.verifyHead(head, signingKey.publicKeyPem));
+  fs.resetStats();
+  const again = await compiler.getHead(SITE);
+  assert.equal(again.version, head.version);
+  assert.equal(fs.stats.writes, 0);
 });
 
 test('getHead compila perezoso si hay cambios; cambio de día → completo', async () => {

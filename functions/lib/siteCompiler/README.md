@@ -15,8 +15,8 @@ Compila la configuración de Firestore en chunks firmados que consume el edge
 ## Firestore
 
 ```
-sites/{s}                         tz, name, policy {citacionWindowStrict, apbMode, apbResetMin}, areas?, holidays?
-sites/{s}/compiled/head           {siteId, version, day, tz, chunks:{name:{v,hash}}, keyId, credentialKeyId, compiledAt, sig, mode}
+sites/{s}                         tz, name, policy {citacionWindowStrict, apbMode, apbResetMin, repeatWindowSec}, areas?, holidays?
+sites/{s}/compiled/head           {siteId, version, day, tz, compilerVersion, chunks:{name:{v,hash}}, keyId, credentialKeyId, compiledAt, sig, mode}
 sites/{s}/compiled/_dirty         {people[], auths[], visitas[], doors, operators, full, at, rev}
 sites/{s}/compiledChunks/{name}   {name, v, hash, json}
 sites/{s}/secrets/credentialKey   {key (base64, 32 bytes), keyId, alg, createdAt}   ← solo Admin SDK (reglas: denegar todo)
@@ -29,7 +29,8 @@ Chunks: `doors`, `ch-00..ch-63` (bucket = sha256(personId) % 64, solo los no vac
 
 - Cada mutación hace `markDirty(...)` = 1 escritura en `_dirty` (más de 300 ids → `full`).
 - Se compila perezoso: `getHead()` (y `getCloudSnapshot()`, como mucho cada 15 s) lee
-  head + `_dirty` (2 lecturas) y, si hay cambios o cambió el día, compila. En Cloud
+  head + `_dirty` (2 lecturas) y, si hay cambios, cambió el día o `compilerVersion`
+  del head no es la de este proceso, compila (en ese último caso, completo). En Cloud
   Functions además se programa un compilado diferido de 5 s (best effort).
   `compileDirtySites()` sirve para colgarlo de un scheduler existente (no se agrega
   un `onSchedule` nuevo).
