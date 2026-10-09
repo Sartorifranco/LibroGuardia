@@ -341,6 +341,27 @@ describe('API LAN del hub para la app de guardia', { skip: k.SKIP }, () => {
     assert.match(audit.payload_json, /guardia/);
   });
 
+  it('GET /api/guard/alarms lista y cerrar saca la alarma de las abiertas', async () => {
+    const now = Date.now();
+    built.hub.edge.db.run(
+      'INSERT INTO alarms(id, type, door_id, state, first_ts, last_ts, count) VALUES (?,?,?,?,?,?,1)',
+      'held:p9', 'held_open', 'p1', 'active', now, now
+    );
+    const list = await api(built.url, '/api/guard/alarms?status=open&limit=50', { token });
+    assert.equal(list.status, 200);
+    const alarm = list.data.alerts.find((a) => a.id === 'held:p9');
+    assert.equal(alarm.kind, 'alarm');
+    assert.equal(alarm.type, 'held_open');
+    assert.ok(list.data.queriedAt);
+    const closed = await api(built.url, '/api/guard/alarms/held%3Ap9/ack', {
+      method: 'POST', token, body: { note: 'ya está bien', close: true }
+    });
+    assert.equal(closed.status, 200);
+    assert.equal(closed.data.ok, true);
+    const again = await api(built.url, '/api/guard/alarms?status=open', { token });
+    assert.equal(again.data.alerts.some((a) => a.id === 'held:p9'), false);
+  });
+
   it('el SSE recibe un paso concedido', async () => {
     const ac = new AbortController();
     const res = await fetch(`${built.url}/api/live?token=${encodeURIComponent(token)}`, { signal: ac.signal });

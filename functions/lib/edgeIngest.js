@@ -21,7 +21,8 @@
 const crypto = require('crypto');
 const { db, FieldValue, Timestamp } = require('../firestore');
 const { getArgentinaDateParts } = require('./normalize');
-const { DEVICES_COLLECTION, httpError, toMillis } = require('./devices');
+const { DEVICES_COLLECTION, httpError, toMillis, appendDeviceLog } = require('./devices');
+const { problemSignature, problemLabels } = require('./deviceHealth');
 
 const MAX_EVENTS_PER_BATCH = 200;
 const MAX_EVENT_PAYLOAD_BYTES = 2048;
@@ -384,6 +385,21 @@ const applyReportedControllers = async ({ hubData, hubId, siteId, reported, now 
       reportedBy: hubId,
       statusUpdatedAt: now
     }, { merge: true });
+    const becameDown = cur.online === false && c.online !== false;
+    const cameBack = cur.online === true && c.online === false;
+    const errorChanged = (c.lastError ?? null) !== (cur.lastError ?? null) && Boolean(c.lastError || cur.lastError);
+    if (becameDown || cameBack || errorChanged) {
+      const labels = problemLabels(c.checks, now, cur.lastError);
+      const message = !cur.online
+        ? 'Sin conexión'
+        : (labels.length ? `Con problemas: ${labels.join('. ')}` : 'Volvió a estar en línea');
+      appendDeviceLog(id, {
+        action: 'device.checks',
+        message,
+        at: now,
+        detail: cur.lastError || null
+      }).catch((err) => console.error('[edge] bitácora controlador', err.message));
+    }
     nextMap[id] = { ...cur, writtenAt: now };
     written += 1;
   }
@@ -405,6 +421,8 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
 
   const configVersionApplied = body.configVersionApplied == null ? null : Number(body.configVersionApplied);
   const checks = body.checks && typeof body.checks === 'object' ? JSON.parse(JSON.stringify(body.checks)) : null;
+  const prevProblems = problemSignature(d.checks, now);
+  const nextProblems = problemSignature(checks, now);
   if (checks && Buffer.byteLength(JSON.stringify(checks)) > 8192) throw httpError(400, 'checks demasiado grande');
   const lanUrl = deviceKind === 'hub' ? sanitizeLanUrl(body.lanUrl) : null;
 
@@ -433,6 +451,15 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
   if (deviceKind === 'hub' && lanUrl && (d.lanUrl || null) !== lanUrl) {
     await siteRef(siteId).set({ lanUrl, lanUrlUpdatedAt: now }, { merge: true });
     siteWrote = true;
+  }
+  if (prevProblems !== nextProblems) {
+    const labels = problemLabels(checks, now);
+    appendDeviceLog(String(deviceId), {
+      action: 'device.checks',
+      message: labels.length ? `Con problemas: ${labels.join('. ')}` : 'Volvió a estar en línea',
+      at: now,
+      detail: labels.join('. ') || null
+    }).catch((err) => console.error('[edge] bitácora checks', err.message));
   }
   return {
     ok: true,

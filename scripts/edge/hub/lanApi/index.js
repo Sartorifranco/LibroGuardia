@@ -13,7 +13,7 @@ const { LoginRateLimit } = require('./rateLimit');
 const { listGuardDoors } = require('./doors');
 const { openGuardDoor } = require('./openDoor');
 const { listEntries } = require('./entries');
-const { listLiveAlerts, ackAlarm } = require('./alarms');
+const { listLiveAlerts, listAlarms, ackAlarm } = require('./alarms');
 const { attachSse } = require('./sse');
 
 const CAPABILITIES = ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan'];
@@ -169,6 +169,13 @@ class LanApi {
       return fail(out.status, out.body);
     }
 
+    if (pathname === '/api/guard/alarms' && method === 'GET') {
+      const auth = requireOperator(this.hub, bearer(req));
+      if (auth.error) return fail(auth.error.status, auth.error.body);
+      const out = listAlarms(this.hub, auth.op, url.searchParams);
+      return fail(out.status, out.body);
+    }
+
     if (pathname === '/api/guard/live-alerts') {
       if (method !== 'GET') return fail(405, { message: 'Método no permitido' });
       const auth = requireOperator(this.hub, bearer(req));
@@ -185,7 +192,7 @@ class LanApi {
       const body = await readJson(req);
       let alarmId = ack[1];
       try { alarmId = decodeURIComponent(alarmId); } catch (_) { /* id crudo */ }
-      const out = ackAlarm(this.hub, auth.op, alarmId, body.note);
+      const out = ackAlarm(this.hub, auth.op, alarmId, body.note, { close: body.close === true });
       return fail(out.status, out.body);
     }
 

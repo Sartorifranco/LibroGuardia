@@ -395,6 +395,60 @@ const exchangeDeviceToken = async ({ deviceId, ts, signature, refreshToken } = {
   return out;
 };
 
+const LOG_PAGE_MAX = 50;
+
+/** Bitácora del equipo (alta, instalación, reemplazo, baja, cambios de estado). */
+const appendDeviceLog = async (deviceId, entry = {}) => {
+  const id = String(deviceId || '').trim();
+  if (!id || id.includes('/')) return null;
+  const at = Number(entry.at) || Date.now();
+  const docId = `${at.toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
+  const payload = {
+    action: String(entry.action || 'device.event').slice(0, 80),
+    message: String(entry.message || '').slice(0, 300),
+    at,
+    actor: entry.actor ? String(entry.actor).slice(0, 80) : null,
+    detail: entry.detail ? String(entry.detail).slice(0, 500) : null
+  };
+  await db.collection(DEVICES_COLLECTION).doc(id).collection('log').doc(docId).set(payload);
+  return { id: docId, ...payload };
+};
+
+const listDeviceLog = async (deviceId, { limit = 20, cursor = null } = {}) => {
+  const { id } = await getDeviceDoc(deviceId);
+  const pageSize = Math.min(Math.max(Number(limit) || 20, 1), LOG_PAGE_MAX);
+  const snap = await db.collection(DEVICES_COLLECTION).doc(id).collection('log').orderBy('at', 'desc').limit(LOG_PAGE_MAX).get();
+  let items = snap.docs.map((doc) => {
+    const data = doc.data() || {};
+    return {
+      id: doc.id,
+      action: data.action || '',
+      message: data.message || '',
+      at: toMillis(data.at) || data.at || null,
+      actor: data.actor || null,
+      detail: data.detail || null
+    };
+  });
+  items.sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0) || String(b.id).localeCompare(String(a.id)));
+  if (cursor) {
+    const idx = items.findIndex((item) => item.id === String(cursor));
+    items = idx >= 0 ? items.slice(idx + 1) : [];
+  }
+  const page = items.slice(0, pageSize);
+  const nextCursor = items.length > page.length ? page[page.length - 1].id : null;
+  return { events: page, nextCursor };
+};
+
+/** Otro código de instalación, solo mientras el equipo sigue pendiente. */
+const reissueEnrollment = async (deviceId) => {
+  const { id, data } = await getDeviceDoc(deviceId);
+  if (data.status !== 'pending') {
+    throw httpError(409, 'Este equipo ya está instalado. Si hay que cambiarlo, usá Reemplazar.', 'DEVICE_NOT_PENDING');
+  }
+  const enrollment = await issueEnrollCode({ deviceId: id, siteId: data.siteId || DEFAULT_SITE_ID });
+  return { device: deviceToJSON(id, data), enrollment };
+};
+
 module.exports = {
   DEVICES_COLLECTION,
   ENROLL_CODES_COLLECTION,
@@ -411,6 +465,7 @@ module.exports = {
   normalizeEnrollCode,
   generateEnrollCode,
   sanitizeSiteId,
+  sanitizeDoorIds,
   parseEd25519PublicKey,
   publicKeyToPem,
   publicKeyId,
@@ -425,5 +480,8 @@ module.exports = {
   replaceDevice,
   enrollDevice,
   exchangeDeviceToken,
-  signDeviceToken
+  signDeviceToken,
+  appendDeviceLog,
+  listDeviceLog,
+  reissueEnrollment
 };
