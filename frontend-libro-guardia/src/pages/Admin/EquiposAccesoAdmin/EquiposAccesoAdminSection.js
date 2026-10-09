@@ -31,23 +31,25 @@ function EquiposAccesoAdminSection({
   pendingAction,
   runAction,
   onAccessConfigSaved,
-  initialTab = 'guia'
+  initialTab = 'guia',
+  advancedOnly = false
 }) {
   const { currentUser } = useAuth();
   const canDoors = hasPermission(currentUser, 'access.doors.manage')
     || hasPermission(currentUser, 'access.control');
   const canLectores = hasPermission(currentUser, 'lectores.manage');
-  const [tab, setTab] = useState(() => resolveInitialTab(initialTab, canLectores));
+  const [tab, setTab] = useState(() => (advancedOnly ? 'anterior' : resolveInitialTab(initialTab, canLectores)));
 
   const visibleTabs = useMemo(
     () => TABS.filter((item) => {
+      if (advancedOnly) return item.id === 'anterior' || item.id === 'marcas' || item.id === 'paquetes';
       if (item.id === 'puertas' || item.id === 'guia' || item.id === 'marcas' || item.id === 'paquetes') {
         return canDoors || canLectores;
       }
       if (item.id === 'equipos' || item.id === 'anterior') return canLectores;
       return true;
     }),
-    [canDoors, canLectores]
+    [advancedOnly, canDoors, canLectores]
   );
 
   const activeTab = visibleTabs.some((t) => t.id === tab)

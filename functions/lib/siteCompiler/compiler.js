@@ -42,7 +42,7 @@ const DIRTY_LISTS = ['people', 'auths', 'visitas'];
  * (p. ej. apbMode o repeatWindowSec). Un head guardado con otro número
  * dispara compilado completo aunque nadie haya marcado _dirty.
  */
-const COMPILER_VERSION = 2;
+const COMPILER_VERSION = 3;
 
 const headCompilerMismatch = (head) => !head || (Number(head.compilerVersion) || 0) !== COMPILER_VERSION;
 
@@ -147,7 +147,39 @@ const createSiteCompiler = (opts = {}) => {
 
   // ─────────────────────────── Lectura de fuentes ───────────────────────────
 
-  const loadSiteDoc = async (db, siteId) => docData(await refs(db, siteId).site.get()) || {};
+  const loadSiteDoc = async (db, siteId) => {
+    const siteRef = refs(db, siteId).site;
+    const [snap, areasSnap] = await Promise.all([
+      siteRef.get(),
+      siteRef.collection('areas').limit(100).get()
+    ]);
+    const site = docData(snap) || {};
+    const fromSub = (areasSnap.docs || []).map((d) => {
+      const data = d.data() || {};
+      return { id: String(d.id), name: data.name ? String(data.name) : undefined, exterior: data.exterior === true };
+    }).filter((area) => area.id);
+    if (fromSub.length || Array.isArray(site.areas)) {
+      const byId = new Map();
+      for (const area of (Array.isArray(site.areas) ? site.areas : [])) {
+        if (!area || !area.id) continue;
+        byId.set(String(area.id), {
+          id: String(area.id),
+          name: area.name ? String(area.name) : undefined,
+          exterior: area.exterior === true
+        });
+      }
+      for (const area of fromSub) {
+        const prev = byId.get(area.id) || { id: area.id };
+        byId.set(area.id, {
+          id: area.id,
+          name: area.name || prev.name,
+          exterior: area.exterior === true || prev.exterior === true
+        });
+      }
+      site.areas = [...byId.values()];
+    }
+    return site;
+  };
   const loadDoorsConfig = async (db) => docData(await db.collection('settings').doc('doorsConfig').get()) || {};
 
   /** Catálogo profesional (grupos, horarios, feriados). Colecciones chicas: un query cada una. */

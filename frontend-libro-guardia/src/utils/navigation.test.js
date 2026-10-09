@@ -20,12 +20,14 @@ describe('navigation routes', () => {
     expect(guardiaPath('vehiculosAutorizados')).toBe('/guardia/vehiculos-autorizados');
     expect(adminPath('users')).toBe('/admin/users');
     expect(adminPath('peopleAccess')).toBe('/admin/personas');
-    expect(adminPath('equiposAcceso')).toBe('/admin/equipos-acceso');
-    expect(adminPath('doors')).toBe('/admin/equipos-acceso');
-    expect(adminPath('lectores')).toBe('/admin/equipos-acceso');
+    expect(adminPath('equiposAcceso')).toBe('/admin/sistemas');
+    expect(adminPath('doors')).toBe('/admin/puertas');
+    expect(adminPath('puertas')).toBe('/admin/puertas');
+    expect(adminPath('lectores')).toBe('/admin/sistemas');
     expect(adminPath('visitas')).toBe('/admin/visitas');
-    expect(adminPath('appearance')).toBe('/admin/appearance');
-    expect(adminPath('negocioAccesos')).toBe('/admin/accesos');
+    expect(adminPath('appearance')).toBe('/admin/datos-empresa');
+    expect(adminPath('negocioAccesos')).toBe('/admin/grupos');
+    expect(adminPath('primerosPasos')).toBe('/admin/primeros-pasos');
   });
 
   test('segmentos se mapean de vuelta a tabs/secciones', () => {
@@ -37,11 +39,17 @@ describe('navigation routes', () => {
     expect(tabFromGuardiaSegment('botonera-guardia')).toBe('botonera');
     expect(sectionFromAdminSegment('people-access')).toBe('peopleAccess');
     expect(sectionFromAdminSegment('personas')).toBe('peopleAccess');
-    expect(sectionFromAdminSegment('equipos-acceso')).toBe('equiposAcceso');
+    expect(sectionFromAdminSegment('equipos-acceso')).toBe('sistemas');
     expect(sectionFromAdminSegment('citaciones')).toBe('citaciones');
     expect(sectionFromAdminSegment('visitas')).toBe('visitas');
     expect(sectionFromAdminSegment('appearance')).toBe('appearance');
-    expect(sectionFromAdminSegment('accesos')).toBe('negocioAccesos');
+    expect(sectionFromAdminSegment('datos-empresa')).toBe('appearance');
+    expect(sectionFromAdminSegment('accesos')).toBe('grupos');
+    expect(sectionFromAdminSegment('puertas')).toBe('puertas');
+    expect(sectionFromAdminSegment('roles')).toBe('rolesPermisos');
+    expect(sectionFromAdminSegment('permissions')).toBe('rolesPermisos');
+    expect(sectionFromAdminSegment('activity')).toBe('registro');
+    expect(sectionFromAdminSegment('audit')).toBe('registro');
   });
 
   test('resolveHomePath según permisos', () => {
@@ -70,22 +78,19 @@ describe('navigation routes', () => {
     expect(canAccessAdmin(empleado)).toBe(false);
     expect(resolveHomePath(empleado)).toBe('/empleado');
 
-    expect(getDefaultAdminSection(soloAdmin)).toBe('users');
+    expect(getDefaultAdminSection(soloAdmin)).toBe('primerosPasos');
 
-    // Solo permisos (sin users.view): primera visible del grupo Personas = permissions
     const soloPermisos = { role: 'custom', permissions: ['settings.permissions'] };
-    expect(getDefaultAdminSection(soloPermisos)).toBe('permissions');
+    expect(getDefaultAdminSection(soloPermisos)).toBe('primerosPasos');
 
-    // Solo flota: no cae en activity viejo; va a fleet (Datos maestros)
     const soloFlota = { role: 'custom', permissions: ['fleet.upload'] };
-    expect(getDefaultAdminSection(soloFlota)).toBe('fleet');
+    expect(getDefaultAdminSection(soloFlota)).toBe('primerosPasos');
 
-    // Deep-link: segmento válido no depende del default
-    expect(sectionFromAdminSegment('doors')).toBe('equiposAcceso');
-    expect(adminPath('doors')).toBe('/admin/equipos-acceso');
+    expect(sectionFromAdminSegment('doors')).toBe('puertas');
+    expect(adminPath('doors')).toBe('/admin/puertas');
 
     const soloAccesos = { role: 'custom', permissions: ['access.groups.manage'] };
-    expect(getDefaultAdminSection(soloAccesos)).toBe('negocioAccesos');
+    expect(getDefaultAdminSection(soloAccesos)).toBe('primerosPasos');
   });
 
   test('guardia, supervisor y monitoreo usan las mismas etiquetas de menú', () => {

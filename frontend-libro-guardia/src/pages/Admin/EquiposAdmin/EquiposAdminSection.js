@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { PlusCircle } from 'lucide-react';
-import { AdminBlock, AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
+import { AdminLoading } from '../../../components/admin/AdminUi';
+import { EmptyState, PageHeader } from '../../../components/admin-ui';
 import { useAuth } from '../../../context/AuthContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { useToast } from '../../../context/ToastContext';
@@ -256,16 +257,22 @@ function EquiposAdminSection() {
 
   return (
     <div className="equipos-admin">
-      <AdminBlock
+      <PageHeader
         title="Equipos"
-        description="La central del sitio y los controladores de puertas."
+        purpose="Un equipo es la cajita que abre las puertas."
+        howTo={[
+          'Agregá el equipo y ponéle un nombre que reconozcas.',
+          'El instalador lo conecta con el código que aparece.',
+          'Cuando está en línea, asignale las puertas que abre.'
+        ]}
         action={(
           <button type="button" className="btn btn-primary" onClick={openWizard}>
             <PlusCircle size={16} aria-hidden />
             Agregar equipo
           </button>
         )}
-      >
+      />
+      <div>
         {loading ? <AdminLoading label="Cargando equipos…" /> : null}
         {!loading && error ? (
           <p className="alarm-panel__error" role="alert">
@@ -275,9 +282,11 @@ function EquiposAdminSection() {
           </p>
         ) : null}
         {!loading && !error && visible.length === 0 ? (
-          <AdminEmpty
-            title="Todavía no hay equipos"
-            description="Agregá la central del sitio o un controlador de puertas."
+          <EmptyState
+            title="Todavía no instalaste ningún equipo."
+            text="Un equipo es la cajita que abre las puertas. Cuando el instalador lo conecta, aparece acá."
+            actionLabel="Instalar el primero"
+            onAction={openWizard}
           />
         ) : null}
         <div className="equipos-admin__list">
@@ -319,7 +328,7 @@ function EquiposAdminSection() {
             );
           })}
         </div>
-      </AdminBlock>
+      </div>
 
       {wizard ? (
         <form

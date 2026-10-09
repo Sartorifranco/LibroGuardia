@@ -57,47 +57,77 @@ export const GUARDIA_SEGMENT_TO_TAB = Object.entries(GUARDIA_TAB_SEGMENTS).reduc
   'botonera-ventana': 'botonera-ventana'
 });
 
-/** adminSection id → segmento bajo /admin */
+/** adminSection id → segmento canónico bajo /admin */
 export const ADMIN_SECTION_SEGMENTS = {
+  primerosPasos: 'primeros-pasos',
   users: 'users',
-  roles: 'roles',
-  activity: 'activity',
-  audit: 'audit',
-  notifications: 'notifications',
-  // Centro único de hardware (Fase A). URLs viejas redirigen acá.
-  equiposAcceso: 'equipos-acceso',
-  doors: 'equipos-acceso',
+  rolesPermisos: 'roles-permisos',
   peopleAccess: 'personas',
-  access: 'access',
-  citaciones: 'citaciones',
   nomina: 'nomina',
-  vehicles: 'vehicles',
-  fleet: 'fleet',
   empresas: 'empresas',
-  destinos: 'destinos',
+  vehicles: 'vehiculos',
+  fleet: 'flota',
+  grupos: 'grupos',
+  horarios: 'horarios',
+  feriados: 'feriados',
+  puedePasar: 'puede-pasar',
+  destinos: 'recorridos',
+  citaciones: 'citaciones',
   visitas: 'visitas',
-  lectores: 'equipos-acceso',
-  estaciones: 'equipos-acceso',
-  permissions: 'permissions',
-  appearance: 'appearance',
-  negocioAccesos: 'accesos'
+  lugares: 'lugares',
+  puertas: 'puertas',
+  equipos: 'equipos',
+  sistemas: 'sistemas',
+  notifications: 'avisos',
+  access: 'gps',
+  huella: 'huella',
+  citacionesAuto: 'citaciones-automaticas',
+  registro: 'registro',
+  appearance: 'datos-empresa',
+  // Ids viejos: adminPath sigue armando la URL nueva.
+  roles: 'roles-permisos',
+  permissions: 'roles-permisos',
+  activity: 'registro',
+  audit: 'registro',
+  equiposAcceso: 'sistemas',
+  doors: 'puertas',
+  lectores: 'sistemas',
+  estaciones: 'sistemas',
+  negocioAccesos: 'grupos'
 };
 
 export const ADMIN_SEGMENT_TO_SECTION = Object.entries(ADMIN_SECTION_SEGMENTS).reduce((acc, [section, seg]) => {
-  // Preferir el id canónico cuando varias secciones comparten segmento.
-  if (seg === 'equipos-acceso') {
-    acc[seg] = 'equiposAcceso';
-    return acc;
-  }
   if (!acc[seg]) acc[seg] = section;
   return acc;
 }, {
-  // URLs legadas siguen abriendo el centro único
-  doors: 'equiposAcceso',
-  lectores: 'equiposAcceso',
-  estaciones: 'equiposAcceso',
+  // URLs viejas abren la pantalla nueva (AdminLayout además redirige a la canónica).
+  roles: 'rolesPermisos',
+  permissions: 'rolesPermisos',
+  activity: 'registro',
+  audit: 'registro',
+  appearance: 'appearance',
+  'datos-empresa': 'appearance',
+  destinos: 'destinos',
+  recorridos: 'destinos',
+  accesos: 'grupos',
+  access: 'access',
+  gps: 'access',
+  notifications: 'notifications',
+  avisos: 'notifications',
+  vehicles: 'vehicles',
+  vehiculos: 'vehicles',
+  fleet: 'fleet',
+  flota: 'fleet',
+  doors: 'puertas',
+  puertas: 'puertas',
+  lectores: 'sistemas',
+  estaciones: 'sistemas',
+  'equipos-acceso': 'sistemas',
+  sistemas: 'sistemas',
   'people-access': 'peopleAccess',
-  personas: 'peopleAccess'
+  personas: 'peopleAccess',
+  autorizaciones: 'citaciones',
+  citaciones: 'citaciones'
 });
 
 export const guardiaPath = (tabId = 'inicio') => {
@@ -133,52 +163,16 @@ export const resolveHomePath = (user) => {
   return '/login';
 };
 
-/** Primera sección admin visible según permisos.
- * Orden = grupos de nav en AdminPage (Personas → Infra → Maestros → Supervisión).
- * Solo se usa cuando no hay segmento válido en la URL; deep-links (/admin/doors, etc.)
- * siguen resolviendo por sectionFromAdminSegment y no pasan por acá.
+/** Primera sección admin cuando la URL no trae segmento.
+ * El inicio es Primeros pasos. Los deep-links no pasan por acá.
  */
 const ADMIN_DEFAULT_SECTION_ORDER = [
+  { id: 'primerosPasos', match: (u) => canAccessAdmin(u) },
   { id: 'users', match: (u) => hasPermission(u, 'users.view') },
-  { id: 'roles', match: (u) => hasPermission(u, 'roles.view') || hasPermission(u, 'roles.manage') },
-  { id: 'permissions', match: (u) => hasPermission(u, 'settings.permissions') },
-  {
-    id: 'peopleAccess',
-    match: (u) =>
-      hasPermission(u, 'access.doors.manage')
-      || hasPermission(u, 'access.control')
-      || hasPermission(u, 'master.nomina.write')
-  },
-  {
-    id: 'negocioAccesos',
-    match: (u) => hasPermission(u, 'access.groups.manage') || hasPermission(u, 'personas.puertas.asignar')
-  },
-  {
-    id: 'equiposAcceso',
-    match: (u) =>
-      hasPermission(u, 'access.doors.manage')
-      || hasPermission(u, 'access.control')
-      || hasPermission(u, 'lectores.manage')
-  },
-  { id: 'notifications', match: (u) => hasPermission(u, 'notifications.config') },
-  { id: 'access', match: (u) => hasPermission(u, 'access.control') },
-  { id: 'nomina', match: (u) => hasPermission(u, 'master.nomina.write') },
-  { id: 'citaciones', match: (u) => hasPermission(u, 'master.citaciones.write') },
-  { id: 'vehicles', match: (u) => hasPermission(u, 'master.vehicles.write') },
+  { id: 'peopleAccess', match: (u) => hasPermission(u, 'master.nomina.write') || hasPermission(u, 'access.doors.manage') },
   { id: 'fleet', match: (u) => hasPermission(u, 'fleet.upload') },
-  { id: 'empresas', match: (u) => hasPermission(u, 'empresas.manage') },
-  { id: 'destinos', match: (u) => hasPermission(u, 'destinos.manage') },
-  { id: 'visitas', match: (u) => hasPermission(u, 'visitas.approve') },
-  { id: 'appearance', match: (u) => hasPermission(u, 'settings.permissions') },
-  {
-    id: 'activity',
-    match: (u) =>
-      hasPermission(u, 'users.view')
-      || hasPermission(u, 'roles.view')
-      || hasPermission(u, 'settings.permissions')
-      || hasPermission(u, 'audit.view')
-  },
-  { id: 'audit', match: (u) => hasPermission(u, 'audit.view') }
+  { id: 'grupos', match: (u) => hasPermission(u, 'access.groups.manage') || hasPermission(u, 'personas.puertas.asignar') },
+  { id: 'notifications', match: (u) => hasPermission(u, 'notifications.config') }
 ];
 
 export const getDefaultAdminSection = (user) => {

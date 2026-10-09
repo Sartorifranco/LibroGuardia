@@ -15,6 +15,9 @@ const READER_DIRECTIONS = ['ingreso', 'egreso', 'ambos'];
  */
 const RELAY_MODES = ['cloud', 'local'];
 
+/** Tipo que ve la persona: puerta, portón o molinete. */
+const DOOR_KINDS = ['door', 'gate', 'turnstile'];
+
 /**
  * Prefijo de lector en la lectura USB (diagrama planta):
  *   INGRESO_P1#30111222  → readerId=INGRESO_P1, payload=30111222
@@ -189,7 +192,36 @@ const resolveReaderFixedMovement = (door, readerId = 'default') => {
   return null;
 };
 
-const normalizeDoor = (door = {}, index = 0) => {
+const httpError = (status, message) => {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+};
+
+/**
+ * Lados de la puerta: entrar va de A a B y salir de B a A.
+ * strict: al guardar, dos lugares iguales es un error. Al leer, se descarta.
+ */
+const normalizeSides = (sides, { strict = false } = {}) => {
+  if (!sides || typeof sides !== 'object' || Array.isArray(sides)) return null;
+  const inn = sides.in && typeof sides.in === 'object' ? sides.in : {};
+  const out = sides.out && typeof sides.out === 'object' ? sides.out : {};
+  const zoneFrom = slugifyDoorId(inn.zoneFrom || '');
+  const zoneTo = slugifyDoorId(inn.zoneTo || '');
+  if (!zoneFrom || !zoneTo) return null;
+  if (zoneFrom === zoneTo) {
+    if (strict) throw httpError(400, 'Los dos lados de la puerta tienen que ser lugares distintos.');
+    return null;
+  }
+  const outFrom = slugifyDoorId(out.zoneFrom || '') || zoneTo;
+  const outTo = slugifyDoorId(out.zoneTo || '') || zoneFrom;
+  return {
+    in: { zoneFrom, zoneTo },
+    out: { zoneFrom: outFrom, zoneTo: outTo }
+  };
+};
+
+const normalizeDoor = (door = {}, index = 0, { strict = false } = {}) => {
   const id = slugifyDoorId(door.id || door.name) || `puerta-${index + 1}`;
   const { readers, readerIds } = normalizeReaders(door);
   // Campos solo de UI / enriquecimiento — no persistir en settings.
@@ -227,6 +259,38 @@ const normalizeDoor = (door = {}, index = 0) => {
     if (Number.isFinite(repeat) && repeat >= 0) normalized.repeatWindowSec = Math.round(repeat);
     else delete normalized.repeatWindowSec;
   }
+
+  delete normalized.placeA;
+  delete normalized.placeB;
+  delete normalized.airlockEnabled;
+  delete normalized.airlockPartnerId;
+
+  normalized.kind = DOOR_KINDS.includes(door.kind) ? door.kind : 'door';
+  const sides = normalizeSides(door.sides, { strict });
+  if (sides) normalized.sides = sides;
+  else delete normalized.sides;
+
+  if (typeof door.sensorsRequired === 'boolean') normalized.sensorsRequired = door.sensorsRequired;
+  else delete normalized.sensorsRequired;
+
+  if (door.requireGuardApproval === true) normalized.requireGuardApproval = true;
+  else if (door.requireGuardApproval === false) normalized.requireGuardApproval = false;
+  else delete normalized.requireGuardApproval;
+
+  const heldRaw = door.heldOpenSec;
+  if (normalized.sensorsRequired === true && heldRaw != null && heldRaw !== '') {
+    const held = Number(heldRaw);
+    if (!Number.isFinite(held) || held < 10 || held > 600) {
+      if (strict) throw httpError(400, 'El aviso de puerta abierta tiene que estar entre 10 y 600 segundos.');
+      delete normalized.heldOpenSec;
+    } else normalized.heldOpenSec = Math.round(held);
+  } else delete normalized.heldOpenSec;
+
+  const unlock = Number(door.unlockSec);
+  normalized.unlockSec = Number.isFinite(unlock) && unlock > 0
+    ? Math.min(60, Math.round(unlock))
+    : normalized.pulseSeconds;
+
   return normalized;
 };
 
@@ -264,8 +328,8 @@ const buildLegacyDefaultDoor = (accessControl = {}) => normalizeDoor({
   authMethods: ['dni', 'credential', 'manual']
 });
 
-const normalizeDoorsConfig = (raw = {}, accessControl = {}) => {
-  const doors = (raw.doors || []).map(normalizeDoor);
+const normalizeDoorsConfig = (raw = {}, accessControl = {}, { strict = false } = {}) => {
+  const doors = (raw.doors || []).map((door, index) => normalizeDoor(door, index, { strict }));
   const airlockGroups = (raw.airlockGroups || []).map(normalizeAirlockGroup);
   const resolvedDoors = doors.length ? doors : [buildLegacyDefaultDoor(accessControl)];
 
@@ -298,7 +362,7 @@ const saveDoorsConfig = async (updates = {}) => {
 
   if (updates.defaultDoorId !== undefined) payload.defaultDoorId = updates.defaultDoorId || null;
   if (updates.doors !== undefined) {
-    payload.doors = (updates.doors || []).map(normalizeDoor);
+    payload.doors = (updates.doors || []).map((door, index) => normalizeDoor(door, index, { strict: true }));
   }
   if (updates.airlockGroups !== undefined) {
     payload.airlockGroups = (updates.airlockGroups || []).map(normalizeAirlockGroup);
@@ -370,6 +434,7 @@ const getAirlockDoors = (config, groupId) => {
 
 module.exports = {
   AUTH_METHODS,
+  DOOR_KINDS,
   DOOR_DRIVERS,
   READER_DIRECTIONS,
   RELAY_MODES,

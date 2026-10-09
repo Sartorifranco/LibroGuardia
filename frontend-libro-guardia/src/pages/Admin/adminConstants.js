@@ -23,8 +23,8 @@ export const ADMIN_SECTION_META = {
     description: 'Las empresas del predio y los mails con los que su gente pide visitas.'
   },
   destinos: {
-    title: 'Destinos',
-    description: 'Lugares del predio con la secuencia de puertas necesarias para llegar.'
+    title: 'Recorridos de visita',
+    description: 'Qué puertas hay que pasar para llegar a un lugar del predio.'
   },
   visitas: {
     title: 'Aprobar visitas',
@@ -32,7 +32,7 @@ export const ADMIN_SECTION_META = {
   },
   appearance: {
     title: 'Datos de la empresa',
-    description: 'El nombre que se ve y los colores de esta instalación.'
+    description: 'Nombre, logo y colores que se ven en el sistema.'
   },
   lectores: {
     title: 'Equipos de acceso',
@@ -47,6 +47,19 @@ export const ADMIN_SECTION_META = {
   activity: { title: 'Registro de cambios', description: 'Resumen de altas, cambios y bajas.' },
   audit: { title: 'Registro de cambios', description: 'Quién cambió qué, y qué quedó distinto.' },
   notifications: { title: 'Avisos por mail', description: 'Quién recibe cada aviso y cómo se envía el correo.' },
+  primerosPasos: { title: 'Primeros pasos', description: 'Lo que falta para dejar el predio funcionando.' },
+  lugares: { title: 'Lugares', description: 'Zonas del predio que conecta cada puerta.' },
+  puertas: { title: 'Puertas', description: 'Cada puerta, qué lugares conecta y cuánto queda abierta.' },
+  equipos: { title: 'Equipos', description: 'La cajita que abre las puertas.' },
+  sistemas: { title: 'Sistemas', description: 'Opciones para el instalador.' },
+  grupos: { title: 'Grupos de acceso', description: 'Puertas y horario que comparten las mismas personas.' },
+  horarios: { title: 'Horarios', description: 'Días y horas en que vale un permiso.' },
+  feriados: { title: 'Feriados', description: 'Días del año en que el horario cambia.' },
+  puedePasar: { title: '¿Puede pasar?', description: 'Probar si una persona entra por una puerta.' },
+  rolesPermisos: { title: 'Roles y permisos', description: 'Qué puede hacer cada tipo de usuario.' },
+  registro: { title: 'Registro de cambios', description: 'Quién modificó qué, y cuándo.' },
+  huella: { title: 'Huella', description: 'Lectores de huella del predio.' },
+  citacionesAuto: { title: 'Citaciones automáticas', description: 'Recibir citados desde la carpeta de la empresa.' }
 };
 
 export const AUTH_WEEKDAYS = [

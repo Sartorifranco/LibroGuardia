@@ -63,12 +63,12 @@ function DayChips({ days, onToggle }) {
   );
 }
 
-function AccessModelAdminSection() {
+function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
   const { confirm } = useConfirm();
   const canManage = hasPermission(currentUser, 'access.groups.manage');
-  const [tab, setTab] = useState('grupos');
+  const [tab, setTab] = useState(initialTab || 'grupos');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [schedules, setSchedules] = useState([]);
@@ -91,6 +91,10 @@ function AccessModelAdminSection() {
   const [reloadKey, setReloadKey] = useState(0);
 
   const visibleTabs = canManage ? TABS : TABS.filter((t) => t.id === 'grupos' || t.id === 'simular');
+
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
 
   const loadSchedules = useCallback(async () => {
     const data = await apiFetch('/admin/schedules', { token: authToken });
@@ -343,6 +347,7 @@ function AccessModelAdminSection() {
 
   return (
     <div className="access-model">
+      {!lockTab && (
       <div className="access-model__tabs" role="tablist" aria-label="Accesos">
         {visibleTabs.map((item) => (
           <button
@@ -357,6 +362,7 @@ function AccessModelAdminSection() {
           </button>
         ))}
       </div>
+      )}
 
       {loading ? <p role="status">Cargando…</p> : null}
       {!loading && error ? (

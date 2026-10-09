@@ -1,5 +1,4 @@
 import React from 'react';
-import './admin-simple.css';
 
 /**
  * Estado vacío con explicación y la acción para empezar.
@@ -7,16 +6,14 @@ import './admin-simple.css';
  */
 export function EmptyState({ title, text, actionLabel, onAction }) {
   return (
-    <div className="admin-simple-empty" role="status">
-      <h3 className="admin-simple-empty__title">{title}</h3>
-      {text ? <p className="admin-simple-empty__text">{text}</p> : null}
+    <div className="aui-empty" role="status">
+      <strong className="aui-empty__title">{title}</strong>
+      {text ? <p className="aui-empty__text">{text}</p> : null}
       {actionLabel && onAction ? (
-        <button type="button" className="btn btn-primary" onClick={onAction}>
+        <button type="button" className="btn btn-primary aui-empty__action" onClick={onAction}>
           {actionLabel}
         </button>
       ) : null}
     </div>
   );
 }
-
-export default EmptyState;

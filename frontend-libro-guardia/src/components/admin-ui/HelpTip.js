@@ -1,19 +1,32 @@
-import React from 'react';
-import './admin-simple.css';
+import React, { useId, useState } from 'react';
 
 /**
- * Ayuda breve junto a un campo.
+ * Ayuda breve junto a un campo. Se abre con un toque (sirve en el celular).
  * @param {{ text: string }} props
  */
 export function HelpTip({ text }) {
+  const [open, setOpen] = useState(false);
+  const tipId = useId();
+
   return (
-    <span className="admin-simple-help">
-      <button type="button" className="admin-simple-help__btn" aria-label={`Ayuda: ${text}`}>
+    <span className="aui-help">
+      <button
+        type="button"
+        className="aui-help__btn"
+        aria-expanded={open}
+        aria-describedby={open ? tipId : undefined}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+      >
         ?
+        <span className="aui-sr">Ayuda</span>
       </button>
-      <span className="admin-simple-help__bubble" role="tooltip">{text}</span>
+      {open ? (
+        <span id={tipId} role="tooltip" className="aui-help__pop">{text}</span>
+      ) : null}
     </span>
   );
 }
-
-export default HelpTip;

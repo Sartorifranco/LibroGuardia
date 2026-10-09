@@ -523,11 +523,14 @@ const buildDoorsChunk = ({
     }
   }
   const siteAreas = new Map((Array.isArray(site.areas) ? site.areas : []).filter((a) => a && a.id).map((a) => [String(a.id), a]));
-  const areas = [...new Set([...areaIds, ...siteAreas.keys()])].sort().map((id) => ({
-    ...(siteAreas.get(id) || {}),
-    id,
-    ...(id === 'exterior' ? { exterior: true } : {})
-  }));
+  const areas = [...new Set([...areaIds, ...siteAreas.keys()])].sort().map((id) => {
+    const src = siteAreas.get(id) || {};
+    const area = { id };
+    const name = String(src.name || '').trim();
+    if (name) area.name = name.slice(0, 80);
+    if (id === 'exterior' || src.exterior === true) area.exterior = true;
+    return area;
+  });
   const schedMap = new Map();
   const putSchedule = (s, overwrite = false) => {
     if (!s || !s.id) return;

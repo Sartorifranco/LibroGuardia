@@ -120,7 +120,7 @@ test('horario nocturno y feriado en el motor', () => {
 });
 
 test('compilador: unión de grupos, horario, feriado y derechos anteriores', async () => {
-  assert.equal(COMPILER_VERSION, 2);
+  assert.equal(COMPILER_VERSION, 3);
   const fs = createCountingFirestore({
     'sites/principal': { name: 'Planta', tz: 'America/Argentina/Buenos_Aires' },
     'settings/doorsConfig': {

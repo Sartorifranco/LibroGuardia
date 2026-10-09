@@ -1,26 +1,14 @@
-import React, { useState } from 'react';
-import './admin-simple.css';
+import React from 'react';
 
 /**
- * Bloque plegado para datos del instalador.
- * Los hijos se montan solo al abrir, para no disparar consultas de más.
- * @param {{ title?: string, children?: import('react').ReactNode }} props
+ * Bloque plegado para lo técnico. Cerrado por defecto.
+ * @param {{ title?: string, children: import('react').ReactNode }} props
  */
 export function AdvancedSection({ title = 'Opciones avanzadas', children }) {
-  const [open, setOpen] = useState(false);
   return (
-    <section className="admin-simple-advanced">
-      <button
-        type="button"
-        className="admin-simple-advanced__toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        {title}
-      </button>
-      {open ? <div className="admin-simple-advanced__body">{children}</div> : null}
-    </section>
+    <details className="aui-advanced">
+      <summary className="aui-advanced__summary">{title}</summary>
+      <div className="aui-advanced__body">{children}</div>
+    </details>
   );
 }
-
-export default AdvancedSection;
