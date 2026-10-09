@@ -31,8 +31,8 @@ export const ADMIN_SECTION_META = {
     description: 'Solicitudes de empleados que no pueden autorizar visitas por sí mismos.'
   },
   appearance: {
-    title: 'Apariencia',
-    description: 'Colores de marca y textos visibles de esta instalación.'
+    title: 'Datos de la empresa',
+    description: 'El nombre que se ve y los colores de esta instalación.'
   },
   lectores: {
     title: 'Equipos de acceso',
