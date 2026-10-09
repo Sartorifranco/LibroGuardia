@@ -8,6 +8,7 @@
  *     GET  /api/edge/v1/chunks?names=a,b           (hub)
  *     POST /api/edge/v1/events                     (hub)
  *     POST /api/edge/v1/heartbeat                  (hub y controlador)
+ *     GET  /api/edge/v1/commands?status=pending    (hub; solo si head.pendingCommands > 0)
  *     POST /api/edge/v1/commands/:id/result        (hub)
  *     POST /api/edge/v1/live                       (hub)
  *   Guardia (usuario): POST /api/guard/doors/:doorId/remote-open, GET /api/guard/commands/:id
@@ -330,6 +331,19 @@ router.get('/api/guard/commands/:id', auth, requirePermission('access.manual_ope
     res.json({ siteId, command: await edge.getCommand({ siteId, id: req.params.id }) });
   } catch (err) {
     sendRouteError(res, err, 'Error al leer el comando');
+  }
+});
+
+// El hub lo consulta solo cuando GET /head trae pendingCommands > 0 (scripts/edge/hub/commands.js).
+router.get('/api/edge/v1/commands', hubOnly, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pending');
+    if (status !== 'pending') return res.status(400).json({ message: "Solo se admite status=pending", code: 'BAD_STATUS' });
+    res.set('Cache-Control', 'no-store');
+    const out = await edge.listPendingCommands({ siteId: req.device.siteId });
+    return res.json({ siteId: req.device.siteId, commands: out.commands, expired: out.expired });
+  } catch (err) {
+    return sendRouteError(res, err, 'Error al listar comandos');
   }
 });
 

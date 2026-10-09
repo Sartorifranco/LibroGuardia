@@ -464,7 +464,7 @@ class Controller {
    */
   async openDoor(doorId, {
     requestedBy = null, reason = '', force = false, permissions = null, forceAuthorized = false,
-    mode = 'manual', side = 'in', commandId = null, approval = null
+    forceReason = null, mode = 'manual', side = 'in', commandId = null, approval = null
   } = {}) {
     const d = this.doors.get(doorId);
     if (!d) return { ok: false, status: 404, code: 'DOOR_NOT_FOUND', message: `La puerta ${doorId} no pertenece a este controlador.` };
@@ -479,7 +479,7 @@ class Controller {
     // El hub (request firmada) puede atestiguar que el permiso ya se validó arriba (guardia en la LAN
     // o comando de la nube): `forceAuthorized:true` equivale a tener puertas.estanco.forzar.
     if (forceAuthorized === true && !perms.includes(FORCE_PERMISSION)) perms = [...perms, FORCE_PERMISSION];
-    const actor = { id: actorId(requestedBy), permissions: perms, force: force === true, forceReason: String(reason || '') };
+    const actor = { id: actorId(requestedBy), permissions: perms, force: force === true, forceReason: String(forceReason || reason || '') };
     let decision;
     try {
       decision = decide({ snap: this.snap(), doorId, side: side === 'out' ? 'out' : 'in', at: this.now(), state: this.engineState(), mode: m, actor });
@@ -490,6 +490,7 @@ class Controller {
     const type = approval ? 'approval_resolved' : (m === 'remote' ? 'remote_open' : 'manual_open');
     const basePayload = {
       requestedBy: actorId(requestedBy), reasonText: String(reason || ''), force: force === true, commandId,
+      ...(force === true && forceReason ? { forceReason: String(forceReason).slice(0, 500) } : {}),
       ...(approval ? { approvalId: approval.id, pendingEventId: approval.eventId } : {}),
       configVersion: this.edge.chunks.configVersion()
     };

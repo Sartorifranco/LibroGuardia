@@ -132,8 +132,15 @@ class CommandRouter {
       } else {
         this.save(cmd, 'running', null, false);
         try {
+          // La nube ya validó puertas.estanco.forzar + motivo al encolar un comando forzado.
           const r = await this.controllers.openDoor(owner.deviceId, cmd.doorId, {
-            requestedBy: cmd.requestedBy, reason: cmd.reason, force: cmd.force
+            requestedBy: cmd.requestedBy,
+            reason: cmd.reason,
+            force: cmd.force === true,
+            forceAuthorized: cmd.force === true,
+            forceReason: cmd.forceReason || null,
+            mode: 'remote',
+            commandId: cmd.id
           });
           const ok = !(r && r.ok === false);
           status = ok ? 'done' : 'failed';

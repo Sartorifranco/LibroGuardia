@@ -5,7 +5,9 @@
  *
  *   GET  /edge/status                    estado completo (puertas, salidas, journal, reloj, config, aprobaciones)
  *   POST /edge/config/notify             {version?}  → 202 y sincroniza con el hub en segundo plano
- *   POST /edge/doors/:id/open            {requestedBy, reason, force, permissions?, forceAuthorized?, mode?, side?, commandId?}
+ *   POST /edge/doors/:id/open            {requestedBy, reason, force, permissions?, forceAuthorized?, forceReason?, mode?, side?, commandId?}
+ *        forceAuthorized:true = el hub (request firmada) atestigua que puertas.estanco.forzar + motivo
+ *        ya se validaron (nube en /remote-open o API LAN de guardia); forceReason = motivo del forzado.
  *   POST /edge/approvals/:id             {approve, requestedBy, permissions?, force?, reason?}
  *   POST /edge/sim/input                 {doorId, input:'dps'|'bond'|'rex'|'emergency', value}  (solo simulation.enabled)
  *
@@ -94,6 +96,7 @@ function createLanServer({ controller, config, logger = nullLogger, now = () => 
         force: body.force === true,
         permissions: Array.isArray(body.permissions) ? body.permissions : null,
         forceAuthorized: body.forceAuthorized === true,
+        forceReason: body.forceReason ? String(body.forceReason) : null,
         mode: body.mode === 'remote' ? 'remote' : 'manual',
         side: body.side === 'out' ? 'out' : 'in',
         commandId: body.commandId || null
