@@ -25,16 +25,16 @@ export const ADMIN_SECTION_META = {
     description: 'Dominios de email para autoregistro de empleados que luego cargan visitas/autorizados.'
   },
   destinos: {
-    title: 'Destinos',
-    description: 'Lugares del predio con la secuencia de puertas necesarias para llegar.'
+    title: 'Recorridos de visita',
+    description: 'Qué puertas hay que pasar para llegar a un lugar del predio.'
   },
   visitas: {
     title: 'Aprobar visitas',
     description: 'Solicitudes de empleados que no pueden autorizar visitas por sí mismos.'
   },
   appearance: {
-    title: 'Apariencia',
-    description: 'Colores de marca y textos visibles de esta instalación.'
+    title: 'Datos de la empresa',
+    description: 'Nombre, logo y colores que se ven en el sistema.'
   },
   lectores: {
     title: 'Equipos de acceso',
@@ -48,7 +48,20 @@ export const ADMIN_SECTION_META = {
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
   activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },
   audit: { title: 'Auditoría', description: 'Trazabilidad de cambios administrativos (usuarios, roles, permisos, puertas).' },
-  notifications: { title: 'Notificaciones', description: 'Alertas SMTP ante ingresos excepcionales, denegados repetidos y fallas de puerta.' },
+  notifications: { title: 'Avisos por mail', description: 'A quién escribir cuando pasa algo importante.' },
+  primerosPasos: { title: 'Primeros pasos', description: 'Lo que falta para dejar el predio funcionando.' },
+  lugares: { title: 'Lugares', description: 'Zonas del predio que conecta cada puerta.' },
+  puertas: { title: 'Puertas', description: 'Cada puerta, qué lugares conecta y cuánto queda abierta.' },
+  equipos: { title: 'Equipos', description: 'La cajita que abre las puertas.' },
+  sistemas: { title: 'Sistemas', description: 'Opciones para el instalador.' },
+  grupos: { title: 'Grupos de acceso', description: 'Puertas y horario que comparten las mismas personas.' },
+  horarios: { title: 'Horarios', description: 'Días y horas en que vale un permiso.' },
+  feriados: { title: 'Feriados', description: 'Días del año en que el horario cambia.' },
+  puedePasar: { title: '¿Puede pasar?', description: 'Probar si una persona entra por una puerta.' },
+  rolesPermisos: { title: 'Roles y permisos', description: 'Qué puede hacer cada tipo de usuario.' },
+  registro: { title: 'Registro de cambios', description: 'Quién modificó qué, y cuándo.' },
+  huella: { title: 'Huella', description: 'Lectores de huella del predio.' },
+  citacionesAuto: { title: 'Citaciones automáticas', description: 'Recibir citados desde la carpeta de la empresa.' }
 };
 
 export const AUTH_WEEKDAYS = [

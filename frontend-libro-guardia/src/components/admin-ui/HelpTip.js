@@ -15,7 +15,11 @@ export function HelpTip({ text }) {
         className="aui-help__btn"
         aria-expanded={open}
         aria-describedby={open ? tipId : undefined}
-        onClick={() => setOpen((value) => !value)}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
       >
         ?
         <span className="aui-sr">Ayuda</span>

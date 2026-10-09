@@ -8,6 +8,7 @@ import {
   useNavigate,
   useParams,
   useLocation,
+  useSearchParams,
   Link
 } from 'react-router-dom';
 import { Settings, LogOut, Sun, Moon, ArrowLeft, CloudOff, CircleHelp, KeyRound, Menu, X } from 'lucide-react';
@@ -37,6 +38,7 @@ import {
   GUARDIA_SEGMENT_TO_TAB,
   isLanFeatureAllowed
 } from './utils/navigation';
+import { adminSegmentQuery, legacyAdminRedirect } from './utils/adminNav';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { useOfflineQueue } from './context/OfflineQueueContext';
 import { ToastProvider } from './context/ToastContext';
@@ -587,6 +589,7 @@ function AdminLayout() {
   const chrome = useAppChrome();
   const navigate = useNavigate();
   const { sectionSegment } = useParams();
+  const [searchParams] = useSearchParams();
   const {
     authToken,
     currentUser,
@@ -611,13 +614,23 @@ function AdminLayout() {
   const adminSection = resolvedSection || getDefaultAdminSection(currentUser);
   const activeAdminMeta = ADMIN_SECTION_META[adminSection] || { title: 'Administración', description: '' };
   const runtime = useRuntime();
+  const legacyTarget = legacyAdminRedirect(sectionSegment);
+  const segmentQuery = adminSegmentQuery(sectionSegment);
+  const adminQuery = {
+    tab: searchParams.get('tab') || segmentQuery.tab || '',
+    tipo: searchParams.get('tipo') || segmentQuery.tipo || ''
+  };
 
   useEffect(() => {
     if (runtime.mode === 'lan') return;
+    if (legacyTarget) {
+      navigate(legacyTarget, { replace: true });
+      return;
+    }
     if (!resolvedSection) {
       navigate(adminPath(getDefaultAdminSection(currentUser)), { replace: true });
     }
-  }, [resolvedSection, currentUser, navigate, runtime.mode]);
+  }, [legacyTarget, resolvedSection, currentUser, navigate, runtime.mode]);
 
   return (
     <ForcePasswordGate>
@@ -667,6 +680,7 @@ function AdminLayout() {
                     <Suspense fallback={<RouteFallback />}>
                       <AdminPage
                         adminSection={adminSection}
+                        adminQuery={adminQuery}
                         onSectionChange={(id) => navigate(adminPath(id))}
                         onExit={exitAdminPanel}
                         authPrefillKey={authPrefillKey}
