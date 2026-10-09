@@ -4,8 +4,8 @@ export const ADMIN_SECTION_META = {
   users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
   access: { title: `GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`, description: 'Conexión, reglas de tránsito y geocercas del mapa en vivo.' },
   equiposAcceso: {
-    title: 'Equipos de acceso',
-    description: 'Un solo lugar para puertas, lectores, estaciones y marcas homologadas.'
+    title: 'Sistemas',
+    description: 'Equipos del sitio, puertas y la forma anterior de instalar.'
   },
   doors: { title: 'Equipos de acceso', description: 'Puertas, lectores y estaciones en un solo lugar.' },
   peopleAccess: {

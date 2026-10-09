@@ -554,7 +554,11 @@ function GuardiaLayout() {
                   {activeTab === 'flota' && <FlotaInternaPage />}
                   {activeTab === 'novedad' && <NovedadPage />}
                   {(activeTab === 'historial' || activeTab === 'allRecords') && <HistorialPage />}
-                  {activeTab === 'alarmas' && <GuardAlarmsPanel />}
+                  {activeTab === 'alarmas' && (
+                    (hasPermission(currentUser, 'alarmas.ver') || runtime.mode === 'lan')
+                      ? <GuardAlarmsPanel />
+                      : <p className="theme-section-desc">No tenés permiso para ver las alarmas.</p>
+                  )}
                   {activeTab === 'reportes' && (
                     <Suspense fallback={<RouteFallback />}>
                       <ReportesPage />

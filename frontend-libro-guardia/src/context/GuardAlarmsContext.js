@@ -46,7 +46,7 @@ export function GuardAlarmsProvider({ children }) {
       return;
     }
     try {
-      const data = await apiFetch('/guard/live-alerts', {
+      const data = await apiFetch('/guard/alarms?status=open&limit=50', {
         token: authToken,
         allowForbidden: true,
         dedupe: false
@@ -96,7 +96,7 @@ export function GuardAlarmsProvider({ children }) {
     });
   }, [alarms]);
 
-  const acknowledge = useCallback(async (id, note) => {
+  const acknowledge = useCallback(async (id, note, { close = false } = {}) => {
     const trimmed = String(note || '').trim();
     if (trimmed.length < 3) {
       throw new Error('La nota tiene que tener al menos 3 caracteres');
@@ -104,7 +104,7 @@ export function GuardAlarmsProvider({ children }) {
     await apiFetch(`/guard/alarms/${encodeURIComponent(id)}/ack`, {
       method: 'POST',
       token: authToken,
-      body: { note: trimmed }
+      body: close ? { note: trimmed, close: true } : { note: trimmed }
     });
     setAlarms((prev) => prev.filter((item) => item.id !== id));
   }, [authToken]);
