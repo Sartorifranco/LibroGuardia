@@ -337,7 +337,9 @@ describe('Etapa 2 · Hito 1: nube ⇄ hub ⇄ controlador de punta a punta', { s
       const back = await hub.uploader.flush({ force: true });
       assert.equal(back.error, undefined, JSON.stringify(back));
       assert.equal(hub.edge.journal.stats().pending, 0);
-      assert.equal(cloudEntries().length, entriesBefore + 1, 'un ingreso: la segunda lectura no crea otro doc');
+      // g1 puede ser a su vez lectura repetida del paso de la fase (c) (mismo DNI hace < 15 s).
+      const nuevosPasos = g1.reason === 'lectura_repetida' ? 0 : 1;
+      assert.equal(cloudEntries().length, entriesBefore + nuevosPasos, 'la lectura repetida no crea otro doc');
       const ids = journalEvents().map((e) => e.id);
       assert.equal(new Set(ids).size, ids.length);
       for (const e of [g1, d1, g2]) assert.ok(ids.includes(e.id), `falta ${e.id}`);
