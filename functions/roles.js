@@ -39,6 +39,12 @@ const SYSTEM_ROLE_META = {
     description: 'Solo solicita visitas; un admin/supervisor debe aprobarlas.',
     dashboardProfile: 'operational',
     sortOrder: 21
+  },
+  responsable: {
+    label: 'Responsable de empresa',
+    description: 'Aprueba los ingresos que le piden de su empresa. No puede aprobar lo que pidió él mismo.',
+    dashboardProfile: 'operational',
+    sortOrder: 22
   }
 };
 

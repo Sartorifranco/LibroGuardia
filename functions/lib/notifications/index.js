@@ -23,6 +23,44 @@ const getChannel = (id = DEFAULT_CHANNEL) => CHANNELS[id] || CHANNELS[DEFAULT_CH
 const buildMessage = (eventType, payload = {}) => {
   const brand = 'LibroGuardia';
   switch (eventType) {
+    case 'access_request': {
+      const decided = payload.phase === 'decidida';
+      return {
+        subject: decided
+          ? `${brand}: se decidió una autorización`
+          : `${brand}: nueva solicitud de autorización`,
+        text: decided
+          ? [
+            'Se decidió una solicitud de ingreso.',
+            `Persona: ${payload.name || '—'}`,
+            `DNI: ${payload.dni || '—'}`,
+            `Resultado: ${payload.estado || '—'}`,
+            `Nota: ${payload.nota || '—'}`
+          ].join('\n')
+          : [
+            'Hay una solicitud de ingreso para revisar.',
+            `Persona: ${payload.name || '—'}`,
+            `DNI: ${payload.dni || '—'}`,
+            `Empresa: ${payload.empresaNombre || '—'}`,
+            `Motivo: ${payload.motivo || '—'}`,
+            `Desde: ${payload.desde || '—'}`,
+            `Hasta: ${payload.hasta || '—'}`,
+            `La pidió: ${payload.solicitadoPorNombre || '—'}`
+          ].join('\n')
+      };
+    }
+    case 'ingreso_emergencia':
+      return {
+        subject: `${brand}: ALERTA — ingreso de emergencia`,
+        text: [
+          'Un guardia abrió la puerta por emergencia. Hay que revisarlo.',
+          `Nombre: ${payload.name || '—'}`,
+          `DNI: ${payload.idNumber || '—'}`,
+          `Motivo: ${payload.reason || '—'}`,
+          `Operador: ${payload.username || payload.userId || '—'}`,
+          `Registro: ${payload.entryId || '—'}`
+        ].join('\n')
+      };
     case 'exceptional_entry':
       return {
         subject: `${brand}: ingreso excepcional`,
@@ -164,7 +202,14 @@ const notify = async (eventType, payload = {}) => {
       return { sent: false, skipped: true, reason: 'evento_deshabilitado' };
     }
 
-    const recipients = Array.isArray(eventCfg.recipients) ? eventCfg.recipients : [];
+    let recipients = Array.isArray(eventCfg.recipients) ? eventCfg.recipients : [];
+    if (eventType === 'access_request' || eventType === 'ingreso_emergencia') {
+      const extra = Array.isArray(payload.extraRecipients) ? payload.extraRecipients : [];
+      recipients = [...new Set([
+        ...recipients,
+        ...extra.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+      ])];
+    }
     if (!recipients.length) {
       return { sent: false, skipped: true, reason: 'sin_destinatarios' };
     }

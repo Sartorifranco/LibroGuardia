@@ -9,7 +9,9 @@ const EVENT_TYPES = [
   'admin_sensitive',
   'bridge_offline',
   'duress_access',
-  'edge_alarm'
+  'edge_alarm',
+  'access_request',
+  'ingreso_emergencia'
 ];
 
 const DEFAULT_EVENT = () => ({
@@ -38,7 +40,9 @@ const DEFAULT_CONFIG = {
     },
     door_relay_failure: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
     admin_sensitive: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
-    bridge_offline: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
+    bridge_offline: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
+    access_request: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
+    ingreso_emergencia: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
   }
 };
 

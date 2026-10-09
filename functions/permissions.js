@@ -43,7 +43,10 @@ const PERMISSION_KEYS = [
   'visitas.create',
   'visitas.request',
   'visitas.approve',
-  'visitas.view.own'
+  'visitas.view.own',
+  'autorizaciones.solicitar',
+  'autorizaciones.aprobar',
+  'autorizaciones.aprobar_todas'
 ];
 
 const TECHNICAL_PERMISSIONS = [
@@ -79,7 +82,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'puertas.estanco.forzar',
     'fleet.gps.read',
     'attendance.alerts.read',
-    'guard.doors.panel'
+    'guard.doors.panel',
+    'autorizaciones.solicitar'
   ],
   supervisor: [
     'entries.create',
@@ -111,15 +115,23 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.kiosk',
     'access.exceptional_entry',
     'attendance.alerts.read',
-    'visitas.approve'
+    'visitas.approve',
+    'autorizaciones.solicitar',
+    'autorizaciones.aprobar_todas'
   ],
   'empleado-visitas': [
     'visitas.create',
-    'visitas.view.own'
+    'visitas.view.own',
+    'autorizaciones.solicitar'
   ],
   'empleado-solicitar-visitas': [
     'visitas.request',
-    'visitas.view.own'
+    'visitas.view.own',
+    'autorizaciones.solicitar'
+  ],
+  responsable: [
+    'autorizaciones.aprobar',
+    'autorizaciones.solicitar'
   ],
   admin: PERMISSION_KEYS.slice()
 };

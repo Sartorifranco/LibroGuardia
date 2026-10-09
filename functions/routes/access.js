@@ -375,11 +375,17 @@ router.get('/api/guard/access-status', auth, requirePermission('master.citacione
 
 router.post('/api/guard/pre-register', auth, requirePermission('master.citaciones.preregister'), async (req, res) => {
   try {
-    const authorization = await preRegisterVisitor(req.body, {
+    const result = await preRegisterVisitor(req.body, {
       userId: req.user.id,
-      username: req.user.username
+      username: req.user.username,
+      req
     });
-    res.status(201).json({ message: 'Visita pre-registrada', authorization });
+    res.status(201).json({
+      message: result.message,
+      pending: true,
+      request: result.request,
+      authorization: null
+    });
   } catch (err) {
     res.status(err.status || 400).json({ message: err.message || 'Error al pre-registrar' });
   }
@@ -389,19 +395,15 @@ router.post('/api/guard/exceptional-entry', auth, requirePermission('access.exce
   try {
     const result = await registerExceptionalEntry(req.body, {
       userId: req.user.id,
-      username: req.user.username
-    });
-    notifySafe('exceptional_entry', {
-      name: req.body?.name,
-      idNumber: req.body?.idNumber,
-      reason: req.body?.reason,
-      entryId: result.entryId,
-      userId: req.user.id,
-      username: req.user.username || req.user.id
+      username: req.user.username,
+      role: req.user.role,
+      req
     });
     res.status(201).json(result);
   } catch (err) {
-    res.status(err.status || 400).json({ message: err.message || 'Error en ingreso excepcional' });
+    const body = { message: err.message || 'Error en ingreso de emergencia' };
+    if (err.status === 400) body.reasons = require('../lib/accessRequests').EMERGENCY_REASONS;
+    res.status(err.status || 400).json(body);
   }
 });
 
