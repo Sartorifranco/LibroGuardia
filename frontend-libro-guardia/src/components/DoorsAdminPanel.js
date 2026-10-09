@@ -594,7 +594,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
             <p className="aui-card__meta">Ej.: del Estacionamiento a la Planta.</p>
             {draft.placeA && draft.placeB ? (
               <p className="aui-card__meta">
-                Así queda: del {placeName(areas, draft.placeA)} al {placeName(areas, draft.placeB)}.
+                Así queda: desde «{placeName(areas, draft.placeA)}» hacia «{placeName(areas, draft.placeB)}».
               </p>
             ) : null}
             <p className="aui-card__meta">{SIDES_HELP}</p>
