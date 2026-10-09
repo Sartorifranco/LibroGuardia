@@ -46,7 +46,10 @@ export const PERMISSION_LABELS = {
   'visitas.approve': 'Aprobar o rechazar solicitudes de visita',
   'visitas.view.own': 'Ver solo mis visitas cargadas',
   'access.groups.manage': 'Gestionar grupos, horarios y feriados',
-  'personas.puertas.asignar': 'Asignar grupos y acceso total a personas'
+  'personas.puertas.asignar': 'Asignar grupos y acceso total a personas',
+  'autorizaciones.solicitar': 'Pedir una autorización de ingreso',
+  'autorizaciones.aprobar': 'Aprobar ingresos de su empresa',
+  'autorizaciones.aprobar_todas': 'Aprobar ingresos de cualquier empresa'
 };
 
 /** Agrupación de permisos para la UI de roles (nombres de uso diario). */
@@ -71,7 +74,10 @@ export const PERMISSION_CATEGORIES = [
       'visitas.create',
       'visitas.request',
       'visitas.approve',
-      'visitas.view.own'
+      'visitas.view.own',
+      'autorizaciones.solicitar',
+      'autorizaciones.aprobar',
+      'autorizaciones.aprobar_todas'
     ]
   },
   {
@@ -165,7 +171,8 @@ export const ROLE_TEMPLATES = {
       'attendance.alerts.read',
       'guard.doors.panel',
       'alarmas.ver',
-      'alarmas.reconocer'
+      'alarmas.reconocer',
+      'autorizaciones.solicitar'
     ]
   },
   supervisor: {
@@ -206,7 +213,9 @@ export const ROLE_TEMPLATES = {
       'alarmas.ver',
       'alarmas.reconocer',
       'access.groups.manage',
-      'personas.puertas.asignar'
+      'personas.puertas.asignar',
+      'autorizaciones.solicitar',
+      'autorizaciones.aprobar_todas'
     ]
   },
   monitoreo: {
@@ -227,13 +236,19 @@ export const ROLE_TEMPLATES = {
     label: 'Empleado — visitas',
     description: 'Puede cargar visitas ya autorizadas y ver las propias.',
     dashboardProfile: 'operational',
-    permissions: ['visitas.create', 'visitas.view.own']
+    permissions: ['visitas.create', 'visitas.view.own', 'autorizaciones.solicitar']
   },
   'empleado-solicitar-visitas': {
     label: 'Empleado — solicitar visitas',
     description: 'Solo puede solicitar visitas; un admin/supervisor debe aprobarlas.',
     dashboardProfile: 'operational',
-    permissions: ['visitas.request', 'visitas.view.own']
+    permissions: ['visitas.request', 'visitas.view.own', 'autorizaciones.solicitar']
+  },
+  responsable: {
+    label: 'Responsable de empresa',
+    description: 'Aprueba los ingresos de su empresa. No puede aprobar lo que pidió él mismo.',
+    dashboardProfile: 'operational',
+    permissions: ['autorizaciones.aprobar', 'autorizaciones.solicitar']
   },
   admin: {
     label: 'Admin',
@@ -320,6 +335,8 @@ export const canAccessGuardia = (user) => {
     || hasPermission(user, 'monitoring.doors.panel')
     || hasPermission(user, 'guard.doors.panel')
     || hasPermission(user, 'alarmas.ver')
+    || hasPermission(user, 'autorizaciones.aprobar')
+    || hasPermission(user, 'autorizaciones.aprobar_todas')
   );
 };
 
@@ -330,6 +347,7 @@ export const canAccessEmpleado = (user) => {
     hasPermission(user, 'visitas.create')
     || hasPermission(user, 'visitas.request')
     || hasPermission(user, 'visitas.view.own')
+    || hasPermission(user, 'autorizaciones.solicitar')
   );
 };
 
@@ -384,6 +402,7 @@ export const ROLE_DISPLAY_LABELS = {
   monitoreo: 'Monitoreo',
   'empleado-visitas': 'Empleado',
   empleado: 'Empleado',
+  responsable: 'Responsable de empresa',
   kiosk_puerta: 'Estación de acceso',
   operational: 'Operación'
 };

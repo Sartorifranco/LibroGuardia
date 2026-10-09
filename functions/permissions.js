@@ -49,7 +49,10 @@ const PERMISSION_KEYS = [
   // Grupos, horarios y feriados (jefe y Sistemas).
   'access.groups.manage',
   // Asignar grupos y acceso total a una persona (D3: jefe y Sistemas).
-  'personas.puertas.asignar'
+  'personas.puertas.asignar',
+  'autorizaciones.solicitar',
+  'autorizaciones.aprobar',
+  'autorizaciones.aprobar_todas'
 ];
 
 const TECHNICAL_PERMISSIONS = [
@@ -87,7 +90,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'attendance.alerts.read',
     'guard.doors.panel',
     'alarmas.ver',
-    'alarmas.reconocer'
+    'alarmas.reconocer',
+    'autorizaciones.solicitar'
   ],
   supervisor: [
     'entries.create',
@@ -123,15 +127,23 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'alarmas.ver',
     'alarmas.reconocer',
     'access.groups.manage',
-    'personas.puertas.asignar'
+    'personas.puertas.asignar',
+    'autorizaciones.solicitar',
+    'autorizaciones.aprobar_todas'
   ],
   'empleado-visitas': [
     'visitas.create',
-    'visitas.view.own'
+    'visitas.view.own',
+    'autorizaciones.solicitar'
   ],
   'empleado-solicitar-visitas': [
     'visitas.request',
-    'visitas.view.own'
+    'visitas.view.own',
+    'autorizaciones.solicitar'
+  ],
+  responsable: [
+    'autorizaciones.aprobar',
+    'autorizaciones.solicitar'
   ],
   admin: PERMISSION_KEYS.slice()
 };

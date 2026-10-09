@@ -234,6 +234,7 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+    const empresaId = String(req.body?.empresaId || '').trim() || null;
     await userRef.set({
       username: normalizedUsername,
       password: passwordHash,
@@ -241,6 +242,7 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
       active: true,
       mustChangePassword: true,
       passwordVersion: 1,
+      empresaId,
       createdAt: FieldValue.serverTimestamp()
     });
 
@@ -298,6 +300,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
       username: userToUpdate.username || id,
       role: userToUpdate.role,
       active: userToUpdate.active !== false,
+      empresaId: userToUpdate.empresaId || null,
       passwordChanged: false
     };
 
@@ -324,6 +327,10 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
       updates.passwordVersion = nextPasswordVersion(userToUpdate);
     }
     if (typeof active === 'boolean' && req.user.id !== id) updates.active = active;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'empresaId')) {
+      const empresaId = String(req.body.empresaId || '').trim();
+      updates.empresaId = empresaId || null;
+    }
 
     // Desactivar o cambiar el rol invalida las sesiones abiertas (JWT con role/permisos viejos).
     const deactivating = updates.active === false && userToUpdate.active !== false;
@@ -353,6 +360,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
         username: afterData.username || id,
         role: afterData.role,
         active: afterData.active !== false,
+        empresaId: afterData.empresaId || null,
         passwordChanged: Boolean(password),
         mustChangePassword: afterData.mustChangePassword === true,
         passwordVersion: getPasswordVersion(afterData)

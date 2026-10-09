@@ -45,6 +45,7 @@ const ALARM_TYPES = new Set([
   'device_offline',
   'lock_fault',
   'emergency',
+  'ingreso_emergencia',
   'tamper',
   'hub_offline',
   'config_stale',

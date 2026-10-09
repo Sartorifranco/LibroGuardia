@@ -32,7 +32,7 @@ const { evaluateSoftApb, passageKey } = require('./apbMonitor');
 const ALARM_TYPES = new Set([
   'door_forced', 'held_open', 'lock_fault', 'duress', 'device_offline', 'tamper',
   'apertura_forzada_estanco', 'hub_offline', 'config_stale', 'emergency', 'interlock_violation',
-  'credential_key_missing'
+  'credential_key_missing', 'ingreso_emergencia'
 ]);
 const RESTORED_BY_SECURE = new Set(['door_forced', 'held_open']);
 

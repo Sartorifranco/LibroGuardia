@@ -35,6 +35,7 @@ export const GUARDIA_TAB_SEGMENTS = {
   kiosk: 'kiosk',
   citados: 'citados',
   autorizados: 'autorizados',
+  autorizaciones: 'autorizaciones',
   vehiculosAutorizados: 'vehiculos-autorizados',
   botonera: 'botonera',
   alarmas: 'alarmas',
@@ -200,7 +201,8 @@ export const LAN_FEATURE_CAPABILITY = {
   historial: 'entries',
   allRecords: 'entries',
   alarmas: 'alarms',
-  kiosk: 'scan'
+  kiosk: 'scan',
+  autorizaciones: null
 };
 
 export function isLanFeatureAllowed(featureId, capabilities = []) {
@@ -312,6 +314,12 @@ export const buildSidebarItems = (user, runtime = null) => {
     label: 'Alarmas',
     icon: Bell
   });
+  addIf(
+    hasPermission(user, 'autorizaciones.solicitar')
+    || hasPermission(user, 'autorizaciones.aprobar')
+    || hasPermission(user, 'autorizaciones.aprobar_todas'),
+    { id: 'autorizaciones', label: 'Autorizaciones', icon: ShieldCheck }
+  );
 
   addIf(canAccessHistorial(user), {
     id: 'historial',

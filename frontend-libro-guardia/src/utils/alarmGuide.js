@@ -25,6 +25,11 @@ const GUIDES = {
     action: 'Mirá quién pasó detrás y anotalo si no corresponde.',
     critical: false
   },
+  ingreso_emergencia: {
+    label: 'Ingreso de emergencia',
+    action: 'El guardia abrió por emergencia. El jefe de seguridad tiene que revisarlo.',
+    critical: true
+  },
   device_offline: {
     label: 'Equipo sin conexión',
     action: 'Revisá si el equipo tiene luz. Si sigue igual, avisá a sistemas.',
@@ -51,6 +56,7 @@ const ALIASES = {
   retenida: 'held_open',
   emergency: 'emergency',
   emergencia: 'emergency',
+  ingreso_emergencia: 'ingreso_emergencia',
   duress: 'duress',
   coaccion: 'duress',
   coacción: 'duress',

@@ -51,6 +51,7 @@ import brand from './config/brand';
 import LoginPage from './pages/Login/LoginPage';
 import HomePage from './pages/Home/HomePage';
 import PersonalPage from './pages/Personal/PersonalPage';
+import AutorizacionesPage from './pages/Autorizaciones/AutorizacionesPage';
 import VehiculosExternosPage from './pages/VehiculosExternos/VehiculosExternosPage';
 import FlotaInternaPage from './pages/FlotaInterna/FlotaInternaPage';
 import NovedadPage from './pages/Novedad/NovedadPage';
@@ -550,6 +551,7 @@ function GuardiaLayout() {
                     </div>
                   )}
                   {activeTab === 'personal' && <PersonalPage key={personalPrefillKey} />}
+                  {activeTab === 'autorizaciones' && <AutorizacionesPage />}
                   {activeTab === 'vehiculo' && <VehiculosExternosPage />}
                   {activeTab === 'flota' && <FlotaInternaPage />}
                   {activeTab === 'novedad' && <NovedadPage />}
@@ -714,6 +716,13 @@ function EmpleadoLoginRoute() {
 }
 
 function EmpleadoIndexRedirect() {
+  const { currentUser } = useAuth();
+  const visitas = hasPermission(currentUser, 'visitas.view.own')
+    || hasPermission(currentUser, 'visitas.create')
+    || hasPermission(currentUser, 'visitas.request');
+  if (!visitas && hasPermission(currentUser, 'autorizaciones.solicitar')) {
+    return <Navigate to="/empleado/autorizaciones" replace />;
+  }
   return <Navigate to="/empleado/visitas" replace />;
 }
 
@@ -768,6 +777,14 @@ function AppRoutes() {
           element={(
             <RequireEmpleado>
               <EmpleadoVisitasPage />
+            </RequireEmpleado>
+          )}
+        />
+        <Route
+          path="autorizaciones"
+          element={(
+            <RequireEmpleado>
+              <AutorizacionesPage />
             </RequireEmpleado>
           )}
         />

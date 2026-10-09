@@ -57,6 +57,7 @@ app.use(require('./routes/auth'));
 app.use(require('./routes/adminUsersRoles'));
 app.use(require('./routes/masterData'));
 app.use(require('./routes/authorizations'));
+app.use(require('./routes/accessRequests'));
 app.use(require('./routes/access'));
 app.use(require('./routes/empresasDestinos'));
 app.use(require('./routes/lectores'));

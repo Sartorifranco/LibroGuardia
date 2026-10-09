@@ -26,6 +26,16 @@ const EVENT_META = [
     hint: 'La PC de planta (estación, citados o BioStar) no reportó heartbeat en ~30 minutos.'
   },
   {
+    key: 'access_request',
+    label: 'Solicitud de autorización',
+    hint: 'Cuando alguien pide un ingreso. También se avisa al responsable de la empresa.'
+  },
+  {
+    key: 'ingreso_emergencia',
+    label: 'Ingreso de emergencia',
+    hint: 'Cuando un guardia abre la puerta por emergencia. Se avisa al jefe de seguridad.'
+  },
+  {
     key: 'admin_sensitive',
     label: 'Cambios admin sensibles',
     hint: 'Borrado de usuario/rol, cambio de permisos (vía auditoría).'
@@ -48,7 +58,9 @@ const DEFAULT_CONFIG = {
     repeated_denials: { enabled: true, recipients: [], threshold: 3, windowMinutes: 10 },
     door_relay_failure: { enabled: true, recipients: [] },
     admin_sensitive: { enabled: true, recipients: [] },
-    bridge_offline: { enabled: true, recipients: [] }
+    bridge_offline: { enabled: true, recipients: [] },
+    access_request: { enabled: true, recipients: [] },
+    ingreso_emergencia: { enabled: true, recipients: [] }
   }
 };
 

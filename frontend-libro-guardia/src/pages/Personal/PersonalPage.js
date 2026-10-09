@@ -5,17 +5,28 @@ import { useAuth } from '../../context/AuthContext';
 import { useClockPrefill } from '../../context/ClockPrefillContext';
 import { useEntries, wasEntryStored } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { apiFetch } from '../../services/api';
 import { hasPermission } from '../../utils/permissions';
 import { consumeAuthManualPrefill } from '../../utils/authPrefill';
+
+const EMERGENCY_REASONS = [
+  { id: 'medico', label: 'Emergencia médica' },
+  { id: 'incendio', label: 'Incendio o evacuación' },
+  { id: 'seguridad', label: 'Riesgo de seguridad' },
+  { id: 'autoridad', label: 'Autoridad o fuerza pública' },
+  { id: 'otro', label: 'Otro' }
+];
 
 function PersonalPage() {
   const { authToken, currentUser } = useAuth();
   const { addEntry, reloadEntries, entriesLoading } = useEntries();
   const { showSuccess, showError } = useToast();
+  const { confirm } = useConfirm();
   const { prefill, consumePrefill } = useClockPrefill();
 
-  const [personalAllowOverride, setPersonalAllowOverride] = useState(false);
+  const [emergencyReason, setEmergencyReason] = useState('medico');
+  const [showEmergency, setShowEmergency] = useState(false);
   const [personalAccessStatus, setPersonalAccessStatus] = useState(null);
   const [personalNominaProfile, setPersonalNominaProfile] = useState(null);
   const [personalExceptionalReason, setPersonalExceptionalReason] = useState('');
@@ -42,6 +53,7 @@ function PersonalPage() {
     if (scanPrefill.dni) setPersonalId(String(scanPrefill.dni));
     if (scanPrefill.name) setPersonalName(String(scanPrefill.name));
     setPersonalType('ingreso');
+    setShowEmergency(true);
   }, []);
 
   useEffect(() => {
@@ -145,17 +157,25 @@ function PersonalPage() {
     setPersonalEventTime('');
     setPersonalArtExpiry('');
     setPersonalLicenseExpiry('');
-    setPersonalAllowOverride(false);
+    setShowEmergency(false);
+    setEmergencyReason('medico');
     setPersonalAccessStatus(null);
     setPersonalNominaProfile(null);
     setPersonalExceptionalReason('');
   };
 
   const handleExceptionalPersonalSubmit = async () => {
-    if (!personalExceptionalReason.trim()) {
-      showError('Indique el motivo del ingreso excepcional');
+    if (personalExceptionalReason.trim().length < 5) {
+      showError('Escribí qué pasó, con unas palabras.');
       return;
     }
+    const ok = await confirm({
+      title: 'Abrir por emergencia',
+      message: 'Esto abre la puerta ahora y avisa al jefe de seguridad. Después lo tiene que revisar.',
+      confirmLabel: 'Abrir y avisar',
+      tone: 'danger'
+    });
+    if (!ok) return;
     try {
       setLoading(true);
       const data = await apiFetch('/guard/exceptional-entry', {
@@ -167,15 +187,49 @@ function PersonalPage() {
           company: personalCompany,
           destination: personalDestination,
           eventTime: personalEventTime,
-          reason: personalExceptionalReason.trim(),
+          reasonCode: emergencyReason,
+          reasonText: personalExceptionalReason.trim(),
           movementType: personalType
         }
       });
-      showSuccess(data.message || 'Ingreso excepcional registrado.');
+      showSuccess(data.message || 'Puerta abierta por emergencia. Avisamos al jefe.');
       resetPersonalForm();
       await reloadEntries(true);
     } catch (err) {
       showError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAskAuthorization = async () => {
+    if (!personalName.trim() || !personalId.trim()) {
+      showError('Completá nombre y DNI.');
+      return;
+    }
+    if (!personalDestination.trim() && !personalCompany.trim()) {
+      showError('Indicá la empresa o el destino para saber a quién enviarle el pedido.');
+      return;
+    }
+    const hoy = new Date().toISOString().slice(0, 10);
+    try {
+      setLoading(true);
+      const data = await apiFetch('/requests', {
+        method: 'POST',
+        token: authToken,
+        body: {
+          tipo: 'temporal',
+          persona: { name: personalName.trim(), dni: personalId.trim() },
+          company: personalCompany.trim(),
+          destination: personalDestination.trim(),
+          desde: hoy,
+          hasta: hoy,
+          motivo: 'Pedido desde la pantalla de personal'
+        }
+      });
+      showSuccess(data.message || 'Solicitud enviada.');
+    } catch (err) {
+      showError(err.message || 'No se pudo enviar la solicitud.');
     } finally {
       setLoading(false);
     }
@@ -216,12 +270,6 @@ function PersonalPage() {
       setLoading(false);
     }
 
-    const useExceptional = personalType === 'ingreso'
-      && personalExceptionalReason.trim()
-      && hasPermission(currentUser, 'access.exceptional_entry')
-      && personalAccessStatus
-      && !personalAccessStatus.authorized;
-
     setLoading(true);
     try {
       const outcome = await addEntry('personal', {
@@ -231,9 +279,7 @@ function PersonalPage() {
         company: personalCompany,
         destination: personalDestination,
         eventTime: personalEventTime,
-        entrySource: 'manual',
-        allowAccessOverride: useExceptional || personalAllowOverride,
-        exceptionalReason: useExceptional ? personalExceptionalReason.trim() : undefined
+        entrySource: 'manual'
       });
       if (wasEntryStored(outcome)) resetPersonalForm();
     } finally {
@@ -331,39 +377,55 @@ function PersonalPage() {
         )}
 
         {personalType === 'ingreso'
-          && personalAccessStatus
-          && !personalAccessStatus.authorized
+          && (showEmergency || (personalAccessStatus && !personalAccessStatus.authorized))
           && hasPermission(currentUser, 'access.exceptional_entry') && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
-            <p className="text-sm font-medium text-amber-900">Ingreso excepcional — motivo obligatorio</p>
+            <p className="text-sm font-medium text-amber-900">Emergencia</p>
+            <p className="text-sm text-amber-900">
+              Abre la puerta ahora y avisa al jefe de seguridad. Después lo tiene que revisar.
+            </p>
+            <label className="block text-sm font-medium text-amber-950" htmlFor="emergencyReason">
+              Qué pasó
+              <select
+                id="emergencyReason"
+                className="input-field bg-white mt-1"
+                value={emergencyReason}
+                onChange={(e) => setEmergencyReason(e.target.value)}
+              >
+                {EMERGENCY_REASONS.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+            </label>
             <textarea
               className="input-field min-h-[72px]"
-              placeholder="Describa por qué se autoriza el ingreso (obligatorio)"
+              placeholder="Contá en pocas palabras qué pasó"
               value={personalExceptionalReason}
               onChange={(e) => setPersonalExceptionalReason(e.target.value)}
-              required
               rows={2}
             />
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || !personalExceptionalReason.trim()}
+              disabled={busy || personalExceptionalReason.trim().length < 5}
               onClick={handleExceptionalPersonalSubmit}
             >
-              Registrar ingreso excepcional
+              Emergencia
             </button>
           </div>
         )}
 
-        {hasPermission(currentUser, 'access.manual_override') && personalType === 'ingreso' && (
-          <label className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={personalAllowOverride}
-              onChange={(e) => setPersonalAllowOverride(e.target.checked)}
-            />
-            Autorizar el ingreso y abrir la puerta aunque no haya citación
-          </label>
+        {(hasPermission(currentUser, 'autorizaciones.solicitar')
+          || hasPermission(currentUser, 'access.manual_override')
+          || hasPermission(currentUser, 'master.citaciones.preregister')) && personalType === 'ingreso' && (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={busy}
+            onClick={handleAskAuthorization}
+          >
+            Pedir autorización
+          </button>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

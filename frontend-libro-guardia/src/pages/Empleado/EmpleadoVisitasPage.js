@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { LogOut, QrCode } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -153,6 +154,11 @@ function EmpleadoVisitasPage() {
           <button type="button" className="btn btn-secondary btn-sm" onClick={logout}>
             <LogOut size={16} /> Salir
           </button>
+          {hasPermission(currentUser, 'autorizaciones.solicitar') && (
+            <Link to="/empleado/autorizaciones" className="btn btn-secondary btn-sm">
+              Autorizaciones
+            </Link>
+          )}
         </div>
       </header>
 

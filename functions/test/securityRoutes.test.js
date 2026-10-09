@@ -100,22 +100,26 @@ describe('Permisos en endpoints de acceso, libro y nómina', () => {
     assert.equal(res.body.entry.accessAuthorized, false);
   });
 
-  it('allowAccessOverride se honra con access.manual_override (supervisor)', async () => {
+  it('allowAccessOverride ya no abre la puerta: queda una solicitud (supervisor)', async () => {
     const res = await srv.request('POST', '/api/entries', {
       token: tokenFor('supervisor', 'supervisor'),
       body: personalEntry({ allowAccessOverride: true, entrySource: 'scan' })
     });
     assert.equal(res.status, 201, res.text);
-    assert.equal(triggerCalls[0].allowManualOverride, true);
+    assert.notEqual(triggerCalls[0].allowManualOverride, true);
+    assert.match(res.body.message || '', /Solicitud enviada/i);
+    assert.ok(res.body.accessRequest?.id);
   });
 
-  it('allowAccessOverride se honra con access.exceptional_entry (guardia)', async () => {
+  it('allowAccessOverride ya no abre la puerta: queda una solicitud (guardia)', async () => {
     const res = await srv.request('POST', '/api/entries', {
       token: tokenFor('guardia', 'guardia'),
       body: personalEntry({ allowAccessOverride: true, entrySource: 'scan' })
     });
     assert.equal(res.status, 201, res.text);
-    assert.equal(triggerCalls[0].allowManualOverride, true);
+    assert.notEqual(triggerCalls[0].allowManualOverride, true);
+    assert.match(res.body.message || '', /Solicitud enviada/i);
+    assert.ok(res.body.accessRequest?.id);
   });
 
   it('el claim permissions del JWT no otorga override', async () => {
