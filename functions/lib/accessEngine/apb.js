@@ -35,6 +35,9 @@ const evaluateApb = ({
     return { result: 'ok', reason: null, effect };
   }
   if (presence == null) {
+    // En modo blando el colado lo detecta el hub después (apbMonitor): avisar acá
+    // marcaría todos los pasos. Solo en modo duro importa que no se pudo controlar.
+    if (mode !== 'hard') return { result: 'ok', reason: null, effect };
     return { result: 'warn', reason: 'apb_sin_presencia', effect };
   }
   const current = presence[presenceKey];
