@@ -9,12 +9,15 @@ import { useAuth } from '../../context/AuthContext';
 import { useEntries } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
 import { getDashboardProfile, hasPermission } from '../../utils/permissions';
+import { useRuntime } from '../../context/RuntimeContext';
+import PlantGuardHome from '../../components/PlantGuardHome';
 
 /**
  * Dashboard de inicio — lógica de renderHomeDashboard.
  */
 function HomePage({ onNavigate, onEnterAdmin }) {
   const { authToken, currentUser } = useAuth();
+  const { mode } = useRuntime();
   const { entries, reloadEntries } = useEntries();
   const { showSuccess } = useToast();
 
@@ -33,6 +36,9 @@ function HomePage({ onNavigate, onEnterAdmin }) {
   }, [reloadEntries, showSuccess]);
 
   const dashboardProfile = getDashboardProfile(currentUser);
+  if (mode === 'lan') {
+    return <PlantGuardHome />;
+  }
   const showExpirationAlerts = ['guardia', 'supervisor', 'admin'].includes(dashboardProfile)
     || ['guardia', 'supervisor', 'admin'].includes(currentUser?.role);
 

@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
 import { getEntryTableDisplay } from '../../utils/entryDisplay';
+import EntryNotes from '../../components/EntryNotes';
 import {
   HISTORIAL_DATE_PRESETS,
   resolveHistorialDateRange,
@@ -24,7 +25,7 @@ const PAGE_SIZE = 50;
 const EXPORT_MAX = 1000;
 
 function movementKind(entry = {}) {
-  const raw = String(entry.movementType || '').toLowerCase();
+  const raw = String(entry.movementType || entry.tipoMovimiento || '').toLowerCase();
   if (raw.includes('egreso')) return 'egreso';
   if (raw.includes('ingreso')) return 'ingreso';
   if (entry.type === 'novedad') return 'novedad';
@@ -66,6 +67,7 @@ function HistorialCards({ entries, doorNamesById }) {
             <p>Hora: {hora}</p>
             <p>Puerta: {door}</p>
             <p>DNI: {dni}</p>
+            <EntryNotes entry={entry} />
           </article>
         );
       })}
@@ -562,7 +564,10 @@ function HistorialPage() {
                       const rowKey = entry.id || `${entry.timestamp}-${name}`;
                       return (
                         <tr key={rowKey}>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{name}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {name}
+                            <EntryNotes entry={entry} />
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 capitalize">{verb}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{door}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{date.toLocaleDateString()}</td>
@@ -620,7 +625,10 @@ function HistorialPage() {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                             {entry.registeredByUsername || 'Desconocido'}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[0]}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {specificDetails[0]}
+                            <EntryNotes entry={entry} />
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[1]}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[2]}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[3]}</td>

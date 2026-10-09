@@ -34,7 +34,8 @@ import {
   sectionFromAdminSegment,
   getDefaultAdminSection,
   resolveHomePath,
-  GUARDIA_SEGMENT_TO_TAB
+  GUARDIA_SEGMENT_TO_TAB,
+  isLanFeatureAllowed
 } from './utils/navigation';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { useOfflineQueue } from './context/OfflineQueueContext';
@@ -43,6 +44,9 @@ import { ConfirmProvider } from './context/ConfirmContext';
 import { OfflineQueueProvider } from './context/OfflineQueueContext';
 import { EntriesProvider } from './context/EntriesContext';
 import { ClockPrefillProvider } from './context/ClockPrefillContext';
+import { RuntimeProvider, useRuntime } from './context/RuntimeContext';
+import { HubLiveProvider } from './context/HubLiveContext';
+import { GuardAlarmsProvider } from './context/GuardAlarmsContext';
 import brand from './config/brand';
 import LoginPage from './pages/Login/LoginPage';
 import HomePage from './pages/Home/HomePage';
@@ -58,6 +62,10 @@ import EmpleadoVisitasPage from './pages/Empleado/EmpleadoVisitasPage';
 import VisitaInvitacionPage from './pages/Empleado/VisitaInvitacionPage';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
 import LiveAlertsToaster from './components/LiveAlertsToaster';
+import RuntimeModeBadge from './components/RuntimeModeBadge';
+import LanUnavailable from './components/LanUnavailable';
+import CriticalAlarmBanner from './components/CriticalAlarmBanner';
+import GuardAlarmsPanel from './components/GuardAlarmsPanel';
 import {
   RequireAuth,
   RequireGuardia,
@@ -98,6 +106,7 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
     sidebarItems
   } = chrome;
   const { rejectedItems, isOnline } = useOfflineQueue();
+  const { mode: runtimeMode } = useRuntime();
   const rejectedCount = rejectedItems.length;
   const activeTab = location.pathname.startsWith('/guardia/')
     ? tabFromGuardiaSegment(location.pathname.split('/')[2])
@@ -152,7 +161,7 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
         <KeyRound size={16} />
         <span className="btn-onboarding-link__label">Mi contraseña</span>
       </button>
-      {canAccessAdmin(currentUser) && (
+      {runtimeMode !== 'lan' && canAccessAdmin(currentUser) && (
         isAdminMode ? (
           <button
             type="button"
@@ -212,6 +221,7 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
               <GlobalSearch onNavigate={navigateToTab} />
             </div>
           )}
+          <RuntimeModeBadge />
           <span
             className={`conn-pill${isOnline ? ' conn-pill--on' : ' conn-pill--off'}`}
             role="status"
@@ -336,9 +346,20 @@ function ForcePasswordGate({ children }) {
 
 function GuardiaLayout() {
   const chrome = useAppChrome();
+  const runtime = useRuntime();
   const { tabSegment } = useParams();
+  const lanBlocked = (featureId) => runtime.status === 'ready'
+    && runtime.mode === 'lan'
+    && !isLanFeatureAllowed(featureId, runtime.capabilities);
 
   if (tabSegment === 'botonera-ventana') {
+    if (lanBlocked('botonera')) {
+      return (
+        <ForcePasswordGate>
+          <LanUnavailable title="Puertas" />
+        </ForcePasswordGate>
+      );
+    }
     return (
       <ForcePasswordGate>
         <BotoneraPopupPage />
@@ -380,6 +401,13 @@ function GuardiaLayout() {
   } = chrome;
 
   if (activeTab === 'kiosk') {
+    if (lanBlocked('kiosk')) {
+      return (
+        <ForcePasswordGate>
+          <LanUnavailable title="Acceso" />
+        </ForcePasswordGate>
+      );
+    }
     return (
       <ForcePasswordGate>
         <AccessScanProvider
@@ -438,7 +466,7 @@ function GuardiaLayout() {
                 items={sidebarItems}
               />
               <div className={`app-content${activeTab === 'botonera' ? ' app-content--puertas' : ''}`}>
-                {activeTab !== 'inicio' && hasPermission(currentUser, 'fleet.gps.read') && (
+                {activeTab !== 'inicio' && runtime.mode !== 'lan' && hasPermission(currentUser, 'fleet.gps.read') && (
                   <FleetGatePanel
                     authToken={authToken}
                     enabled
@@ -447,7 +475,7 @@ function GuardiaLayout() {
                     onMovementRegistered={handleGpsMovementsRegistered}
                   />
                 )}
-                {['personal', 'vehiculo', 'flota', 'novedad'].includes(activeTab) && (
+                {['personal', 'vehiculo', 'flota', 'novedad'].includes(activeTab) && !lanBlocked(activeTab) && (
                   <LiveClockBar
                     activeTab={activeTab}
                     onApplyTime={(timeValue) => applyCurrentTime(timeValue, activeTab)}
@@ -455,6 +483,10 @@ function GuardiaLayout() {
                   />
                 )}
                 <main className="app-main-inner">
+                  {lanBlocked(activeTab) ? (
+                    <LanUnavailable title="Esta pantalla" />
+                  ) : (
+                  <>
                   {activeTab === 'inicio' && (
                     <HomePage onNavigate={navigateToTab} onEnterAdmin={enterAdminPanel} />
                   )}
@@ -522,10 +554,13 @@ function GuardiaLayout() {
                   {activeTab === 'flota' && <FlotaInternaPage />}
                   {activeTab === 'novedad' && <NovedadPage />}
                   {(activeTab === 'historial' || activeTab === 'allRecords') && <HistorialPage />}
+                  {activeTab === 'alarmas' && <GuardAlarmsPanel />}
                   {activeTab === 'reportes' && (
                     <Suspense fallback={<RouteFallback />}>
                       <ReportesPage />
                     </Suspense>
+                  )}
+                  </>
                   )}
                 </main>
               </div>
@@ -569,12 +604,14 @@ function AdminLayout() {
   const resolvedSection = sectionFromAdminSegment(sectionSegment);
   const adminSection = resolvedSection || getDefaultAdminSection(currentUser);
   const activeAdminMeta = ADMIN_SECTION_META[adminSection] || { title: 'Administración', description: '' };
+  const runtime = useRuntime();
 
   useEffect(() => {
+    if (runtime.mode === 'lan') return;
     if (!resolvedSection) {
       navigate(adminPath(getDefaultAdminSection(currentUser)), { replace: true });
     }
-  }, [resolvedSection, currentUser, navigate]);
+  }, [resolvedSection, currentUser, navigate, runtime.mode]);
 
   return (
     <ForcePasswordGate>
@@ -618,7 +655,9 @@ function AdminLayout() {
                   </div>
                 </div>
                 <main className="app-main-inner">
-                  {resolvedSection && (
+                  {runtime.mode === 'lan' ? (
+                    <LanUnavailable title="Administración" />
+                  ) : resolvedSection && (
                     <Suspense fallback={<RouteFallback />}>
                       <AdminPage
                         adminSection={adminSection}
@@ -676,10 +715,19 @@ function EmpleadoIndexRedirect() {
 
 function ModeSelectRoute() {
   const { currentUser } = useAuth();
+  const runtime = useRuntime();
   const guardia = canAccessGuardia(currentUser);
   const admin = canAccessAdmin(currentUser);
   if (canAccessEmpleado(currentUser) && !guardia && !admin) {
     return <Navigate to="/empleado" replace />;
+  }
+  if (runtime.mode === 'lan') {
+    if (guardia) return <Navigate to={guardiaPath('inicio')} replace />;
+    return (
+      <div className="app-shell" style={{ padding: '1rem' }}>
+        <LanUnavailable title="Administración" />
+      </div>
+    );
   }
   if (guardia && admin) return <ModeSelectPage />;
   return <Navigate to={resolveHomePath(currentUser)} replace />;
@@ -688,6 +736,7 @@ function ModeSelectRoute() {
 function AuthenticatedShell() {
   return (
     <AppChromeProvider>
+      <CriticalAlarmBanner />
       <ConnectivityChrome />
       <Outlet />
     </AppChromeProvider>
@@ -762,13 +811,19 @@ function App() {
       <ToastProvider>
         <ConfirmProvider>
           <AuthProvider>
-            <OfflineQueueProvider>
-              <EntriesProvider>
-                <ClockPrefillProvider>
-                  <AppRoutes />
-                </ClockPrefillProvider>
-              </EntriesProvider>
-            </OfflineQueueProvider>
+            <RuntimeProvider>
+              <HubLiveProvider>
+                <GuardAlarmsProvider>
+                  <OfflineQueueProvider>
+                    <EntriesProvider>
+                      <ClockPrefillProvider>
+                        <AppRoutes />
+                      </ClockPrefillProvider>
+                    </EntriesProvider>
+                  </OfflineQueueProvider>
+                </GuardAlarmsProvider>
+              </HubLiveProvider>
+            </RuntimeProvider>
           </AuthProvider>
         </ConfirmProvider>
       </ToastProvider>

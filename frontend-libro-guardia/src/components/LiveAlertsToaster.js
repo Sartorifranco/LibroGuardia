@@ -132,7 +132,7 @@ function LiveAlertsToaster({ enabled = true, pollMs = POLL_MS }) {
         allowForbidden: true
       });
       if (!mountedRef.current) return;
-      enqueue(data.alerts || []);
+      enqueue((data.alerts || []).filter((alert) => alert?.kind !== 'alarm'));
     } catch {
       // silencioso
     }
