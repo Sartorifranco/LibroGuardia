@@ -8,12 +8,13 @@
  *
  * Arma: SQLite (openEdgeDb role 'hub') + cliente nube (token con rotación de refresh token)
  * + sync de config (CloudHeadSource poll 60 s) + servidor LAN (eventos/config para controladores,
- * /api/runtime, estáticos) + subida de eventos (≤200, cada 2 min / alarma ya) + comandos remotos
+ * API de guardia en /api, estáticos) + subida de eventos (≤200, cada 2 min / alarma ya) + comandos remotos
  * + resumen vivo (≤1/min si cambió) + heartbeat (5 min).
  */
 
 const fs = require('fs');
 const path = require('path');
+const { EventEmitter } = require('events');
 const { openEdgeDb } = require('../lib/db');
 const { privateKeyFrom } = require('./keys');
 const { SecretStore } = require('./secretStore');
@@ -25,6 +26,7 @@ const { LiveState } = require('./liveState');
 const { CommandRouter } = require('./commands');
 const { LanVerifier } = require('./lanSignCompat');
 const { createLanServer } = require('./lanServer');
+const { watchCloudOnline } = require('./lanApi');
 const { makeHeadVerifier } = require('./headSignature');
 
 const DEFAULTS = {
@@ -122,6 +124,10 @@ class Hub {
     this.headSource = deps.headSource || (this.client ? new PollHeadSource({ client: this.client, intervalMs: config.cloud.headPollMs, log: this.log }) : null);
     if (this.headSource && !this.headSource.onHead) this.headSource.onHead = (head, extras) => this.onHead(head, extras);
     this.verifier = new LanVerifier({ publicKeyFor: (id) => this.controllers.publicKeyFor(id), now: this.now });
+    // Bus interno para la API LAN (SSE). liveState no se modifica: la ingesta emite acá.
+    this.bus = new EventEmitter();
+    this.bus.setMaxListeners(0);
+    watchCloudOnline(this);
     this.server = null;
     this.heartbeatTimer = null;
     this.lastHeartbeat = null;
@@ -133,7 +139,15 @@ class Hub {
       this.commands.setHint(extras.pendingCommands);
       if (extras.pendingCommands > 0) this.commands.poll().catch(() => {});
     }
-    return this.configSync.handleHead(head);
+    const before = this.configSync.configVersion();
+    const result = await this.configSync.handleHead(head);
+    const after = this.configSync.configVersion();
+    if (after !== before && this.bus) {
+      try { this.bus.emit('config', { configVersion: after }); } catch (err) {
+        this.log.warn(`[hub] sse config: ${err.message}`);
+      }
+    }
+    return result;
   }
 
   /**
@@ -168,6 +182,11 @@ class Hub {
     if (alarm) {
       if (this.uploader) this.uploader.kick();
       this.live.maybePost().catch(() => {});
+    }
+    if (fresh.length && this.bus) {
+      try { this.bus.emit('ingested', fresh); } catch (err) {
+        this.log.warn(`[hub] sse ingesta: ${err.message}`);
+      }
     }
     return { ackSeq: res.ackSeqByDevice[deviceId] ?? null, inserted: res.inserted, duplicates: res.duplicates };
   }

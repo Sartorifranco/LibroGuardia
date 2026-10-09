@@ -138,8 +138,15 @@ describe('hub: sync de configuración', { skip: k.SKIP }, () => {
   it('/api/runtime responde modo LAN', async () => {
     const res = await fetch(`${built.url}/api/runtime`);
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { mode: 'lan', capabilities: [], hubId: 'hub-1' });
-    const other = await fetch(`${built.url}/api/entries`);
+    const runtime = await res.json();
+    assert.equal(runtime.mode, 'lan');
+    assert.equal(runtime.siteId, 'principal');
+    assert.equal(runtime.hubId, 'hub-1');
+    assert.equal(runtime.configVersion, built.hub.configSync.configVersion());
+    assert.equal(runtime.cloudOnline, true);
+    assert.deepEqual(runtime.capabilities, ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan']);
+    const other = await fetch(`${built.url}/api/admin/users`);
     assert.equal(other.status, 501);
+    assert.equal((await other.json()).code, 'EDGE_UNSUPPORTED');
   });
 });
