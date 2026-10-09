@@ -17,7 +17,7 @@ export const ADMIN_SECTION_META = {
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
   nomina: { title: 'Importar nómina', description: 'Cargá quiénes trabajan acá, revisá altas y bajas, y confirmá.' },
   vehicles: { title: 'Vehículos', description: 'Patentes que pueden entrar, con empresa y conductor.' },
-  fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
+  fleet: { title: 'Flota interna', description: 'Móviles y choferes de la empresa.' },
   empresas: {
     title: 'Empresas y responsables',
     description: 'Las empresas del predio y los mails con los que su gente pide visitas.'
