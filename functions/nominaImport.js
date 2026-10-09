@@ -157,7 +157,13 @@ const applyParsedToPersonAndAuth = async (parsed) => {
     shiftSchedule: parsed.shiftSchedule,
     requiresCitacion: parsed.requiresCitacion,
     authorizationPolicy: parsed.authorizationPolicy
-  }, { origen: 'nomina', tipo: 'empleado', skipPersonalMasterSync: true });
+  }, {
+    origen: 'nomina',
+    tipo: 'empleado',
+    skipPersonalMasterSync: true,
+    // La importación de nómina es la fuente de verdad del nombre.
+    updateName: true
+  });
 
   const enrich = {
     puesto: parsed.puesto || parsed.role || '',
