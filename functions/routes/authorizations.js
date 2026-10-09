@@ -8,7 +8,9 @@ const {
   listAuthorizationsInRange,
   listPlannedCitacionDates,
   listExternalAuthorizations,
-  AUTHORIZATION_TYPES
+  AUTHORIZATION_TYPES,
+  normalizePersonName,
+  buildNameTokens
 } = require('../authorizations');
 const { listVisitasEsperadasForDate } = require('../lib/visitasAccess');
 const { resolveOrCreatePerson } = require('../people');
@@ -167,13 +169,36 @@ router.post('/api/admin/citaciones-imports/:id/reprocess', auth, requirePermissi
   }
 });
 
+const existingPersonName = (person) => String(person?.nombre || person?.name || '').trim();
+
+/**
+ * Si el nombre tipeado no coincide (normalizado) con el de la persona ya cargada,
+ * la autorización guarda lo tipeado en nameTyped y el nombre existente en name.
+ * @returns {string|null} aviso para el admin, o null si no hay diferencia
+ */
+const keepExistingNameOnAuthorization = (data, person, typedName) => {
+  const existingName = existingPersonName(person);
+  const typed = String(typedName || '').trim();
+  if (!existingName || !typed) return null;
+  if (normalizePersonName(typed) === normalizePersonName(existingName)) return null;
+  const nameKey = buildNameTokens(existingName);
+  data.nameTyped = typed;
+  data.name = existingName;
+  data.nameLower = normalizePersonName(existingName);
+  data.nameKey = nameKey;
+  data.nameTokens = nameKey;
+  return `El DNI pertenece a ${existingName}; se mantuvo ese nombre.`;
+};
+
 router.post('/api/admin/authorizations', auth, requirePermission('master.citaciones.write'), async (req, res) => {
   try {
+    const typedName = String(req.body?.name || req.body?.nombre || '').trim();
     const data = buildAuthorizationRecord({ ...req.body, source: 'manual' });
     const person = await resolveOrCreatePerson(data, {
       origen: 'manual',
       tipo: req.body.personTipo || 'empleado'
     });
+    const warning = keepExistingNameOnAuthorization(data, person, typedName);
 
     const ref = await db.collection('authorizations').add({
       ...data,
@@ -186,6 +211,7 @@ router.post('/api/admin/authorizations', auth, requirePermission('master.citacio
     if (data.type === 'citacion') {
       await db.collection('citaciones').add({
         name: data.name,
+        ...(data.nameTyped ? { nameTyped: data.nameTyped } : {}),
         idNumber: data.idNumber,
         idNumberNormalized: data.idNumberNormalized,
         legajo: data.legajo,
@@ -200,6 +226,7 @@ router.post('/api/admin/authorizations', auth, requirePermission('master.citacio
 
     res.status(201).json({
       message: 'Autorización registrada',
+      ...(warning ? { warning } : {}),
       authorization: { id: ref.id, ...data, personId: person.id }
     });
     bumpAuthQuiet();
