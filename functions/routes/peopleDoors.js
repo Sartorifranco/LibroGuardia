@@ -533,6 +533,54 @@ router.put(
 );
 
 /**
+ * Últimos pasos de una persona (máximo 50), sin leer un usuario por fila.
+ */
+router.get(
+  '/api/admin/people/:id/passages',
+  auth,
+  canPeopleManage,
+  async (req, res) => {
+    try {
+      const personId = String(req.params.id || '').trim();
+      const personSnap = await db.collection('people').doc(personId).get();
+      if (!personSnap.exists) {
+        return res.status(404).json({ message: 'No encontramos a esa persona.' });
+      }
+      const person = personSnap.data() || {};
+      const dni = String(person.dniNormalized || person.idNumberNormalized || person.dni || person.idNumber || '').replace(/\D/g, '');
+      if (!dni) {
+        return res.json({ passages: [] });
+      }
+      const snap = await db.collection('entries')
+        .where('idNumber', '==', dni)
+        .orderBy('timestamp', 'desc')
+        .limit(50)
+        .get();
+      const passages = snap.docs.map((doc) => {
+        const data = doc.data() || {};
+        let when = data.eventTime || null;
+        if (data.timestamp && typeof data.timestamp.toDate === 'function') {
+          when = data.timestamp.toDate().toISOString();
+        }
+        const whenLabel = when
+          ? new Date(when).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+          : '—';
+        return {
+          id: doc.id,
+          when,
+          whenLabel,
+          movement: data.movementType || data.type || 'Paso',
+          place: data.destination || data.doorName || ''
+        };
+      });
+      res.json({ passages });
+    } catch (err) {
+      res.status(500).json({ message: 'No se pudo leer el historial de pasos' });
+    }
+  }
+);
+
+/**
  * Actualiza datos básicos + puertas en un solo PUT.
  * Body opcional: name, legajo, idNumber, active, notas, allowedDoorIds
  */

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { DoorOpen, RefreshCw, Search, Save, Users } from 'lucide-react';
+import { DoorOpen, RefreshCw, Search, Save } from 'lucide-react';
 import DoorAccessEditor from '../../../components/DoorAccessEditor';
 import PersonPhotoField from '../../../components/PersonPhotoField';
 import { useAuth } from '../../../context/AuthContext';
@@ -7,6 +7,7 @@ import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
 import { hasPermission } from '../../../utils/permissions';
+import { PageHeader, EmptyState, AdvancedSection } from '../../../components/admin-ui';
 import {
   ACCESS_FILTER_OPTIONS,
   formatLastAccessLabel,
@@ -16,11 +17,6 @@ import {
 import BiostarSyncStatus from './BiostarSyncStatus';
 import PeopleCleanupWizard from './PeopleCleanupWizard';
 import PersonAccessPanel from './PersonAccessPanel';
-
-const HUB_TABS = [
-  { id: 'directorio', label: 'Directorio' },
-  { id: 'limpieza', label: 'Limpieza' }
-];
 
 const CATEGORY_FILTERS = [
   { id: 'todos', label: 'Todas las categorías' },
@@ -70,13 +66,15 @@ function PeopleAccessAdminSection() {
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
   const [accessFilter, setAccessFilter] = useState('all');
-  const [hubTab, setHubTab] = useState('directorio');
   const [categoryFilter, setCategoryFilter] = useState('todos');
   const [selectedId, setSelectedId] = useState(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [fichaTab, setFichaTab] = useState('datos');
+  const [passages, setPassages] = useState([]);
+  const [passagesError, setPassagesError] = useState('');
 
   const canManage = hasPermission(currentUser, 'access.doors.manage')
     || hasPermission(currentUser, 'access.control')
@@ -227,7 +225,9 @@ function PeopleAccessAdminSection() {
   const selectPerson = (person) => {
     setSelectedId(person.id);
     syncDraftFromPerson(person);
-    setHubTab('directorio');
+    setFichaTab('datos');
+    setPassages([]);
+    setPassagesError('');
   };
 
   const updateDraftField = (field, value) => {
@@ -278,6 +278,32 @@ function PeopleAccessAdminSection() {
     }
   };
 
+  useEffect(() => {
+    if (fichaTab !== 'historial' || !selected?.id || !authToken) return undefined;
+    let cancelled = false;
+    setPassagesError('');
+    apiFetch(`/admin/people/${encodeURIComponent(selected.id)}/passages`, {
+      token: authToken,
+      allowForbidden: true
+    }).then((data) => {
+      if (!cancelled) setPassages(Array.isArray(data.passages) ? data.passages : []);
+    }).catch((err) => {
+      if (!cancelled) setPassagesError(err.message || 'No se pudo cargar el historial');
+    });
+    return () => { cancelled = true; };
+  }, [fichaTab, selected, authToken]);
+
+  const clearCredential = async (field, label) => {
+    const ok = await confirm({
+      title: `Dar de baja ${label}`,
+      message: `¿Dar de baja ${label} de “${draft.name || 'esta persona'}”? Después hay que guardar la ficha.`,
+      confirmLabel: 'Dar de baja',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    updateDraftField(field, '');
+  };
+
   const runRepair = async (path, body, confirmMsg) => {
     if (!window.confirm(confirmMsg)) return;
     setMerging(true);
@@ -297,68 +323,31 @@ function PeopleAccessAdminSection() {
   }
 
   return (
-    <div className="people-access-admin">
+    <div className="people-access-admin admin-simple">
       <div className="admin-sub-section">
-        <div className="mss-data-card__head">
-          <div>
-            <h3 className="admin-block__title mss-data-card__title">Personas</h3>
-            <p className="admin-block__desc" style={{ margin: '0.35rem 0 0' }}>
-              Identidad única (nómina + BioStar + visitas). Las <strong>puertas permitidas</strong> son
-              una lista explícita: vacío = ninguna puerta.
-            </p>
-          </div>
-          <span className="mss-data-card__icon" aria-hidden>
-            <Users size={18} />
-          </span>
-        </div>
+        <PageHeader
+          title="Personas"
+          purpose="La ficha de cada persona: sus datos, cómo entra y por dónde puede pasar."
+          howTo={[
+            'Buscá por nombre, DNI o legajo.',
+            'Abrí la ficha y revisá Datos, Credenciales, Accesos o el historial.',
+            'Guardá si cambiaste algo.'
+          ]}
+        />
 
-        <BiostarSyncStatus authToken={authToken} />
-
-        <div className="people-hub-tabs" role="tablist" aria-label="Secciones de Personas">
-          {HUB_TABS.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={hubTab === tab.id}
-              className={`people-hub-tab${hubTab === tab.id ? ' is-active' : ''}`}
-              onClick={() => setHubTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {hubTab === 'limpieza' ? (
-          <PeopleCleanupWizard
-            authToken={authToken}
-            onDone={() => loadPeople({ force: true })}
-            onError={showError}
-            onSuccess={showSuccess}
-            confirm={confirm}
-            onOpenDirectory={({ accessFilter: nextAccess, category } = {}) => {
-              if (nextAccess) setAccessFilter(nextAccess);
-              if (category) setCategoryFilter(category);
-              setHubTab('directorio');
-            }}
-            onBackfillLastAccess={handleBackfillLastAccess}
-            backfilling={backfilling}
-            onBulkRepair={runRepair}
-            bulkBusy={merging}
+        <div className="admin-simple-search">
+          <Search size={18} />
+          <input
+            className="input-field"
+            placeholder="Buscar por nombre, legajo o DNI"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            aria-label="Buscar persona"
           />
-        ) : (
-          <div className="people-access-layout">
+        </div>
+
+        <div className="people-access-layout">
             <div className="people-access-list">
-              <div className="people-access-search">
-                <Search size={16} />
-                <input
-                  className="input-field"
-                  placeholder="Buscar por nombre, legajo, DNI o ID biométrico…"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  aria-label="Buscar persona"
-                />
-              </div>
               <div className="people-access-filters">
                 <label className="historial-meta people-access-filter-label">
                   Categoría
@@ -484,22 +473,32 @@ function PeopleAccessAdminSection() {
               ) : (
                 <>
                   <div className="people-access-ficha-header">
-                    <h4>Ficha de persona</h4>
+                    <h4>{selected.name || 'Ficha de persona'}</h4>
                     <p className="historial-meta">
-                      {selected.company ? selected.company : 'Sin empresa'} · id {selected.id}
-                      {selected.biometricExternalId ? ` · bio ${selected.biometricExternalId}` : ''}
+                      {selected.company ? selected.company : 'Sin empresa'}
                     </p>
-                    {(() => {
-                      const last = formatLastAccessLabel(selected);
-                      return (
-                        <p className={`people-access-last people-access-last--${last.kind}`} title={last.title} style={{ marginTop: '0.35rem' }}>
-                          Último acceso: <strong>{last.text}</strong>
-                          {selected.lastAccessSource ? ` (${selected.lastAccessSource})` : ''}
-                        </p>
-                      );
-                    })()}
+                  </div>
+                  <div className="admin-simple-tabs" role="tablist" aria-label="Ficha de persona">
+                    {[
+                      ['datos', 'Datos'],
+                      ['credenciales', 'Credenciales'],
+                      ['accesos', 'Accesos'],
+                      ['historial', 'Historial de pasos']
+                    ].map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        role="tab"
+                        aria-selected={fichaTab === id}
+                        className={fichaTab === id ? 'is-active' : ''}
+                        onClick={() => setFichaTab(id)}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
 
+                  {fichaTab === 'datos' ? (
                   <div className="people-access-basic-form">
                     <label className="people-access-field">
                       <span>Nombre</span>
@@ -574,58 +573,92 @@ function PeopleAccessAdminSection() {
                       onChange={(next) => updateDraftField('photoDataUrl', next || '')}
                       disabled={saving}
                     />
+                  </div>
+                  ) : null}
 
+                  {fichaTab === 'credenciales' ? (
                     <div className="people-access-credentials">
-                      <h5>Identificación en lectores</h5>
-                      <p className="historial-meta">
-                        Tarjeta o ID biométrico (ej. user_id de BioStar / Suprema).
-                      </p>
                       <label className="people-access-field">
-                        <span>Número de tarjeta</span>
+                        <span>DNI</span>
                         <input
                           className="input-field"
+                          aria-label="DNI"
+                          value={draft.idNumber}
+                          onChange={(e) => updateDraftField('idNumber', e.target.value)}
+                          disabled={saving}
+                          inputMode="numeric"
+                        />
+                      </label>
+                      <label className="people-access-field">
+                        <span>Tarjeta</span>
+                        <input
+                          className="input-field"
+                          aria-label="Tarjeta"
                           value={draft.accessCard}
                           onChange={(e) => updateDraftField('accessCard', e.target.value)}
                           disabled={saving}
                         />
+                        {draft.accessCard ? (
+                          <button type="button" className="btn btn-secondary" onClick={() => clearCredential('accessCard', 'la tarjeta')}>
+                            Dar de baja la tarjeta
+                          </button>
+                        ) : <p className="historial-meta">Sin tarjeta</p>}
                       </label>
-                      <label className="people-access-field">
-                        <span>ID en el lector biométrico</span>
-                        <input
-                          className="input-field"
-                          value={draft.biometricExternalId}
-                          onChange={(e) => updateDraftField('biometricExternalId', e.target.value)}
-                          disabled={saving}
-                          placeholder="user_id BioStar / equipo"
-                        />
-                      </label>
-                      <label className="people-access-field">
-                        <span>Marca del biométrico (opcional)</span>
-                        <select
-                          className="input-field"
-                          value={draft.biometricBrand}
-                          onChange={(e) => updateDraftField('biometricBrand', e.target.value)}
-                          disabled={saving}
-                        >
-                          <option value="">Sin especificar</option>
-                          <option value="zkteco">ZKTeco</option>
-                          <option value="hikvision">Hikvision</option>
-                          <option value="suprema">Suprema</option>
-                          <option value="hid">HID</option>
-                          <option value="other">Otra</option>
-                        </select>
-                      </label>
+                      <p className="historial-meta">QR: se usa cuando entra como visita. No hace falta cargarlo acá.</p>
+                      <div className="people-access-field">
+                        <span>Huella BioStar</span>
+                        <p>{draft.biometricExternalId ? 'Cargada' : 'Sin huella'}</p>
+                      </div>
+                      {draft.biometricExternalId ? (
+                        <button type="button" className="btn btn-secondary" onClick={() => clearCredential('biometricExternalId', 'la huella')}>
+                          Dar de baja la huella
+                        </button>
+                      ) : null}
                     </div>
-                  </div>
+                  ) : null}
 
-                  <h4 className="people-access-doors-title">Puertas permitidas</h4>
-                  <DoorAccessEditor
-                    authToken={authToken}
-                    allowedDoorIds={draft.allowedDoorIds}
-                    onChange={(doors) => updateDraftField('allowedDoorIds', doors)}
-                    disabled={saving}
-                    highlight
-                  />
+                  {fichaTab === 'accesos' ? (
+                    <>
+                      <h4 className="people-access-doors-title">Por dónde puede pasar</h4>
+                      {hasPermission(currentUser, 'personas.puertas.asignar') ? (
+                        <PersonAccessPanel
+                          key={selected.id}
+                          personId={selected.id}
+                          authToken={authToken}
+                        />
+                      ) : null}
+                      <DoorAccessEditor
+                        authToken={authToken}
+                        allowedDoorIds={draft.allowedDoorIds}
+                        onChange={(doors) => updateDraftField('allowedDoorIds', doors)}
+                        disabled={saving}
+                        highlight
+                      />
+                    </>
+                  ) : null}
+
+                  {fichaTab === 'historial' ? (
+                    <div>
+                      {passagesError ? <p>{passagesError}</p> : null}
+                      {passages.length === 0 ? (
+                        <EmptyState
+                          title="Todavía no hay pasos"
+                          text="Acá van a aparecer los últimos pasos de esta persona."
+                        />
+                      ) : (
+                        <ul>
+                          {passages.map((step) => (
+                            <li key={step.id}>
+                              {step.whenLabel || step.when || '—'} · {step.movement || 'Paso'}
+                              {step.place ? ` · ${step.place}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {fichaTab !== 'historial' ? (
                   <button
                     type="button"
                     className="btn btn-primary mt-3"
@@ -635,18 +668,33 @@ function PeopleAccessAdminSection() {
                     <Save size={16} />
                     {saving ? 'Guardando…' : 'Guardar persona'}
                   </button>
-                  {hasPermission(currentUser, 'personas.puertas.asignar') ? (
-                    <PersonAccessPanel
-                      key={selected.id}
-                      personId={selected.id}
-                      authToken={authToken}
-                    />
                   ) : null}
                 </>
               )}
             </div>
           </div>
-        )}
+
+        <AdvancedSection title="Opciones avanzadas">
+          <BiostarSyncStatus authToken={authToken} />
+          <PeopleCleanupWizard
+            authToken={authToken}
+            onDone={() => loadPeople({ force: true })}
+            onError={showError}
+            onSuccess={showSuccess}
+            confirm={confirm}
+            onOpenDirectory={({ accessFilter: nextAccess, category } = {}) => {
+              if (nextAccess) setAccessFilter(nextAccess);
+              if (category) setCategoryFilter(category);
+            }}
+            onBackfillLastAccess={handleBackfillLastAccess}
+            backfilling={backfilling}
+            onBulkRepair={runRepair}
+            bulkBusy={merging}
+          />
+          <button type="button" className="btn btn-secondary" onClick={handleBackfillLastAccess} disabled={backfilling}>
+            {backfilling ? 'Recalculando…' : 'Recalcular últimos accesos'}
+          </button>
+        </AdvancedSection>
       </div>
     </div>
   );

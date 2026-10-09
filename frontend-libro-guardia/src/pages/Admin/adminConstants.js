@@ -8,7 +8,7 @@ export const ADMIN_SECTION_META = {
   doors: { title: 'Equipos de acceso', description: 'Puertas, lectores y estaciones en un solo lugar.' },
   peopleAccess: {
     title: 'Personas',
-    description: 'Directorio único: empleados, terceros, clientes y credenciales de acceso.'
+    description: 'Ficha de cada persona: datos, credenciales, accesos y los últimos pasos.'
   },
   negocioAccesos: {
     title: 'Accesos',
