@@ -70,6 +70,8 @@ app.use(require('./routes/attendance'));
 app.use(require('./routes/entries'));
 app.use(require('./routes/peopleDoors'));
 app.use(require('./routes/accessModel'));
+app.use(require('./routes/areas'));
+app.use(require('./routes/setupStatus'));
 app.use(require('./routes/biostar'));
 app.use(require('./routes/system'));
 app.use(require('./routes/edge'));

@@ -496,6 +496,11 @@ router.post('/api/admin/access/simulate', auth, canRead, async (req, res) => {
     const person = personSnap.data() || {};
     if (person.active === false || !String(person.dniNormalized || person.dni || person.idNumber || person.accessCard || '').trim()) {
       const early = simulateAccess({ snap: null, person, personId, doorId, at });
+      if (early.status === 200) {
+        db.collection('settings').doc('setupProgress').set({
+          lastSimulateAt: Date.now()
+        }, { merge: true }).catch(() => {});
+      }
       return res.status(early.status).json(early.body);
     }
     let snap;
@@ -506,6 +511,11 @@ router.post('/api/admin/access/simulate', auth, canRead, async (req, res) => {
       return res.status(503).json({ message: 'No se pudo revisar el acceso en este momento.' });
     }
     const result = simulateAccess({ snap, person, personId, doorId, at });
+    if (result.status === 200) {
+      db.collection('settings').doc('setupProgress').set({
+        lastSimulateAt: Date.now()
+      }, { merge: true }).catch((err) => console.warn('[accessModel] setupProgress', err.message));
+    }
     res.status(result.status).json(result.body);
   } catch (err) {
     res.status(500).json({ message: 'No se pudo simular el ingreso.' });
