@@ -83,6 +83,7 @@ export const ADMIN_SECTION_SEGMENTS = {
   huella: 'huella',
   citacionesAuto: 'citaciones-automaticas',
   registro: 'registro',
+  consumo: 'consumo',
   appearance: 'datos-empresa',
   // Ids viejos: adminPath sigue armando la URL nueva.
   roles: 'roles-permisos',

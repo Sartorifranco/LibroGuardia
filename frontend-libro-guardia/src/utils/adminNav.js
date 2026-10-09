@@ -22,7 +22,8 @@ import {
   Users,
   Clock3,
   HelpCircle,
-  FolderInput
+  FolderInput,
+  Wallet
 } from 'lucide-react';
 import { canAccessAdmin, canAccessGuardia, hasPermission } from './permissions';
 import { guardiaPath } from './navigation';
@@ -272,6 +273,13 @@ export const ADMIN_NAV_GROUPS = [
         description: 'Quién modificó qué, y cuándo.',
         icon: ScrollText,
         match: canRegistro
+      },
+      {
+        id: 'consumo',
+        label: 'Consumo',
+        description: 'Cuánto gasta el sistema por mes y aviso si se pasa del tope.',
+        icon: Wallet,
+        match: (user) => hasPermission(user, 'consumo.ver') || hasPermission(user, 'settings.permissions')
       }
     ]
   },

@@ -58,6 +58,7 @@ export const ADMIN_SECTION_META = {
   puedePasar: { title: '¿Puede pasar?', description: 'Probar si una persona entra por una puerta.' },
   rolesPermisos: { title: 'Roles y permisos', description: 'Qué puede hacer cada tipo de usuario.' },
   registro: { title: 'Registro de cambios', description: 'Quién modificó qué, y cuándo.' },
+  consumo: { title: 'Consumo', description: 'Cuánto gasta el sistema por mes y aviso si se pasa del tope.' },
   huella: { title: 'Huella', description: 'Lectores de huella del predio.' },
   citacionesAuto: { title: 'Citaciones automáticas', description: 'Recibir citados desde la carpeta de la empresa.' }
 };

@@ -175,6 +175,17 @@ const buildMessage = (eventType, payload = {}) => {
           `Detalle: ${JSON.stringify(payload.changedKeys || [])}`
         ].join('\n')
       };
+    case 'usage_budget':
+      return {
+        subject: `${brand}: el gasto del mes puede pasar el tope`,
+        text: [
+          'La proyección de gasto de este mes supera el tope configurado.',
+          `Llevamos gastado (estimado): US$ ${payload.estimatedUsd ?? '—'}`,
+          `Proyección a fin de mes: US$ ${payload.projectedUsd ?? '—'}`,
+          `Tope: US$ ${payload.budgetUsd ?? '—'}`,
+          'Revisá la pantalla Consumo en Administración. El aviso se manda como máximo una vez por día.'
+        ].join('\n')
+      };
     default:
       return {
         subject: `${brand}: alerta`,

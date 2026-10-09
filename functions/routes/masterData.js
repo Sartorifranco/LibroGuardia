@@ -10,6 +10,7 @@ const {
 } = require('../authorizations');
 const { checkAccessStatus } = require('../guard');
 const { logActivity } = require('../lib/activityLog');
+const { invalidateFleetLookupCache } = require('../fleetGps');
 const {
   auth,
   requirePermission,
@@ -282,6 +283,7 @@ router.post('/api/master-data/vehicles', auth, requirePermission('master.vehicle
       vehicleRef = db.collection('vehiclesMaster').doc();
       await vehicleRef.set({ ...vehicleData, createdAt: FieldValue.serverTimestamp() });
     }
+    invalidateFleetLookupCache();
 
     res.status(201).json({
       message: 'Vehículo guardado en la base autorizada',
@@ -342,6 +344,7 @@ router.post('/api/master-data/vehicles/quick-authorize', auth, requireAnyPermiss
       vehicleRef = db.collection('vehiclesMaster').doc();
       await vehicleRef.set({ ...vehicleData, createdAt: FieldValue.serverTimestamp() });
     }
+    invalidateFleetLookupCache();
 
     res.status(201).json({
       message: 'Vehículo autorizado correctamente',
@@ -361,6 +364,7 @@ router.delete('/api/master-data/vehicles/:id', auth, requirePermission('master.v
     }
     const data = snap.data() || {};
     await ref.delete();
+    invalidateFleetLookupCache();
     logActivity(db, FieldValue, {
       actorUsername: req.user.username || req.user.id,
       actorId: req.user.id,

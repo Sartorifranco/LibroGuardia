@@ -12,7 +12,8 @@ const EVENT_TYPES = [
   'edge_alarm',
   'access_request',
   'ingreso_emergencia',
-  'held_open'
+  'held_open',
+  'usage_budget'
 ];
 
 const DEFAULT_EVENT = () => ({
@@ -46,7 +47,8 @@ const DEFAULT_CONFIG = {
     ingreso_emergencia: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
     duress_access: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
     edge_alarm: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
-    held_open: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
+    held_open: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
+    usage_budget: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
   }
 };
 

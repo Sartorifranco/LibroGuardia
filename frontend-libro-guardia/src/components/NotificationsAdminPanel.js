@@ -56,6 +56,11 @@ const EVENT_META = [
     label: 'Rechazos seguidos',
     hint: 'Varias veces seguida la misma persona o la misma puerta.',
     hasThreshold: true
+  },
+  {
+    key: 'usage_budget',
+    label: 'Tope de consumo',
+    hint: 'Cuando el gasto del mes va a pasar el tope. Llega como máximo una vez por día.'
   }
 ];
 

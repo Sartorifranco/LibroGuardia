@@ -19,6 +19,7 @@ const PERMISSION_KEYS = [
   'roles.view',
   'roles.manage',
   'settings.permissions',
+  'consumo.ver',
   'audit.view',
   'notifications.config',
   'access.control',
@@ -129,7 +130,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.groups.manage',
     'personas.puertas.asignar',
     'autorizaciones.solicitar',
-    'autorizaciones.aprobar_todas'
+    'autorizaciones.aprobar_todas',
+    'consumo.ver'
   ],
   'empleado-visitas': [
     'visitas.create',

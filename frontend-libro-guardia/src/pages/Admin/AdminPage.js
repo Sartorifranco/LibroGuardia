@@ -27,6 +27,7 @@ import PrimerosPasosSection from './PrimerosPasos/PrimerosPasosSection';
 import LugaresAdminSection from './LugaresAdmin/LugaresAdminSection';
 import RolesPermisosSection from './RolesPermisos/RolesPermisosSection';
 import RegistroAdminSection from './RegistroAdmin/RegistroAdminSection';
+import ConsumoAdminSection from './ConsumoAdmin/ConsumoAdminSection';
 import HuellaAdminSection from './HuellaAdmin/HuellaAdminSection';
 import CitacionesAutoSection from './CitacionesAuto/CitacionesAutoSection';
 import DoorsAdminSection from './DoorsAdmin/DoorsAdminSection';
@@ -41,6 +42,7 @@ const OWN_HEADER = new Set([
   'equipos',
   'rolesPermisos',
   'registro',
+  'consumo',
   'huella',
   'citacionesAuto',
   'grupos',
@@ -336,6 +338,8 @@ function AdminPage({ adminSection, adminQuery = {}, onSectionChange, onExit, onA
           {adminSection === 'registro' && (
             <RegistroAdminSection initialTipo={adminQuery.tipo || 'todos'} />
           )}
+
+          {adminSection === 'consumo' && <ConsumoAdminSection />}
 
           {adminSection === 'notifications' && hasPermission(currentUser, 'notifications.config') && (
             <NotificationsAdminSection pendingAction={pendingAction} runAction={runAction} />
