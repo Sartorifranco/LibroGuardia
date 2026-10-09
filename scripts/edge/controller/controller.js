@@ -304,11 +304,16 @@ class Controller {
       relayConfirmed = false;
     }
     // Estanco: el efecto se aplica solo si el pulso realmente salió (confirmado o no).
-    if (relayOk && decision.stateEffects && decision.stateEffects.interlock) {
+    if (relayOk) this.applyInterlockEffect(decision);
+    return { relayOk, relayConfirmed, ...(relayError ? { relayError } : {}) };
+  }
+
+  /** Efecto de estanco del motor, si el paso quedó registrado. */
+  applyInterlockEffect(decision) {
+    if (decision.stateEffects && decision.stateEffects.interlock) {
       const { groupId, ...rest } = decision.stateEffects.interlock;
       if (groupId) this.interlockState[groupId] = rest;
     }
-    return { relayOk, relayConfirmed, ...(relayError ? { relayError } : {}) };
   }
 
   // ───────────────────────────── credenciales ─────────────────────────────
@@ -357,7 +362,25 @@ class Controller {
     let relay = { relayOk: false, relayConfirmed: false };
     let approvalId = null;
     if (decision.decision === 'grant') {
-      relay = await this.executeGrant(decision, { source: 'grant' });
+      const st = d.runner.state.state;
+      // Puerta ya destrabada o abierta: no hay otro pulso. En DESBLOQUEADA se extiende la ventana.
+      if (st === 'DESBLOQUEADA' || st === 'ABIERTA_AUT' || st === 'RETENIDA') {
+        decision = {
+          ...decision,
+          reason: 'paso_registrado_puerta_abierta',
+          message: reasonMessage('paso_registrado_puerta_abierta')
+        };
+        if (st === 'DESBLOQUEADA') {
+          const ms = (decision.actions && decision.actions[0] && decision.actions[0].ms) || d.runner.params.unlockMs;
+          d.runner.dispatch({ type: 'unlock', ms, source: 'grant' });
+          relay = { relayOk: true, relayConfirmed: true, extended: true };
+        } else {
+          relay = { relayOk: true, relayConfirmed: true, alreadyOpen: true };
+        }
+        this.applyInterlockEffect(decision);
+      } else {
+        relay = await this.executeGrant(decision, { source: 'grant' });
+      }
     } else if (decision.decision === 'needs_approval') {
       approvalId = this.addApproval({ cred, decision, side: decision.side || side, at });
     }
