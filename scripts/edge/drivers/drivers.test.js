@@ -24,31 +24,149 @@ describe('drivers: lectores', () => {
     assert.deepEqual([frameToCredential('CARD#00ab12').type, frameToCredential('CARD#00ab12').value], ['card', '00ab12']);
     assert.equal(frameToCredential('BIO#77').type, 'biostar');
     assert.equal(frameToCredential('   '), null);
+    const ficha = 'EMPRESA\nNombre\tAna\nDNI\t30.111.222\nLegajo\t12345678';
+    const multi = frameToCredential(ficha);
+    assert.equal(multi.type, 'qr');
+    assert.equal(multi.dniHint, '30111222');
+    assert.equal(multi.value, ficha);
+    assert.equal(frameToCredential('Codigo\t28445555\nNombre\tLuis').dniHint, '28445555');
+    assert.equal(frameToCredential('A\t12345678\nB\t87654321').dniHint, undefined);
+    assert.equal(frameToCredential('Solo nombre\nSin numero').type, 'qr');
+    assert.equal(frameToCredential('Solo nombre\nSin numero').dniHint, undefined);
   });
 
-  it('framer: corta por CR/LF y por silencio', async () => {
+  const FICHA_93 = 'EMPRESA ACME\r\nNombre\tAna Maria\r\nApellido\tPerez\r\nDNI\t30111222\r\nSector\tCajas\r\nSucursal\tCentro\r\n';
+  const PDF417 = '00512345678@PEREZ@JUAN@M@30111222@B@01/01/1980@01/01/2020';
+
+  const captureLogger = (lines) => ({
+    debug(message, extra) { lines.push({ level: 'debug', message, extra }); },
+    info(message, extra) { lines.push({ level: 'info', message, extra }); },
+    warn(message, extra) { lines.push({ level: 'warn', message, extra }); },
+    error(message, extra) { lines.push({ level: 'error', message, extra }); },
+    child() { return this; }
+  });
+
+  it('ficha multilínea de 93 bytes: una lectura y el DNI', async () => {
+    const buf = Buffer.from(FICHA_93, 'utf8');
+    assert.equal(buf.length, 93);
     const frames = [];
-    const f = serialFramer.createSerialFramer({ idleMs: 20 }, (fr) => frames.push(fr));
+    const lines = [];
+    const f = serialFramer.createSerialFramer({ idleMs: 200, interFrameGapMs: 40, logger: captureLogger(lines) }, (fr) => frames.push(fr));
+    f.push(buf);
+    assert.equal(frames.length, 0, 'el CR interno no cierra la ráfaga');
+    await tick(70);
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].text.includes('\n'), true);
+    assert.equal(frames[0].text.includes('\r'), false);
+    assert.equal(frames[0].text.includes('\t'), true);
+    const cred = frameToCredential(frames[0].text);
+    assert.equal(cred.type, 'qr');
+    assert.equal(cred.dniHint, '30111222');
+    assert.equal(cred.format, 'qr');
+    const dumped = JSON.stringify(lines);
+    assert.equal(dumped.includes('30111222'), false);
+    assert.equal(dumped.includes('33 30 31 31 31'), false);
+    assert.equal(lines.filter((l) => l.level === 'info').some((l) => JSON.stringify(l).includes('EMPRESA ACME')), false);
+    assert.equal(lines.some((l) => l.level === 'debug' && JSON.stringify(l.extra).includes('222')), true);
+    f.destroy();
+  });
+
+  it('PDF417 de una línea sigue siendo un DNI', async () => {
+    const frames = [];
+    const f = serialFramer.createSerialFramer({ idleMs: 200, interFrameGapMs: 30 }, (fr) => frames.push(fr));
+    f.push(Buffer.from(`${PDF417}\r`, 'utf8'));
+    assert.equal(frames.length, 0);
+    await tick(50);
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].text, PDF417);
+    const cred = frameToCredential(frames[0].text);
+    assert.deepEqual(
+      { type: cred.type, value: cred.value, format: cred.format },
+      { type: 'dni', value: '30111222', format: 'pdf417' }
+    );
+    f.destroy();
+  });
+
+  it('dos lecturas separadas 300 ms no se mezclan', async () => {
+    const frames = [];
+    const f = serialFramer.createSerialFramer({ idleMs: 500, interFrameGapMs: 40 }, (fr) => frames.push(fr));
+    f.push(Buffer.from(`${PDF417}\r`, 'utf8'));
+    await tick(300);
+    f.push(Buffer.from(FICHA_93, 'utf8'));
+    await tick(70);
+    assert.equal(frames.length, 2);
+    assert.equal(frames[0].text, PDF417);
+    assert.equal(frameToCredential(frames[1].text).dniHint, '30111222');
+    f.destroy();
+  });
+
+  it('tres chunks dentro de 40 ms son una sola lectura', async () => {
+    const buf = Buffer.from(FICHA_93, 'utf8');
+    const frames = [];
+    const f = serialFramer.createSerialFramer({ idleMs: 300, interFrameGapMs: 50 }, (fr) => frames.push(fr));
+    f.push(buf.subarray(0, 30));
+    await tick(12);
+    f.push(buf.subarray(30, 60));
+    await tick(12);
+    f.push(buf.subarray(60));
+    assert.equal(frames.length, 0);
+    await tick(80);
+    assert.equal(frames.length, 1);
+    assert.equal(frameToCredential(frames[0].text).dniHint, '30111222');
+    f.destroy();
+  });
+
+  it('splitOnNewline corta en cada CR/LF y el resto por silencio', async () => {
+    const frames = [];
+    const f = serialFramer.createSerialFramer({ splitOnNewline: true, idleMs: 20 }, (fr) => frames.push(fr));
     f.push(Buffer.from('3011'));
     f.push(Buffer.from('1222\r\n4455'));
     assert.deepEqual(frames.map((x) => [x.text, x.reason]), [['30111222', 'CRLF']]);
     await tick(40);
     assert.deepEqual(frames.map((x) => x.text), ['30111222', '4455']);
+
+    const badge = [];
+    const g = serialFramer.createSerialFramer({ splitOnNewline: true, idleMs: 30 }, (fr) => badge.push(fr));
+    g.push(Buffer.from(FICHA_93, 'utf8'));
+    assert.equal(badge.length, 6);
+    assert.deepEqual(badge.map((fr) => fr.text), [
+      'EMPRESA ACME',
+      'Nombre\tAna Maria',
+      'Apellido\tPerez',
+      'DNI\t30111222',
+      'Sector\tCajas',
+      'Sucursal\tCentro'
+    ]);
+    g.destroy();
+    f.destroy();
+  });
+
+  it('sin terminador el cierre sigue siendo idleMs', async () => {
+    const frames = [];
+    const f = serialFramer.createSerialFramer({ idleMs: 25, interFrameGapMs: 80 }, (fr) => frames.push(fr));
+    f.push(Buffer.from('4455'));
+    await tick(40);
+    assert.deepEqual(frames.map((x) => [x.text, x.reason]), [['4455', 'silencio 25ms']]);
     f.destroy();
   });
 
   it('stdin: entrega credenciales con lector y lado', async () => {
     const stream = new PassThrough();
-    const r = createReader({ id: 'lec-in', driver: 'stdin', side: 'in', idleMs: 20 }, { stream });
+    const lines = [];
+    const r = createReader({ id: 'lec-in', driver: 'stdin', side: 'in', idleMs: 80, interFrameGapMs: 15 }, { stream, logger: captureLogger(lines) });
     const got = [];
     await r.start((c) => got.push(c));
     stream.write('30111222\n');
+    await tick(40);
     stream.write('basura-sin-sentido\n');
-    await tick(5);
+    await tick(40);
     await r.stop();
     assert.equal(got.length, 2);
     assert.deepEqual([got[0].type, got[0].value, got[0].readerId, got[0].side], ['dni', '30111222', 'lec-in', 'in']);
     assert.equal(r.health().credentials, 2);
+    const info = lines.filter((l) => l.level === 'info');
+    assert.equal(JSON.stringify(info).includes('30111222'), false);
+    assert.equal(info.some((l) => l.extra && l.extra.dni === '*****222'), true);
   });
 
   it('wiegand: interfaz presente, avisa fase 2', async () => {

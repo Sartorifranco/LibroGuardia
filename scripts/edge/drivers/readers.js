@@ -3,8 +3,8 @@
 /**
  * ReaderDriver {start(onCredential), stop(), health()} (docs/ETAPA2-DISENO.md §1).
  *
- *  - 'serial'  lector serie/USB (DNI PDF417, QR, tarjeta en claro): framing de la estación v1.7 +
- *              `stationReaderPlugins.parseReaderFrame` sin cambios.
+ *  - 'serial'  lector serie/USB (DNI PDF417, QR, tarjeta en claro): una ráfaga = una lectura
+ *              (silencio interFrameGapMs). Una ficha multilínea sale como qr + dniHint.
  *  - 'stdin'   mismas tramas desde un stream (process.stdin por defecto): banco y tests.
  *  - 'wiegand' fase 2 (GPIO): solo la interfaz; start() avisa que no está implementado.
  *
@@ -13,24 +13,60 @@
  */
 
 const { createSerialFramer, runSerialLoop } = require('./serialFramer');
-const { nullLogger, maskDocumentDigits } = require('./logger');
-const { parseReaderFrame } = require('../../lib/stationReaderPlugins');
+const { nullLogger, maskDocumentDigits, maskIdNumber } = require('./logger');
+const { parseReaderFrame, parseMultilineCredential } = require('../../lib/stationReaderPlugins');
 const { parseScanData } = require('../../../functions/dniParser');
 
 const QR_PREFIX = /^(?:QR|PASE|PASS)[#:=]\s*(.+)$/i;
 
+const framerOptions = (cfg, logger) => ({
+  idleMs: Number(cfg.idleMs) > 0 ? Number(cfg.idleMs) : 120,
+  interFrameGapMs: Number(cfg.interFrameGapMs) > 0 ? Number(cfg.interFrameGapMs) : 60,
+  splitOnNewline: cfg.splitOnNewline === true || cfg.splitOnNewline === 'true',
+  logger
+});
+
+const normalizeScanText = (text) => String(text || '')
+  .replace(/^\uFEFF/, '')
+  .replace(/\0/g, '')
+  .replace(/\r\n/g, '\n')
+  .replace(/\r/g, '\n')
+  .replace(/^\n+|\n+$/g, '')
+  .trim();
+
 /**
  * Trama cruda → credencial del motor (o null si no se reconoce).
+ * Una sola línea sigue igual (PDF417 → dni, número suelto → dni, resto → qr).
+ * Una ficha con saltos internos es qr; si trae un DNI, dniHint para que el controlador
+ * resuelva a la persona como hoy resuelve la línea suelta.
  * @param {string} text
  * @param {{plugin?:string, credentialType?:'auto'|'dni'|'qr'|'card'}} [opts]
  */
 function frameToCredential(text, { plugin = 'serial_dni', credentialType = 'auto' } = {}) {
-  const raw = String(text || '').replace(/^﻿/, '').trim();
+  const raw = normalizeScanText(text);
   if (!raw) return null;
   const qr = raw.match(QR_PREFIX);
-  if (qr) return { type: 'qr', value: qr[1].trim(), vendor: 'qr', format: 'qr_prefix' };
-  if (credentialType === 'qr') return { type: 'qr', value: raw, vendor: 'qr', format: 'qr' };
+  if (qr && !raw.includes('\n')) return { type: 'qr', value: qr[1].trim(), vendor: 'qr', format: 'qr_prefix' };
   if (credentialType === 'card') return { type: 'card', value: raw, vendor: 'card', format: 'card' };
+
+  if (raw.includes('\n')) {
+    const multi = parseMultilineCredential(raw);
+    if (!multi) return null;
+    const parsed = parseReaderFrame(plugin, raw);
+    const vendor = (parsed && parsed.vendor) || 'qr';
+    if (credentialType === 'dni') {
+      return multi.dniHint ? { type: 'dni', value: multi.dniHint, vendor, format: 'numeric' } : null;
+    }
+    return {
+      type: 'qr',
+      value: multi.value,
+      ...(multi.dniHint ? { dniHint: multi.dniHint } : {}),
+      vendor,
+      format: 'qr'
+    };
+  }
+
+  if (credentialType === 'qr') return { type: 'qr', value: raw, vendor: 'qr', format: 'qr' };
 
   const parsed = parseReaderFrame(plugin, raw);
   if (!parsed) return null;
@@ -40,7 +76,7 @@ function frameToCredential(text, { plugin = 'serial_dni', credentialType = 'auto
   if (parsed.authMethod === 'biometric' && parsed.biometricExternalId) {
     return { type: 'biostar', value: parsed.biometricExternalId, vendor: parsed.vendor, format: 'biostar' };
   }
-  // DNI: PDF417 argentino, MRZ, JSON o número de 7/8 dígitos.
+  // DNI: PDF417 argentino, MRZ, JSON o número de 7/8 dígitos en una sola línea.
   const scan = parseScanData(parsed.idNumber || parsed.rawData || raw);
   if (scan && scan.idNumber) return { type: 'dni', value: scan.idNumber, vendor: parsed.vendor, format: scan.format };
   if (credentialType === 'dni') return null;
@@ -62,6 +98,15 @@ class BaseReader {
     this.stats.frames += 1;
     this.stats.lastFrameAt = Date.now();
     const cred = frameToCredential(frame.text, this.cfg);
+    const dni = cred && (cred.dniHint || (cred.type === 'dni' ? cred.value : ''));
+    this.logger.info('Lectura', {
+      reader: this.id,
+      bytes: frame.rawBuf ? frame.rawBuf.length : Buffer.byteLength(String(frame.text || '')),
+      reason: frame.reason || null,
+      type: cred ? cred.type : null,
+      ...(dni ? { dni: maskIdNumber(dni) } : {})
+    });
+    this.logger.debug('Lectura detalle', { reader: this.id, text: maskDocumentDigits(frame.text) });
     if (!cred) {
       this.stats.unrecognized += 1;
       this.logger.warn('Trama no reconocida', { reader: this.id, text: maskDocumentDigits(frame.text) });
@@ -90,10 +135,9 @@ class SerialReader extends BaseReader {
     const cfg = {
       serialPort: this.cfg.port || this.cfg.serialPort,
       baudRate: Number(this.cfg.baudRate) || 9600,
-      idleMs: Number(this.cfg.idleMs) || 120,
+      ...framerOptions(this.cfg, this.logger),
       reconnectMinMs: Number(this.cfg.reconnectMinMs) || 1000,
-      reconnectMaxMs: Number(this.cfg.reconnectMaxMs) || 30000,
-      logger: this.logger
+      reconnectMaxMs: Number(this.cfg.reconnectMaxMs) || 30000
     };
     if (!cfg.serialPort) throw new Error(`Lector ${this.id}: falta "port" (ej. COM3 o /dev/ttyUSB0)`);
     this.loop = runSerialLoop(cfg, (f) => this.handleFrame(f), () => this.stopped, {
@@ -123,7 +167,7 @@ class StdinReader extends BaseReader {
 
   async start(onCredential) {
     this.onCredential = onCredential;
-    this.framer = createSerialFramer({ idleMs: Number(this.cfg.idleMs) || 120, logger: this.logger }, (f) => this.handleFrame(f));
+    this.framer = createSerialFramer(framerOptions(this.cfg, this.logger), (f) => this.handleFrame(f));
     this.onData = (chunk) => this.framer.push(chunk);
     this.stream.on('data', this.onData);
     if (typeof this.stream.resume === 'function') this.stream.resume();

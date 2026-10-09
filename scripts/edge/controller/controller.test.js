@@ -43,6 +43,59 @@ describe('controlador: decisión local → pulso → journal', { skip: SKIP }, (
     assert.ok(!JSON.stringify(unknown).includes('99888777'));
   });
 
+  it('QR multilínea: resuelve por dniHint, archiva credType qr y el DNI enmascarado', async () => {
+    t = await createTestController();
+    const r = await t.controller.handleCredential({
+      type: 'qr',
+      value: 'EMPRESA ACME\nNombre\tAna\nDNI\t30111222',
+      dniHint: '30111222',
+      doorId: 'p1',
+      readerId: 'p1-in',
+      side: 'in'
+    });
+    assert.equal(r.decision, 'grant');
+    assert.equal(r.reason, 'nivel_acceso');
+    const ev = t.events('access').at(-1);
+    assert.equal(ev.credType, 'qr');
+    assert.equal(ev.cardholderId, 'ana');
+    assert.equal(ev.payload.idNumberMasked, '*****222');
+    assert.equal(JSON.stringify(ev).includes('30111222'), false);
+
+    const unknown = await t.controller.handleCredential({
+      type: 'qr',
+      value: 'EMPRESA\nNombre\tNadie\nArea\tCajas',
+      doorId: 'p1',
+      readerId: 'p1-in',
+      side: 'in'
+    });
+    assert.equal(unknown.reason, 'credencial_desconocida');
+    assert.equal(t.events('access').filter((e) => e.reason === 'credencial_desconocida').length, 1);
+  });
+
+  it('si el dniHint no está registrado y el QR sí, concede por el QR', async () => {
+    t = await createTestController();
+    const bodies = siteBodies();
+    const ana = bodies['ch-00'].cardholders.find((c) => c.id === 'ana');
+    ana.credentials.push({ type: 'qr', valueHash: hashCredential('qr', 'pase-ana'), status: 'active' });
+    t.hub.publish(2, bodies);
+    const applied = await t.controller.configSync.sync();
+    assert.equal(applied.applied, true);
+    const r = await t.controller.handleCredential({
+      type: 'qr',
+      value: 'pase-ana',
+      dniHint: '99999999',
+      doorId: 'p1',
+      readerId: 'p1-in',
+      side: 'in'
+    });
+    assert.equal(r.decision, 'grant');
+    const ev = t.events('access').at(-1);
+    assert.equal(ev.credType, 'qr');
+    assert.equal(ev.cardholderId, 'ana');
+    assert.equal(ev.payload.idNumberMasked, '*****999');
+    assert.equal(JSON.stringify(ev).includes('99999999'), false);
+  });
+
   it('journalea door_state: DESBLOQUEADA y, tras el pulso, SEGURA', async () => {
     t = await createTestController();
     await t.scan('p1', 'ana');

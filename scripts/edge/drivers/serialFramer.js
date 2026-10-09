@@ -1,13 +1,19 @@
 'use strict';
 
 /**
- * Framing serie validado en banco (copia de createSerialFramer / runSerialLoop de
- * scripts/programa-estacion.js; ese archivo no se toca porque lo usa la estación v1.7):
- * acumula hasta CR/LF/CRLF, o flush por silencio (idleMs) si el lector no manda terminador.
+ * Framing serie del edge (la estación v1.7 sigue en scripts/programa-estacion.js y no se toca).
+ *
+ * Por defecto un CR/LF no cierra la lectura: todo lo que llega en la misma ráfaga es una sola
+ * trama y se cierra cuando no entran más bytes durante interFrameGapMs (60). Los saltos internos
+ * quedan como '\n'. idleMs sigue siendo el máximo de espera si el lector no manda terminador.
+ * splitOnNewline:true vuelve a cortar en cada CR/LF, como el lector de una línea.
  */
 
 const path = require('path');
-const { nullLogger } = require('./logger');
+const { nullLogger, maskDocumentDigits } = require('./logger');
+
+const DEFAULT_IDLE_MS = 120;
+const DEFAULT_GAP_MS = 60;
 
 const CONTROL_NAMES = {
   0: 'NUL', 7: 'BEL', 8: 'BS', 9: 'TAB', 10: 'LF', 11: 'VT', 12: 'FF', 13: 'CR', 27: 'ESC', 32: 'SPC'
@@ -28,17 +34,53 @@ const formatChunk = (buf) => {
   };
 };
 
+/** Hex de debug: los dígitos ASCII de un DNI (7+) se tapan salvo los últimos 3. */
+const maskHexDigits = (buf) => {
+  const bytes = [...buf];
+  const hide = new Array(bytes.length).fill(false);
+  let i = 0;
+  while (i < bytes.length) {
+    if (bytes[i] >= 0x30 && bytes[i] <= 0x39) {
+      let j = i;
+      while (j < bytes.length && bytes[j] >= 0x30 && bytes[j] <= 0x39) j += 1;
+      if (j - i >= 7) {
+        for (let k = i; k < j - 3; k += 1) hide[k] = true;
+      }
+      i = j;
+    } else {
+      i += 1;
+    }
+  }
+  return bytes.map((b, idx) => (hide[idx] ? '**' : b.toString(16).padStart(2, '0'))).join(' ');
+};
+
+const chunkForLog = (buf) => {
+  const { pretty } = formatChunk(buf);
+  return { pretty: maskDocumentDigits(pretty), hex: maskHexDigits(buf) };
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const positiveMs = (value, fallback) => (Number(value) > 0 ? Number(value) : fallback);
+
+const bufferToText = (rawBuf, splitOnNewline) => {
+  const raw = rawBuf.toString('utf8').replace(/\0/g, '');
+  if (splitOnNewline) return raw.replace(/[\r\n]+/g, '').trim();
+  return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\n+|\n+$/g, '').trim();
+};
+
 /**
- * @param {{idleMs?:number, logger?:object}} cfg
+ * @param {{idleMs?:number, interFrameGapMs?:number, splitOnNewline?:boolean, logger?:object}} cfg
  * @param {(frame:{text:string, pretty:string, hex:string, reason:string, rawBuf:Buffer})=>void} onComplete
  */
 const createSerialFramer = (cfg, onComplete) => {
-  const idleMs = Number(cfg.idleMs) > 0 ? Number(cfg.idleMs) : 120;
+  const idleMs = positiveMs(cfg.idleMs, DEFAULT_IDLE_MS);
+  const interFrameGapMs = positiveMs(cfg.interFrameGapMs, DEFAULT_GAP_MS);
+  const splitOnNewline = cfg.splitOnNewline === true || cfg.splitOnNewline === 'true';
   const logger = cfg.logger || nullLogger;
   let buffer = Buffer.alloc(0);
   let idleTimer = null;
+  let pendingReason = '';
 
   const clearIdle = () => {
     if (idleTimer) {
@@ -50,26 +92,25 @@ const createSerialFramer = (cfg, onComplete) => {
   const emitFrame = (rawBuf, reason) => {
     clearIdle();
     if (!rawBuf || rawBuf.length === 0) return;
-    const text = rawBuf.toString('utf8').replace(/[\r\n\0]+/g, '').trim();
+    const text = bufferToText(rawBuf, splitOnNewline);
     const { pretty, hex } = formatChunk(rawBuf);
+    logger.info('Trama', { bytes: rawBuf.length, reason });
+    logger.debug('Trama detalle', { bytes: rawBuf.length, reason, ...chunkForLog(rawBuf) });
     onComplete({ text, pretty, hex, reason, rawBuf });
   };
 
-  const scheduleIdleFlush = () => {
+  const scheduleFlush = (waitMs, reason) => {
     clearIdle();
+    pendingReason = reason;
     idleTimer = setTimeout(() => {
       if (buffer.length === 0) return;
       const snapshot = buffer;
       buffer = Buffer.alloc(0);
-      emitFrame(snapshot, `silencio ${idleMs}ms`);
-    }, idleMs);
+      emitFrame(snapshot, pendingReason);
+    }, waitMs);
   };
 
-  const push = (chunk) => {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
-    logger.debug(`RX chunk (${buf.length} B)`, formatChunk(buf));
-    buffer = Buffer.concat([buffer, buf]);
-
+  const cutOnNewlines = () => {
     while (buffer.length > 0) {
       const cr = buffer.indexOf(0x0d);
       const lf = buffer.indexOf(0x0a);
@@ -87,8 +128,23 @@ const createSerialFramer = (cfg, onComplete) => {
       const hasLf = frame.includes(0x0a);
       emitFrame(frame, hasCr && hasLf ? 'CRLF' : hasCr ? 'CR' : 'LF');
     }
+  };
 
-    if (buffer.length > 0) scheduleIdleFlush();
+  const push = (chunk) => {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+    logger.debug(`RX chunk (${buf.length} B)`, chunkForLog(buf));
+    buffer = Buffer.concat([buffer, buf]);
+
+    if (splitOnNewline) {
+      cutOnNewlines();
+      if (buffer.length > 0) scheduleFlush(idleMs, `silencio ${idleMs}ms`);
+      return;
+    }
+
+    if (buffer.length === 0) return;
+    const hasTerminator = buffer.includes(0x0d) || buffer.includes(0x0a);
+    if (hasTerminator) scheduleFlush(interFrameGapMs, `ráfaga ${interFrameGapMs}ms`);
+    else scheduleFlush(idleMs, `silencio ${idleMs}ms`);
   };
 
   return {
@@ -138,7 +194,7 @@ const openSerialOnce = (cfg, SerialPortImpl) => new Promise((resolve, reject) =>
 
 /**
  * Mantiene el puerto serie abierto con reconexión y backoff (×1.8). Termina solo con shouldStop().
- * @param {{serialPort:string, baudRate:number, idleMs?:number, reconnectMinMs?:number, reconnectMaxMs?:number, logger?:object}} cfg
+ * @param {{serialPort:string, baudRate:number, idleMs?:number, interFrameGapMs?:number, splitOnNewline?:boolean, reconnectMinMs?:number, reconnectMaxMs?:number, logger?:object}} cfg
  * @param {{onConnected?:Function, onDisconnected?:Function, onPort?:(port)=>void, SerialPort?:object}} [hooks]
  */
 const runSerialLoop = async (cfg, onFrame, shouldStop, hooks = {}) => {
