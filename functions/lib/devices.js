@@ -384,7 +384,13 @@ const exchangeDeviceToken = async ({ deviceId, ts, signature, refreshToken } = {
     kind: device.kind
   };
   if (device.kind === 'hub') {
-    out.firebaseToken = await createFirebaseCustomToken({ deviceId: device.id, siteId: device.siteId, kind: device.kind });
+    // Best effort: el hub del Hito 1 no lo usa (poll HTTP); el listener Firestore es fase 2. Sin
+    // credenciales que puedan firmar (API local con ADC de usuario) no se corta el token del equipo.
+    try {
+      out.firebaseToken = await createFirebaseCustomToken({ deviceId: device.id, siteId: device.siteId, kind: device.kind });
+    } catch (err) {
+      console.warn(`[devices] custom token Firebase no disponible para ${device.id}: ${err.message}`);
+    }
   }
   return out;
 };
