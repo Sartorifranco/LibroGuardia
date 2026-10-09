@@ -1,15 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  UserPlus,
-  Edit,
-  Trash2,
-  PlusCircle,
   XCircle,
   ToggleRight,
   ToggleLeft,
   Save,
-  Users,
-  Unlock,
   Search,
   ChevronLeft,
   ChevronRight,
@@ -23,13 +17,45 @@ import {
   AdminLoading,
   AdminTable
 } from '../../../components/admin/AdminUi';
-import { hasPermission, canManageTargetUser, PERMISSION_LABELS, isAccessStationAccount, ACCESS_STATION_ROLE_ID, ACCESS_STATION_ROLE_LABEL, humanRoleLabel } from '../../../utils/permissions';
+import { PageHeader, AdvancedSection, HelpTip, EmptyState } from '../../../components/admin-ui';
+import { hasPermission, canManageTargetUser, PERMISSION_LABELS, isAccessStationAccount, ACCESS_STATION_ROLE_ID, ACCESS_STATION_ROLE_LABEL, humanRoleLabel, buildPermissionCategories } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
 
-const PAGE_SIZES = [25, 50, 100];
+const PAGE_SIZES = [25, 50];
+
+const JOB_CARDS = [
+  { id: 'guardia', roleId: 'guardia', title: 'Guardia', text: 'Atiende la puerta y anota quién entra.' },
+  { id: 'supervisor', roleId: 'supervisor', title: 'Jefe de seguridad', text: 'Organiza la guardia y revisa los avisos.' },
+  { id: 'monitoreo', roleId: 'monitoreo', title: 'Monitoreo', text: 'Sigue vehículos y puertas desde la pantalla.' },
+  { id: 'responsable', roleId: 'responsable', title: 'Responsable de empresa', text: 'Aprueba los ingresos de su empresa.' },
+  { id: 'rrhh', roleId: 'supervisor', title: 'Recursos humanos', text: 'Carga la nómina y los datos de las personas.' },
+  { id: 'admin', roleId: 'admin', title: 'Sistemas', text: 'Configura el sistema. Puede eliminar usuarios.' }
+];
+
+const generateTempPassword = () => {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  let out = '';
+  for (let i = 0; i < 8; i += 1) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return `${out}a1`;
+};
+
+const formatLastLogin = (value) => {
+  if (!value) return 'Todavía no ingresó';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Todavía no ingresó';
+  return date.toLocaleString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
 
 function roleLabel(systemRoles, roleId) {
   return humanRoleLabel(systemRoles, roleId);
@@ -48,8 +74,11 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   const [users, setUsers] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
+  const [newNombre, setNewNombre] = useState('');
+  const [newPuesto, setNewPuesto] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState('guardia');
+  const [jobCard, setJobCard] = useState('guardia');
   const [editingUser, setEditingUser] = useState(null);
   const [editedUsername, setEditedUsername] = useState('');
   const [editedUserRole, setEditedUserRole] = useState('');
@@ -120,11 +149,13 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
       { id: 'monitoreo', label: 'Monitoreo' },
       { id: 'guardia', label: 'Guardia' },
       { id: 'supervisor', label: 'Supervisor' },
-      { id: 'admin', label: 'Administrador' }
-    ]).filter((role) => (
-      role.id !== ACCESS_STATION_ROLE_ID
-      && canManageTargetUser(currentUser, { role: role.id }, systemRoles)
-    ));
+      { id: 'responsable', label: 'Responsable de empresa' },
+      { id: 'admin', label: 'Sistemas' }
+    ]).filter((role) => {
+      if (role.id === ACCESS_STATION_ROLE_ID) return false;
+      if (currentUser.role === 'admin' && role.id === 'admin') return true;
+      return canManageTargetUser(currentUser, { role: role.id }, systemRoles);
+    });
   }, [currentUser, systemRoles]);
 
   const humanUsers = useMemo(
@@ -200,11 +231,21 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
         await apiFetch('/admin/users', {
           method: 'POST',
           token: authToken,
-          body: { username: newUsername, password: newUserPassword, role: newUserRole, empresaId: newEmpresaId || null }
+          body: {
+            username: newUsername,
+            password: newUserPassword,
+            role: newUserRole,
+            empresaId: newEmpresaId || null,
+            nombre: newNombre || null,
+            puesto: newUserRole === 'guardia' ? (newPuesto || null) : null
+          }
         });
         setNewUsername('');
-        setNewUserPassword('');
+        setNewNombre('');
+        setNewPuesto('');
+        setNewUserPassword(generateTempPassword());
         setNewUserRole('guardia');
+        setJobCard('guardia');
         setNewEmpresaId('');
         setCreateOpen(false);
         showSuccess('Usuario creado exitosamente.');
@@ -272,6 +313,32 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
     });
   };
 
+  const handleToggleActive = async (user) => {
+    const turningOff = user.active !== false;
+    const ok = await confirm({
+      title: turningOff ? 'Desactivar usuario' : 'Activar usuario',
+      message: turningOff
+        ? `¿Desactivar a “${user.username}”? No va a poder entrar hasta que lo actives de nuevo.`
+        : `¿Activar a “${user.username}”? Va a poder entrar otra vez.`,
+      confirmLabel: turningOff ? 'Desactivar' : 'Activar',
+      tone: turningOff ? 'danger' : 'default'
+    });
+    if (!ok) return;
+    await runAction(`toggle-${user.id}`, async () => {
+      try {
+        await apiFetch(`/admin/users/${user.id}`, {
+          method: 'PUT',
+          token: authToken,
+          body: { active: !turningOff }
+        });
+        showSuccess(turningOff ? 'Usuario desactivado.' : 'Usuario activado.');
+        await reloadUsers();
+      } catch (err) {
+        showError(err.message || 'No se pudo cambiar el estado');
+      }
+    });
+  };
+
   const handleDeleteUser = async (userId) => {
     const ok = await confirm({
       title: 'Eliminar usuario',
@@ -326,74 +393,147 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   const rangeFrom = filteredUsers.length === 0 ? 0 : safePage * pageSize + 1;
   const rangeTo = Math.min(filteredUsers.length, (safePage + 1) * pageSize);
 
+  const visibleJobs = JOB_CARDS.filter((card) => (
+    assignableRoles.some((role) => role.id === card.roleId)
+  ));
+
+  const openCreate = () => {
+    if (createOpen) {
+      setCreateOpen(false);
+      return;
+    }
+    setNewUserPassword(generateTempPassword());
+    setJobCard('guardia');
+    setNewUserRole(assignableRoles.some((role) => role.id === 'guardia') ? 'guardia' : (assignableRoles[0]?.id || 'guardia'));
+    setCreateOpen(true);
+  };
+
+  const chooseJob = (card) => {
+    setJobCard(card.id);
+    setNewUserRole(card.roleId);
+  };
+
+  const copyPassword = async () => {
+    try {
+      await navigator.clipboard.writeText(newUserPassword);
+      showSuccess('Contraseña copiada.');
+    } catch {
+      showError('No se pudo copiar. Seleccionala y copiala a mano.');
+    }
+  };
+
   return (
-    <div className="users-admin">
-      <AdminBlock
-        title={<><Users size={18} /> Usuarios</>}
-        description="Buscá, filtrá y administrá cuentas sin desplazarte por tarjetas."
+    <div className="users-admin admin-simple">
+      <PageHeader
+        title="Usuarios del sistema"
+        purpose="Cada persona que entra al sistema tiene un usuario, un puesto y una contraseña."
+        howTo={[
+          'Elegí qué hace la persona.',
+          'Completá el nombre, el usuario y la contraseña temporal.',
+          'Guardá. La persona entra y cambia la contraseña.'
+        ]}
         action={canCreate ? (
-          <button
-            type="button"
-            className={`btn btn-primary users-admin__create-toggle${createOpen ? ' is-open' : ''}`}
-            onClick={() => setCreateOpen((v) => !v)}
-          >
-            {createOpen ? <X size={16} /> : <UserPlus size={16} />}
+          <button type="button" className="btn btn-primary" onClick={openCreate}>
             {createOpen ? 'Cerrar' : 'Nuevo usuario'}
           </button>
         ) : null}
-      >
+      />
+      <AdminBlock title="Listado">
         {canCreate && createOpen && (
-          <form onSubmit={handleCreateUser} className="users-admin__create">
-            <input
-              type="text"
-              id="newUsername"
-              value={newUsername}
-              onChange={(e) => setNewUsername(e.target.value)}
-              className="input-field"
-              placeholder="Usuario / email"
-              required
-              autoFocus
-            />
-            <input
-              type="password"
-              id="newUserPassword"
-              value={newUserPassword}
-              onChange={(e) => setNewUserPassword(e.target.value)}
-              className="input-field"
-              placeholder="Contraseña (mínimo 8 caracteres)"
-              minLength={8}
-              required
-            />
-            <select
-              id="newUserRole"
-              value={newUserRole}
-              onChange={(e) => setNewUserRole(e.target.value)}
-              className="input-field"
-            >
-              {assignableRoles.map((role) => (
-                <option key={role.id} value={role.id}>{role.label}</option>
+          <form onSubmit={handleCreateUser} className="users-admin__create" style={{ display: 'grid', gap: '0.75rem' }}>
+            <h3 className="admin-block__title">¿Qué hace esta persona en el sistema?</h3>
+            <div className="admin-simple-choice">
+              {visibleJobs.map((card) => (
+                <button
+                  key={card.id}
+                  type="button"
+                  className={`admin-simple-choice__card${jobCard === card.id ? ' is-selected' : ''}`}
+                  onClick={() => chooseJob(card)}
+                >
+                  <strong>{card.title}</strong>
+                  <span>{card.text}</span>
+                </button>
               ))}
-            </select>
-            <select
-              id="newUserEmpresa"
-              value={newEmpresaId}
-              onChange={(e) => setNewEmpresaId(e.target.value)}
-              className="input-field"
-              aria-label="Empresa"
-            >
-              <option value="">Sin empresa</option>
-              {empresas.map((empresa) => (
-                <option key={empresa.id} value={empresa.id}>{empresa.nombre}</option>
-              ))}
-            </select>
+            </div>
+            <label className="field-label">
+              Nombre
+              <input
+                className="input-field"
+                aria-label="Nombre"
+                value={newNombre}
+                onChange={(e) => setNewNombre(e.target.value)}
+                required
+              />
+            </label>
+            <label className="field-label">
+              Usuario o mail
+              <input
+                type="text"
+                id="newUsername"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                className="input-field"
+                aria-label="Usuario o mail"
+                required
+                autoFocus
+              />
+            </label>
+            {newUserRole === 'responsable' ? (
+              <label className="field-label">
+                Empresa
+                <select
+                  id="newUserEmpresa"
+                  value={newEmpresaId}
+                  onChange={(e) => setNewEmpresaId(e.target.value)}
+                  className="input-field"
+                  aria-label="Empresa"
+                >
+                  <option value="">Elegí la empresa</option>
+                  {empresas.map((empresa) => (
+                    <option key={empresa.id} value={empresa.id}>{empresa.nombre}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {newUserRole === 'guardia' ? (
+              <label className="field-label">
+                Puesto o puertas
+                <HelpTip text="Por ejemplo: Portón principal, turno noche." />
+                <input
+                  className="input-field"
+                  aria-label="Puesto o puertas"
+                  value={newPuesto}
+                  onChange={(e) => setNewPuesto(e.target.value)}
+                />
+              </label>
+            ) : null}
+            <label className="field-label">
+              Contraseña temporal
+              <span className="admin-simple-sentence">
+                <input
+                  type="text"
+                  id="newUserPassword"
+                  value={newUserPassword}
+                  onChange={(e) => setNewUserPassword(e.target.value)}
+                  className="input-field"
+                  aria-label="Contraseña temporal"
+                  minLength={8}
+                  required
+                />
+                <button type="button" className="btn btn-secondary" onClick={copyPassword}>Copiar</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setNewUserPassword(generateTempPassword())}>
+                  Generar otra
+                </button>
+              </span>
+            </label>
             <PendingButton
               type="submit"
               actionId="createUser"
               pendingAction={pendingAction}
-              className="btn btn-primary"
+              className="btn btn-secondary"
               pendingLabel="Creando…"
             >
-              <PlusCircle size={18} /> Crear
+              Crear usuario
             </PendingButton>
           </form>
         )}
@@ -465,18 +605,18 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
         {loading ? (
           <AdminLoading label="Cargando usuarios…" />
         ) : humanUsers.length === 0 && !showAccessStations ? (
-          <AdminEmpty
-            icon={Users}
+          <EmptyState
             title="Todavía no hay usuarios"
-            description={stats.stations > 0
-              ? `Hay ${stats.stations} estación(es) de acceso; se gestionan en Lectores. Activá “Mostrar estación de acceso” si necesitás verlas acá.`
-              : 'Creá el primero con «Nuevo usuario».'}
+            text="Un usuario es la cuenta con la que una persona entra al sistema."
+            actionLabel={canCreate ? 'Crear el primero' : undefined}
+            onAction={canCreate ? openCreate : undefined}
           />
         ) : users.length === 0 ? (
-          <AdminEmpty
-            icon={Users}
+          <EmptyState
             title="Todavía no hay usuarios"
-            description="Creá el primero con «Nuevo usuario»."
+            text="Un usuario es la cuenta con la que una persona entra al sistema."
+            actionLabel={canCreate ? 'Crear el primero' : undefined}
+            onAction={canCreate ? openCreate : undefined}
           />
         ) : filteredUsers.length === 0 ? (
           <AdminEmpty
@@ -492,13 +632,12 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                   <th>Usuario</th>
                   <th>Rol</th>
                   <th>Estado</th>
-                  <th>Permisos</th>
+                  <th>Último ingreso</th>
                   <th className="users-admin__th-actions">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {pageSlice.map((user) => {
-                  const customCount = (user.customPermissions || []).length;
                   const manageable = canManageTargetUser(currentUser, user, systemRoles);
                   return (
                     <tr key={user.id} className={`${user.active === false ? 'users-admin__row--inactive' : ''}${isAccessStationAccount(user) ? ' users-admin__row--station' : ''}`}>
@@ -526,48 +665,36 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                           {user.active !== false ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
-                      <td>
-                        {customCount > 0 ? (
-                          <span className="users-admin__chip" title={`${customCount} permiso(s) personalizado(s)`}>
-                            {customCount} extra
-                          </span>
-                        ) : (
-                          <span className="users-admin__muted">Rol</span>
-                        )}
-                      </td>
+                      <td>{formatLastLogin(user.lastLoginAt)}</td>
                       <td>
                         <div className="users-admin__actions">
+                          {canEdit && manageable && user.id !== currentUser.id && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary admin-simple-touch"
+                              onClick={() => handleToggleActive(user)}
+                            >
+                              {user.active !== false ? 'Desactivar' : 'Activar'}
+                            </button>
+                          )}
                           {canEdit && manageable && (
                             <button
                               type="button"
-                              className="users-admin__icon-btn"
+                              className="btn btn-secondary-small"
                               onClick={() => handleEditUser(user)}
-                              title="Editar"
                               aria-label={`Editar ${user.username}`}
                             >
-                              <Edit size={15} />
+                              Editar
                             </button>
                           )}
-                          {canUnlock && (
+                          {currentUser.role === 'admin' && canDelete && user.id !== currentUser.id && manageable && (
                             <button
                               type="button"
-                              className="users-admin__icon-btn"
-                              onClick={() => handleClearLoginFailures(user)}
-                              title="Destrabar login"
-                              aria-label={`Destrabar login de ${user.username}`}
-                            >
-                              <Unlock size={15} />
-                            </button>
-                          )}
-                          {canDelete && user.id !== currentUser.id && manageable && (
-                            <button
-                              type="button"
-                              className="users-admin__icon-btn users-admin__icon-btn--danger"
+                              className="btn btn-danger-small"
                               onClick={() => handleDeleteUser(user.id)}
-                              title="Eliminar"
                               aria-label={`Eliminar ${user.username}`}
                             >
-                              <Trash2 size={15} />
+                              Eliminar
                             </button>
                           )}
                         </div>
@@ -688,20 +815,24 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 </button>
               )}
               {canPerms && editingUser.id !== currentUser.id && canManageTargetUser(currentUser, editingUser, systemRoles) && (
-                <div>
-                  <h4 className="admin-block__title" style={{ marginBottom: '0.5rem' }}>Permisos personalizados</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-md p-3">
-                    {(permissionKeys.length ? permissionKeys : Object.keys(PERMISSION_LABELS)).map((permission) => (
-                      <label key={permission} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={editingUserPermissions.includes(permission)}
-                          onChange={() => toggleEditingUserPermission(permission)}
-                        />
-                        {PERMISSION_LABELS[permission] || permission}
-                      </label>
-                    ))}
-                  </div>
+                <AdvancedSection title="Opciones avanzadas">
+                  <h4 className="admin-block__title">Permisos extra</h4>
+                  <p className="historial-meta">Se suman a lo que ya puede hacer por su puesto. Dejalos vacíos si el puesto alcanza.</p>
+                  {buildPermissionCategories(permissionKeys.length ? permissionKeys : Object.keys(PERMISSION_LABELS)).map((group) => (
+                    <fieldset key={group.id} style={{ border: 0, padding: 0, margin: 0 }}>
+                      <legend className="admin-block__title">{group.label}</legend>
+                      {group.permissions.map((permission) => (
+                        <label key={permission} className="admin-simple-sentence">
+                          <input
+                            type="checkbox"
+                            checked={editingUserPermissions.includes(permission)}
+                            onChange={() => toggleEditingUserPermission(permission)}
+                          />
+                          {PERMISSION_LABELS[permission] || 'Permiso adicional'}
+                        </label>
+                      ))}
+                    </fieldset>
+                  ))}
                   <PendingButton
                     type="button"
                     actionId="saveUserPermissions"
@@ -710,9 +841,14 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                     pendingLabel="Guardando..."
                     onClick={handleSaveUserPermissions}
                   >
-                    Guardar permisos personalizados
+                    Guardar permisos extra
                   </PendingButton>
-                </div>
+                  {canUnlock ? (
+                    <button type="button" className="btn btn-secondary" onClick={() => handleClearLoginFailures(editingUser)}>
+                      Destrabar ingreso
+                    </button>
+                  ) : null}
+                </AdvancedSection>
               )}
               <div className="flex justify-end gap-3">
                 <button type="button" onClick={() => setEditingUser(null)} className="btn btn-secondary">

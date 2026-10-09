@@ -1,5 +1,5 @@
 export const ADMIN_SECTION_META = {
-  users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
+  users: { title: 'Usuarios del sistema', description: 'Quién entra, qué hace y cuándo ingresó por última vez.' },
   access: { title: 'GPS de vehículos', description: 'Mapa del portón y de la planta, y cuándo se avisa al guardia.' },
   equiposAcceso: {
     title: 'Sistemas',

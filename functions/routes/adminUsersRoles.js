@@ -235,6 +235,8 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
 
     const passwordHash = await bcrypt.hash(password, 10);
     const empresaId = String(req.body?.empresaId || '').trim() || null;
+    const nombre = String(req.body?.nombre || '').trim();
+    const puesto = String(req.body?.puesto || '').trim();
     await userRef.set({
       username: normalizedUsername,
       password: passwordHash,
@@ -243,6 +245,8 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
       mustChangePassword: true,
       passwordVersion: 1,
       empresaId,
+      ...(nombre ? { nombre } : {}),
+      ...(puesto ? { puesto } : {}),
       createdAt: FieldValue.serverTimestamp()
     });
 
