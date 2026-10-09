@@ -21,7 +21,7 @@
  *  - visitas → pases (validFrom = esperada − 2 h, validTo = fin del día local).
  */
 
-const { hashCredential, credentialKeyId } = require('../accessEngine/snapshotSchema');
+const { hashCredential, credentialKeyId, DEFAULT_POLICY } = require('../accessEngine/snapshotSchema');
 const { normalizeDni } = require('../normalize');
 const { normalizeAllowedDoorIds } = require('../doorAccess');
 const { isCitacionRequiredArea, isSistemasArea } = require('../centroCostoGroups');
@@ -477,6 +477,9 @@ const buildDoor = (door, groupByDoor) => {
   if (door.sensorsRequired === false) out.sensorsRequired = false;
   if (door.lockdown === true) out.lockdown = true;
   if (door.inputs && typeof door.inputs === 'object') out.inputs = door.inputs;
+  if (door.repeatWindowSec != null && Number.isFinite(Number(door.repeatWindowSec)) && Number(door.repeatWindowSec) >= 0) {
+    out.repeatWindowSec = Math.round(Number(door.repeatWindowSec));
+  }
   return out;
 };
 
@@ -512,11 +515,15 @@ const buildDoorsChunk = ({ siteId, site = {}, doorsConfig = {}, schedules = [] }
   for (const s of [NO_SHIFT_SCHEDULE, ...(Array.isArray(site.schedules) ? site.schedules : []), ...schedules]) {
     if (s && s.id && !schedMap.has(s.id)) schedMap.set(s.id, { ...s });
   }
+  const repeatRaw = Number(site.policy && site.policy.repeatWindowSec);
   const policy = {
     tz,
     citacionWindowStrict: Boolean(site.policy && site.policy.citacionWindowStrict),
     apbMode: (site.policy && site.policy.apbMode) || 'soft',
-    apbResetMin: Number(site.policy && site.policy.apbResetMin) || 0
+    apbResetMin: Number(site.policy && site.policy.apbResetMin) || 0,
+    repeatWindowSec: Number.isFinite(repeatRaw) && repeatRaw >= 0
+      ? Math.round(repeatRaw)
+      : DEFAULT_POLICY.repeatWindowSec
   };
   return {
     site: { id: siteId, name: site.name || undefined, tz },

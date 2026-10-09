@@ -2,7 +2,11 @@
  * Ingesta y operación del edge en la nube (Etapa 2, docs/ETAPA2-DISENO.md §3, §4, §7).
  *
  * - Lotes de eventos del hub → UN doc de journal con id determinístico (idempotente) +
- *   proyecciones: `entries` (solo movimientos autorizados, campos compat del frontend),
+ *   proyecciones: `entries` (solo movimientos autorizados que cuentan como paso, campos compat
+ *   del frontend). `reason: 'lectura_repetida'` queda en el journal y NO crea otro doc
+ *   en `entries`: es el mismo paso (otra credencial o un reintento dentro de
+ *   repeatWindowSec). El feed de planta lo muestra desde el journal del hub; los
+ *   conteos y reportes que leen `entries` no lo suman.
  *   `sites/{s}/alarms/{id}` y cursor `sites/{s}/status/hub`. Mails D20 solo para alarmas críticas.
  *   Presupuesto por lote: 1 lectura + (1 + #entries + #alarmas + 1) escrituras, en un batch.
  * - Heartbeat de equipos con escritura condicionada (cambio o > 5 min).
@@ -115,7 +119,8 @@ const normalizeEvent = (raw, index) => {
   };
 };
 
-const isGrantedMovement = (ev) => ev.decision === 'grant' && !alarmTypeOf(ev);
+/** Concedido que cuenta como paso. La lectura repetida se archiva en el journal, sin fila en entries. */
+const isGrantedMovement = (ev) => ev.decision === 'grant' && ev.reason !== 'lectura_repetida' && !alarmTypeOf(ev);
 
 const maskIdNumber = (ev) => {
   const p = ev.payload || {};

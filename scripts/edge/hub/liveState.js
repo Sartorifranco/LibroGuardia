@@ -6,8 +6,9 @@
  * `live/summary` para la vista remota.
  *
  * Eventos que entiende (contrato con T5; lo desconocido se ignora sin error):
- *  - type 'access' (o 'passage') con decision 'grant' → movimiento. Presencia: se aplican los
- *    `payload.stateEffects` que calculó el motor en el controlador:
+ *  - type 'access' (o 'passage') con decision 'grant' → movimiento. `reason: 'lectura_repetida'`
+ *    no es un paso nuevo: no se evalúa APB ni se mueve la presencia.
+ *    En un paso de verdad se aplican los `payload.stateEffects` que calculó el motor:
  *      presence {[cardholderId | 'pass:<id>']: {areaId, ts}} → tabla presence (área exterior o null
  *        = salió del sitio → se borra la fila);
  *      pass {id, status:'ingreso_registrado'|'egreso_registrado', usesDelta?} → meta `hub_pass_state`
@@ -164,7 +165,7 @@ class LiveState {
         } else if (isAlarmCleared(e)) {
           this.clearAlarm({ ...e, payload: { ...e.payload, alarmType: alarmTypeOf(e) } });
         }
-        if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant') {
+        if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant' && e.reason !== 'lectura_repetida') {
           const colado = this.reviewApb(e);
           if (colado) {
             alarm = true;
@@ -324,7 +325,8 @@ class LiveState {
     ).map((a) => ({ id: a.id, type: a.type, doorId: a.door_id, state: a.state, firstTs: a.first_ts, lastTs: a.last_ts, count: a.count }));
     const movements = this.db.all(
       `SELECT id, ts, door_id, side, cardholder_id FROM events
-       WHERE type IN ('access','passage') AND decision = 'grant' ORDER BY ts DESC, id DESC LIMIT ${MOVEMENTS}`
+       WHERE type IN ('access','passage') AND decision = 'grant' AND ifnull(reason, '') != 'lectura_repetida'
+       ORDER BY ts DESC, id DESC LIMIT ${MOVEMENTS}`
     ).map((m) => ({ id: m.id, ts: m.ts, doorId: m.door_id, side: m.side, cardholderId: m.cardholder_id, name: this.personName(m.cardholder_id) }));
     const presence = {};
     for (const p of this.db.all('SELECT cardholder_id, area_id, ts FROM presence ORDER BY area_id, ts DESC')) {

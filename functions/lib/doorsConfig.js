@@ -199,7 +199,7 @@ const normalizeDoor = (door = {}, index = 0) => {
     doorCode: _dc,
     ...persistable
   } = door;
-  return {
+  const normalized = {
     ...DEFAULT_DOOR,
     ...persistable,
     id,
@@ -220,6 +220,14 @@ const normalizeDoor = (door = {}, index = 0) => {
     airlockRole: ['outer', 'inner'].includes(door.airlockRole) ? door.airlockRole : null,
     sequenceOrder: Number(door.sequenceOrder) || 0
   };
+  const repeatRaw = door.repeatWindowSec;
+  if (repeatRaw == null || repeatRaw === '') delete normalized.repeatWindowSec;
+  else {
+    const repeat = Number(repeatRaw);
+    if (Number.isFinite(repeat) && repeat >= 0) normalized.repeatWindowSec = Math.round(repeat);
+    else delete normalized.repeatWindowSec;
+  }
+  return normalized;
 };
 
 const normalizeAirlockGroup = (group = {}, index = 0) => {

@@ -1,4 +1,5 @@
 import { getEffectiveEntryType, isGpsFleetEntry } from './entryDisplay';
+import { countsAsPassage } from './accessEventText';
 
 function isSameLocalDay(dateA, dateB) {
   return (
@@ -10,6 +11,7 @@ function isSameLocalDay(dateA, dateB) {
 
 export function getDashboardStats(entries, referenceDate = new Date()) {
   const todayEntries = (entries || []).filter((entry) => {
+    if (!countsAsPassage(entry)) return false;
     const ts = new Date(entry.timestamp);
     return isSameLocalDay(ts, referenceDate);
   });

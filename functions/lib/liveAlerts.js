@@ -157,6 +157,7 @@ const buildLiveAlertsFromDocs = ({
   // Denegados: mismo umbral que email; un alerta por clave (dni|puerta) por ventana.
   const denials = accessEvents.filter((ev) => {
     if (ev.type !== 'denied') return false;
+    if (ev.denialReason === 'lectura_repetida' || ev.reason === 'lectura_repetida') return false;
     const atMs = toMs(ev.createdAt);
     return !atMs || atMs >= sinceMs;
   });

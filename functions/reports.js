@@ -110,6 +110,7 @@ const aggregateReports = ({
 
   entryDocs.forEach((doc) => {
     const data = typeof doc.data === 'function' ? doc.data() : doc;
+    if (data.countsAsPassage === false || data.accessReason === 'lectura_repetida' || data.reason === 'lectura_repetida') return;
     const ts = toJsDate(data.timestamp);
     if (!ts) return;
     const ymd = getArgentinaDateString(ts);
@@ -136,6 +137,7 @@ const aggregateReports = ({
   accessEventDocs.forEach((doc) => {
     const data = typeof doc.data === 'function' ? doc.data() : doc;
     if (data.type !== 'denied') return;
+    if (data.denialReason === 'lectura_repetida' || data.reason === 'lectura_repetida') return;
     const ts = toJsDate(data.createdAt || data.timestamp);
     if (!ts) return;
     const ymd = getArgentinaDateString(ts);

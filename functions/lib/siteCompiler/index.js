@@ -17,7 +17,7 @@
  *   compileDirtySites()             → para colgar de un scheduler existente
  */
 
-const { createSiteCompiler, DEFAULT_SITE_ID, defaultSiteId } = require('./compiler');
+const { createSiteCompiler, DEFAULT_SITE_ID, defaultSiteId, COMPILER_VERSION } = require('./compiler');
 const signing = require('./signing');
 const { canonicalJson, chunkHash } = require('./canonical');
 const build = require('./build');
@@ -41,6 +41,7 @@ module.exports = {
   bucketOf: build.bucketOf,
   chunkNameForPerson: build.chunkNameForPerson,
   createSiteCompiler,
+  COMPILER_VERSION,
   DEFAULT_SITE_ID,
   defaultSiteId,
   _instance: instance

@@ -11,7 +11,8 @@ const REASONS = Object.freeze({
   // ── Autorizado ──
   acceso_total: 'Acceso autorizado.',
   nivel_acceso: 'Acceso autorizado.',
-  puerta_directa: 'Acceso autorizado.',
+  puerta_directa: 'Acceso autorizado (puerta asignada).',
+  lectura_repetida: 'Lectura repetida (mismo paso).',
   turno_hoy: 'Corresponde ingreso hoy según su turno.',
   citacion_hoy: 'Está citado hoy. Ingreso autorizado.',
   autorizacion_temporal: 'Autorización temporal vigente.',
@@ -103,7 +104,9 @@ const ENGINE_REASONS = Object.freeze(Object.keys(REASONS).filter((k) => ![
   'sin_citacion_hoy', 'sistemas_acceso_permanente', 'ingreso_excepcional', 'permanent', 'citacion',
   'visita', 'temporal', 'visita_empleado', 'visita_no_encontrada', 'visita_sin_fecha', 'egreso',
   // Los emite el hub al ingerir el paso (apbMonitor), no decide().
-  'egreso_sin_ingreso', 'ingreso_duplicado', 'posible_colado'
+  'egreso_sin_ingreso', 'ingreso_duplicado', 'posible_colado',
+  // La emite el controlador cuando la misma persona repite puerta y lado (no decide()).
+  'lectura_repetida'
 ].includes(k)));
 
 const reasonMessage = (code) => REASONS[code] || 'Acceso denegado.';

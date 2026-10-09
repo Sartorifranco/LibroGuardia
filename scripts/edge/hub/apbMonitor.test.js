@@ -61,6 +61,15 @@ describe('apbMonitor: antipassback blando', () => {
     assert.equal(transit.alert, null);
   });
 
+  it('lectura repetida no evalúa antipassback', () => {
+    const r = evaluateSoftApb({
+      event: grant({ doorId: 'p1', side: 'in', cardholderId: 'ana', reason: 'lectura_repetida' }),
+      door, currentAreaId: 'planta', isExterior
+    });
+    assert.deepEqual(r.warnings, []);
+    assert.equal(r.alert, null);
+  });
+
   it('apbMode off no evalúa', () => {
     const r = evaluateSoftApb({
       mode: 'off',
@@ -142,5 +151,39 @@ describe('hub: antipassback blando al ingerir', { skip: k.SKIP }, () => {
     assert.deepEqual(stored.payload.warnings, ['ingreso_duplicado']);
     const n = built.hub.edge.db.get("SELECT count FROM alarms WHERE type = 'posible_colado'");
     assert.equal(n.count, 1, 'el ingreso duplicado no abre otra alerta');
+  });
+
+  it('lectura repetida no mueve presencia ni avisa; a los 20 s el segundo paso es ingreso_duplicado', () => {
+    const presence = () => built.hub.edge.db.get(
+      'SELECT area_id, event_id FROM presence WHERE cardholder_id = ?', 'ana'
+    );
+    const first = ev({
+      type: 'access', decision: 'grant', doorId: 'p1', side: 'in', cardholderId: 'ana', reason: 'puerta_directa',
+      payload: { stateEffects: { presence: { ana: { areaId: 'planta', ts: t } } } }
+    });
+    built.hub.ingestFromController('ctl-a', { events: [first] });
+    assert.equal(presence().area_id, 'planta');
+    assert.equal(presence().event_id, first.id);
+    const people = built.hub.edge.db.all('SELECT cardholder_id FROM presence').length;
+
+    const repeat = ev({
+      type: 'access', decision: 'grant', doorId: 'p1', side: 'in', cardholderId: 'ana', reason: 'lectura_repetida',
+      ts: first.ts + 6000,
+      payload: { repeatOf: first.id, stateEffects: { presence: { ana: { areaId: 'planta', ts: first.ts + 6000 } } } }
+    });
+    built.hub.ingestFromController('ctl-a', { events: [repeat] });
+    assert.equal(presence().event_id, first.id, 'la presencia sigue apuntando al paso original');
+    assert.equal(built.hub.edge.db.all('SELECT cardholder_id FROM presence').length, people);
+    const storedRepeat = built.hub.edge.journal.get(repeat.id);
+    assert.ok(!storedRepeat.payload.warnings || !storedRepeat.payload.warnings.includes('ingreso_duplicado'));
+
+    const later = ev({
+      type: 'access', decision: 'grant', doorId: 'p1', side: 'in', cardholderId: 'ana', reason: 'puerta_directa',
+      ts: first.ts + 20000
+    });
+    built.hub.ingestFromController('ctl-a', { events: [later] });
+    const storedLater = built.hub.edge.journal.get(later.id);
+    assert.ok(storedLater.payload.warnings.includes('ingreso_duplicado'));
+    assert.equal(built.hub.edge.db.all('SELECT cardholder_id FROM presence WHERE cardholder_id = ?', 'ana').length, 1);
   });
 });

@@ -6,7 +6,8 @@
 const REASONS = {
   acceso_total: 'Acceso autorizado.',
   nivel_acceso: 'Acceso autorizado.',
-  puerta_directa: 'Acceso autorizado.',
+  puerta_directa: 'Acceso autorizado (puerta asignada).',
+  lectura_repetida: 'Lectura repetida (mismo paso).',
   turno_hoy: 'Corresponde ingreso hoy según su turno.',
   citacion_hoy: 'Está citado hoy. Ingreso autorizado.',
   autorizacion_temporal: 'Autorización temporal vigente.',
@@ -138,7 +139,15 @@ export function passageDisplayName(entry = {}) {
   return 'DNI no registrado';
 }
 
+/** Un paso de verdad. La lectura repetida es el mismo paso y no suma en los contadores. */
+export function countsAsPassage(entry = {}) {
+  if (entry && entry.countsAsPassage === false) return false;
+  const reason = String(entry.accessReason || entry.denialReason || entry.reason || '').trim();
+  return reason !== 'lectura_repetida';
+}
+
 export function movementVerb(entry = {}) {
+  if (!countsAsPassage(entry)) return 'Lectura repetida (mismo paso).';
   const raw = entryMovement(entry);
   if (raw.includes('egreso') || raw.includes('salida')) return 'Egreso';
   if (raw.includes('ingreso')) return 'Ingreso';

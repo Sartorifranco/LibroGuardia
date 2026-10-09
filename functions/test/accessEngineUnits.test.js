@@ -133,8 +133,9 @@ describe('snapshotSchema.validateSnapshotChunk', () => {
     assert.equal(validateSnapshotChunk('grants-20261008', { grants: [{ id: 'g', cardholderId: 'c', from: 2, to: 1, doors: 'all', source: 'x' }] }).ok, false);
     assert.equal(validateSnapshotChunk('grants-20261008', { date: '2026-10-08', grants: [{ id: 'g', cardholderId: 'c', from: 1, to: 2, doors: '*', source: 'citacion' }] }).ok, true);
     assert.equal(validateSnapshotChunk('accessGroups', [{ id: 'g', entries: [] }]).ok, false);
-    assert.equal(validateSnapshotChunk('policy', { tz: TZ, apbMode: 'hard', apbResetMin: 30 }).ok, true);
+    assert.equal(validateSnapshotChunk('policy', { tz: TZ, apbMode: 'hard', apbResetMin: 30, repeatWindowSec: 15 }).ok, true);
     assert.equal(validateSnapshotChunk('policy', { apbMode: 'medio' }).ok, false);
+    assert.equal(validateSnapshotChunk('policy', { repeatWindowSec: -1 }).ok, false);
     assert.equal(validateSnapshotChunk('otra-cosa', {}).ok, false);
   });
 });
