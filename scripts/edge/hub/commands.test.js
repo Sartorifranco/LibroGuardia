@@ -81,6 +81,15 @@ describe('hub: comandos remotos', { skip: k.SKIP }, () => {
     assert.equal(ctlA.opens.length, before);
   });
 
+  it('requestedBy con la forma de la nube ({id, username}) se guarda como texto', async () => {
+    cloud.commands = [{ id: 'c0', doorId: 'p2', action: 'open', requestedBy: { id: 'u1', username: 'jefe' }, reason: 'nube', status: 'pending', expiresAt: Date.now() + 45000 }];
+    const r = await built.hub.commands.poll();
+    assert.equal(r.processed, 1);
+    assert.equal(built.hub.edge.db.get("SELECT requested_by FROM commands WHERE id = 'c0'").requested_by, 'jefe');
+    assert.deepEqual(ctlA.opens.at(-1).requestedBy, { id: 'u1', username: 'jefe' });
+    assert.equal(cloud.commandResults.find((x) => x.id === 'c0').status, 'done');
+  });
+
   it('reporte fallido se reintenta en el próximo poll sin re-ejecutar', async () => {
     cloud.commands = [{ id: 'c7', doorId: 'p2', action: 'open', requestedBy: 'g', status: 'pending', expiresAt: Date.now() + 45000 }];
     // la nube se cae justo después de entregar la lista
