@@ -97,7 +97,7 @@ export function AppChromeProvider({ children }) {
     if (prefill?.exceptional) {
       setPersonalPrefillKey((key) => key + 1);
       navigate(guardiaPath('personal'));
-      showSuccess('Completá el ingreso excepcional con el DNI escaneado.');
+      showSuccess('Completá la emergencia con el DNI escaneado. Esto avisa al jefe.');
       return;
     }
     setAuthPrefillKey((key) => key + 1);

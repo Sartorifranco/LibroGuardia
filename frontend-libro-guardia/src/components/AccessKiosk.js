@@ -75,6 +75,7 @@ function AccessKiosk({
   const [processing, setProcessing] = useState(false);
 
   const [exceptionalReason, setExceptionalReason] = useState('');
+  const [emergencyReason, setEmergencyReason] = useState('medico');
 
   const [showExceptionalForm, setShowExceptionalForm] = useState(false);
 
@@ -325,7 +326,7 @@ function AccessKiosk({
 
     e.preventDefault();
 
-    if (!exceptionalReason.trim()) return;
+    if (exceptionalReason.trim().length < 5) return;
 
     if (!result?.name && !result?.idNumber) return;
 
@@ -345,7 +346,8 @@ function AccessKiosk({
         body: {
           name: result.name || 'Sin nombre',
           idNumber: result.idNumber || '',
-          reason: exceptionalReason.trim(),
+          reasonCode: emergencyReason,
+          reasonText: exceptionalReason.trim(),
           movementType: 'ingreso'
         }
       });
@@ -360,7 +362,7 @@ function AccessKiosk({
 
         idNumber: result.idNumber,
 
-        message: data.message || 'Ingreso excepcional autorizado',
+        message: data.message || 'Puerta abierta por emergencia. Avisamos al jefe.',
 
         authorizationLabel: 'Ingreso excepcional',
 
@@ -586,7 +588,7 @@ function AccessKiosk({
 
                   >
 
-                    Autorizar ingreso excepcional
+                    Emergencia
 
                   </button>
 
@@ -608,10 +610,22 @@ function AccessKiosk({
 
                   <p className="kiosk-exceptional-label">
 
-                    <AlertTriangle size={16} /> Motivo obligatorio del ingreso excepcional
+                    <AlertTriangle size={16} /> Emergencia: abre la puerta y avisa al jefe de seguridad
 
                   </p>
 
+                  <select
+                    className="input-field"
+                    value={emergencyReason}
+                    onChange={(e) => setEmergencyReason(e.target.value)}
+                    disabled={processing}
+                  >
+                    <option value="medico">Emergencia médica</option>
+                    <option value="incendio">Incendio o evacuación</option>
+                    <option value="seguridad">Riesgo de seguridad</option>
+                    <option value="autoridad">Autoridad o fuerza pública</option>
+                    <option value="otro">Otro</option>
+                  </select>
                   <textarea
 
                     className="input-field kiosk-exceptional-textarea"
@@ -620,7 +634,7 @@ function AccessKiosk({
 
                     required
 
-                    placeholder="Ej: autorizado por supervisor — carga urgente de grúa"
+                    placeholder="Contá en pocas palabras qué pasó"
 
                     value={exceptionalReason}
 
@@ -644,11 +658,11 @@ function AccessKiosk({
 
                       className="btn btn-primary"
 
-                      disabled={processing || !exceptionalReason.trim()}
+                      disabled={processing || exceptionalReason.trim().length < 5}
 
                     >
 
-                      Confirmar y abrir la puerta
+                      Abrir y avisar al jefe
 
                     </button>
 

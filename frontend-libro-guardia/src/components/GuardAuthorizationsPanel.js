@@ -111,7 +111,7 @@ function GuardAuthorizationsPanel({
     }
     setSubmitting(true);
     try {
-      await apiFetch('/guard/pre-register', {
+      const data = await apiFetch('/guard/pre-register', {
         method: 'POST',
         token: authToken,
         body: {
@@ -127,7 +127,7 @@ function GuardAuthorizationsPanel({
           personTipo: 'visita'
         }
       });
-      onSuccess?.('Visita pre-registrada. La persona quedará autorizada en esas fechas.');
+      onSuccess?.(data.message || 'Solicitud enviada. Te avisamos cuando la aprueben.');
       setPreName('');
       setPreDni('');
       setPreLegajo('');

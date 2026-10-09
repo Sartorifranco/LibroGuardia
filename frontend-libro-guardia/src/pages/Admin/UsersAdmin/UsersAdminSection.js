@@ -56,6 +56,9 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   const [editedUserPassword, setEditedUserPassword] = useState('');
   const [editedUserActive, setEditedUserActive] = useState(true);
   const [editingUserPermissions, setEditingUserPermissions] = useState([]);
+  const [newEmpresaId, setNewEmpresaId] = useState('');
+  const [editedEmpresaId, setEditedEmpresaId] = useState('');
+  const [empresas, setEmpresas] = useState([]);
 
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
@@ -78,6 +81,13 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
     const data = await apiFetch('/admin/users', { token: authToken });
     setUsers(data.users || []);
   }, [authToken, currentUser]);
+
+  useEffect(() => {
+    if (!authToken || !canEdit) return;
+    apiFetch('/requests/options', { token: authToken, allowForbidden: true })
+      .then((data) => setEmpresas(data.empresas || []))
+      .catch(() => setEmpresas([]));
+  }, [authToken, canEdit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,11 +200,12 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
         await apiFetch('/admin/users', {
           method: 'POST',
           token: authToken,
-          body: { username: newUsername, password: newUserPassword, role: newUserRole }
+          body: { username: newUsername, password: newUserPassword, role: newUserRole, empresaId: newEmpresaId || null }
         });
         setNewUsername('');
         setNewUserPassword('');
         setNewUserRole('guardia');
+        setNewEmpresaId('');
         setCreateOpen(false);
         showSuccess('Usuario creado exitosamente.');
         await reloadUsers();
@@ -211,6 +222,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
     setEditedUserRole(user.role);
     setEditedUserPassword('');
     setEditedUserActive(user.active);
+    setEditedEmpresaId(user.empresaId || '');
     setEditingUserPermissions(user.customPermissions || []);
   };
 
@@ -219,7 +231,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
     setError(null);
     await runAction('saveUserEdit', async () => {
       try {
-        const updateData = { role: editedUserRole, active: editedUserActive };
+        const updateData = { role: editedUserRole, active: editedUserActive, empresaId: editedEmpresaId || null };
         if (editedUserPassword) {
           updateData.password = editedUserPassword;
         }
@@ -362,6 +374,18 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 <option key={role.id} value={role.id}>{role.label}</option>
               ))}
             </select>
+            <select
+              id="newUserEmpresa"
+              value={newEmpresaId}
+              onChange={(e) => setNewEmpresaId(e.target.value)}
+              className="input-field"
+              aria-label="Empresa"
+            >
+              <option value="">Sin empresa</option>
+              {empresas.map((empresa) => (
+                <option key={empresa.id} value={empresa.id}>{empresa.nombre}</option>
+              ))}
+            </select>
             <PendingButton
               type="submit"
               actionId="createUser"
@@ -493,6 +517,9 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                       </td>
                       <td>
                         <span className="users-admin__role">{roleLabel(systemRoles, user.role)}</span>
+                        {user.empresaId ? (
+                          <span className="users-admin__muted"> · {empresas.find((e) => e.id === user.empresaId)?.nombre || 'Empresa asignada'}</span>
+                        ) : null}
                       </td>
                       <td>
                         <span className={`users-admin__status${user.active !== false ? ' is-active' : ' is-inactive'}`}>
@@ -630,6 +657,24 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 placeholder="Nueva contraseña (opcional, mínimo 8 caracteres)"
                 minLength={8}
               />
+              <label className="block text-sm font-medium text-gray-700">
+                Empresa
+                <select
+                  id="editedUserEmpresa"
+                  value={editedEmpresaId}
+                  onChange={(e) => setEditedEmpresaId(e.target.value)}
+                  className="input-field mt-1"
+                >
+                  <option value="">Sin empresa</option>
+                  {empresas.map((empresa) => (
+                    <option key={empresa.id} value={empresa.id}>{empresa.nombre}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="text-sm text-gray-600">
+                Para que apruebe los ingresos de esa empresa, elegí el rol Responsable de empresa
+                o marcá «Aprobar ingresos de su empresa».
+              </p>
               {canEdit && canManageTargetUser(currentUser, editingUser, systemRoles) && (
                 <button
                   type="button"
