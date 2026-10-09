@@ -16,7 +16,8 @@ import {
   Building2,
   MapPin,
   Satellite,
-  Palette
+  Palette,
+  CalendarClock
 } from 'lucide-react';
 import { hasPermission } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
@@ -31,6 +32,7 @@ import VehiclesAdminSection from './VehiclesAdmin/VehiclesAdminSection';
 import FleetAdminSection from './FleetAdmin/FleetAdminSection';
 import PermissionsAdminSection from './PermissionsAdmin/PermissionsAdminSection';
 import PeopleAccessAdminSection from './PeopleAccessAdmin/PeopleAccessAdminSection';
+import AccessModelAdminSection from './AccessModelAdmin/AccessModelAdminSection';
 import RolesAdminSection from './RolesAdmin/RolesAdminSection';
 import ActivityAdminSection from './ActivityAdmin/ActivityAdminSection';
 import AuditAdminSection from './AuditAdmin/AuditAdminSection';
@@ -69,6 +71,18 @@ const ADMIN_NAV_GROUPS = [
           hasPermission(u, 'access.doors.manage')
           || hasPermission(u, 'access.control')
           || hasPermission(u, 'master.nomina.write')
+      }
+    ]
+  },
+  {
+    id: 'negocio',
+    label: 'Negocio',
+    items: [
+      {
+        id: 'negocioAccesos',
+        label: 'Accesos',
+        icon: CalendarClock,
+        match: (u) => hasPermission(u, 'access.groups.manage') || hasPermission(u, 'personas.puertas.asignar')
       }
     ]
   },
@@ -300,6 +314,13 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
                 || hasPermission(currentUser, 'master.nomina.write'))
               && (
                 <PeopleAccessAdminSection />
+              )}
+
+            {adminSection === 'negocioAccesos'
+              && (hasPermission(currentUser, 'access.groups.manage')
+                || hasPermission(currentUser, 'personas.puertas.asignar'))
+              && (
+                <AccessModelAdminSection />
               )}
 
             {adminSection === 'access' && hasPermission(currentUser, 'access.control') && (

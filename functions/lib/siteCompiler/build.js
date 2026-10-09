@@ -27,6 +27,7 @@ const { normalizeAllowedDoorIds } = require('../doorAccess');
 const { isCitacionRequiredArea, isSistemasArea } = require('../centroCostoGroups');
 const { resolveShiftSchedule } = require('../shiftParser');
 const { sha256Hex, canonicalJson } = require('./canonical');
+const { toSnapshotSchedule, toSnapshotGroups, toSnapshotHolidays } = require('../accessModel');
 
 const DEFAULT_TZ = 'America/Argentina/Buenos_Aires';
 const BUCKETS = 64;
@@ -368,7 +369,13 @@ const buildPersonEntry = ({ person, auths = [], employee = null, key = null, tz 
   };
   if (person.accessAll === true) cardholder.accessAll = true;
   if (person.accessAllScheduleId) cardholder.accessAllScheduleId = String(person.accessAllScheduleId);
-  if (Array.isArray(person.accessLevels) && person.accessLevels.length) cardholder.accessLevels = person.accessLevels;
+  if (Array.isArray(person.accessLevels) && person.accessLevels.length) {
+    const levels = person.accessLevels.filter((lvl) => {
+      if (typeof lvl === 'string') return lvl.trim();
+      return Boolean(lvl && (lvl.groupId || lvl.id));
+    });
+    if (levels.length) cardholder.accessLevels = levels;
+  }
   // Turno vacío (sch_sin_turno) + citación obligatoria: el motor diría sin_turno
   // y taparía que hoy no hay citación.
   if (requiresGrant && shiftScheduleId === NO_SHIFT_SCHEDULE.id) shiftScheduleId = null;
@@ -485,9 +492,19 @@ const buildDoor = (door, groupByDoor) => {
 
 /**
  * Chunk `doors`. `schedules`: horarios autogenerados (se unen y ordenan).
+ * `configuredSchedules` / `configuredGroups` / `configuredHolidays`: catálogo
+ * de Firestore (unión; un horario de catálogo pisa al autogenerado si comparten id).
  * `site`: doc sites/{siteId} (tz, policy, areas, holidays opcionales).
  */
-const buildDoorsChunk = ({ siteId, site = {}, doorsConfig = {}, schedules = [] }) => {
+const buildDoorsChunk = ({
+  siteId,
+  site = {},
+  doorsConfig = {},
+  schedules = [],
+  configuredSchedules = [],
+  configuredGroups = [],
+  configuredHolidays = []
+} = {}) => {
   const tz = site.tz || (site.policy && site.policy.tz) || DEFAULT_TZ;
   const interlockGroups = buildInterlockGroups(doorsConfig);
   const groupByDoor = new Map();
@@ -512,8 +529,17 @@ const buildDoorsChunk = ({ siteId, site = {}, doorsConfig = {}, schedules = [] }
     ...(id === 'exterior' ? { exterior: true } : {})
   }));
   const schedMap = new Map();
-  for (const s of [NO_SHIFT_SCHEDULE, ...(Array.isArray(site.schedules) ? site.schedules : []), ...schedules]) {
-    if (s && s.id && !schedMap.has(s.id)) schedMap.set(s.id, { ...s });
+  const putSchedule = (s, overwrite = false) => {
+    if (!s || !s.id) return;
+    if (!overwrite && schedMap.has(s.id)) return;
+    schedMap.set(s.id, { ...s });
+  };
+  putSchedule({ id: '24x7', name: 'Siempre', always: true, builtin: true });
+  putSchedule(NO_SHIFT_SCHEDULE);
+  for (const s of [...(Array.isArray(site.schedules) ? site.schedules : []), ...schedules]) putSchedule(s);
+  for (const raw of configuredSchedules) {
+    const shaped = toSnapshotSchedule(raw && raw.id ? raw : null);
+    if (shaped) putSchedule(shaped, true);
   }
   const repeatRaw = Number(site.policy && site.policy.repeatWindowSec);
   const policy = {
@@ -532,8 +558,11 @@ const buildDoorsChunk = ({ siteId, site = {}, doorsConfig = {}, schedules = [] }
     interlockGroups,
     areas,
     schedules: [...schedMap.values()].sort((a, b) => a.id.localeCompare(b.id)),
-    holidays: Array.isArray(site.holidays) ? site.holidays : [],
-    accessGroups: [{ id: 'grp_total', doors: '*', scheduleId: '24x7' }]
+    holidays: toSnapshotHolidays([
+      ...(Array.isArray(site.holidays) ? site.holidays : []),
+      ...configuredHolidays
+    ]),
+    accessGroups: toSnapshotGroups(configuredGroups)
   };
 };
 

@@ -78,7 +78,8 @@ export const ADMIN_SECTION_SEGMENTS = {
   lectores: 'equipos-acceso',
   estaciones: 'equipos-acceso',
   permissions: 'permissions',
-  appearance: 'appearance'
+  appearance: 'appearance',
+  negocioAccesos: 'accesos'
 };
 
 export const ADMIN_SEGMENT_TO_SECTION = Object.entries(ADMIN_SECTION_SEGMENTS).reduce((acc, [section, seg]) => {
@@ -146,6 +147,10 @@ const ADMIN_DEFAULT_SECTION_ORDER = [
       hasPermission(u, 'access.doors.manage')
       || hasPermission(u, 'access.control')
       || hasPermission(u, 'master.nomina.write')
+  },
+  {
+    id: 'negocioAccesos',
+    match: (u) => hasPermission(u, 'access.groups.manage') || hasPermission(u, 'personas.puertas.asignar')
   },
   {
     id: 'equiposAcceso',

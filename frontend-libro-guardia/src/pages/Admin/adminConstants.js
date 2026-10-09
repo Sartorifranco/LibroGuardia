@@ -12,6 +12,10 @@ export const ADMIN_SECTION_META = {
     title: 'Personas',
     description: 'Directorio único: empleados, terceros, clientes y credenciales de acceso.'
   },
+  negocioAccesos: {
+    title: 'Accesos',
+    description: 'Grupos de puertas, horarios y feriados. También podés probar si una persona puede pasar.'
+  },
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
   nomina: { title: 'Nómina de personal', description: 'Importar, buscar y editar empleados, turnos y tipo de autorización.' },
   vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },

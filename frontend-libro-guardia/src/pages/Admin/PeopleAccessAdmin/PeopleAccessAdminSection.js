@@ -15,6 +15,7 @@ import {
 
 import BiostarSyncStatus from './BiostarSyncStatus';
 import PeopleCleanupWizard from './PeopleCleanupWizard';
+import PersonAccessPanel from './PersonAccessPanel';
 
 const HUB_TABS = [
   { id: 'directorio', label: 'Directorio' },
@@ -634,6 +635,13 @@ function PeopleAccessAdminSection() {
                     <Save size={16} />
                     {saving ? 'Guardando…' : 'Guardar persona'}
                   </button>
+                  {hasPermission(currentUser, 'personas.puertas.asignar') ? (
+                    <PersonAccessPanel
+                      key={selected.id}
+                      personId={selected.id}
+                      authToken={authToken}
+                    />
+                  ) : null}
                 </>
               )}
             </div>

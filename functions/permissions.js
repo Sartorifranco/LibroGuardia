@@ -45,7 +45,11 @@ const PERMISSION_KEYS = [
   'visitas.approve',
   'visitas.view.own',
   'alarmas.ver',
-  'alarmas.reconocer'
+  'alarmas.reconocer',
+  // Grupos, horarios y feriados (jefe y Sistemas).
+  'access.groups.manage',
+  // Asignar grupos y acceso total a una persona (D3: jefe y Sistemas).
+  'personas.puertas.asignar'
 ];
 
 const TECHNICAL_PERMISSIONS = [
@@ -117,7 +121,9 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'attendance.alerts.read',
     'visitas.approve',
     'alarmas.ver',
-    'alarmas.reconocer'
+    'alarmas.reconocer',
+    'access.groups.manage',
+    'personas.puertas.asignar'
   ],
   'empleado-visitas': [
     'visitas.create',
