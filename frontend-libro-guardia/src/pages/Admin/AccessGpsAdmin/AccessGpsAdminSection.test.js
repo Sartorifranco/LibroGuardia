@@ -7,17 +7,22 @@ jest.mock('../../../services/api', () => ({
   apiFetch: jest.fn()
 }));
 
+const mockGpsUser = { role: 'admin', permissions: ['access.control'] };
+
 jest.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
     authToken: 'token-test',
-    currentUser: { role: 'admin', permissions: ['access.control'] }
+    currentUser: mockGpsUser
   })
 }));
 
+const mockShowError = jest.fn();
+const mockShowSuccess = jest.fn();
+
 jest.mock('../../../context/ToastContext', () => ({
   useToast: () => ({
-    showSuccess: jest.fn(),
-    showError: jest.fn()
+    showSuccess: mockShowSuccess,
+    showError: mockShowError
   })
 }));
 

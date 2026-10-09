@@ -6,33 +6,35 @@ jest.mock('../../../services/api', () => ({
   apiFetch: jest.fn()
 }));
 
-const showSuccess = jest.fn();
-const showError = jest.fn();
+const mockUsersActor = {
+  id: 'me',
+  role: 'admin',
+  permissions: ['users.view', 'users.create', 'users.edit', 'users.delete', 'settings.permissions']
+};
+const mockSystemRoles = [
+  { id: 'guardia', label: 'Guardia', isSystem: true },
+  { id: 'supervisor', label: 'Jefe de seguridad', isSystem: true },
+  { id: 'monitoreo', label: 'Monitoreo', isSystem: true },
+  { id: 'responsable', label: 'Responsable de empresa', isSystem: true },
+  { id: 'admin', label: 'Sistemas', isSystem: true }
+];
 
 jest.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({
     authToken: 'token-test',
-    currentUser: {
-      id: 'me',
-      role: 'admin',
-      permissions: ['users.view', 'users.create', 'users.edit', 'users.delete', 'settings.permissions']
-    },
-    systemRoles: [
-      { id: 'guardia', label: 'Guardia', isSystem: true },
-      { id: 'supervisor', label: 'Jefe de seguridad', isSystem: true },
-      { id: 'monitoreo', label: 'Monitoreo', isSystem: true },
-      { id: 'responsable', label: 'Responsable de empresa', isSystem: true },
-      { id: 'admin', label: 'Sistemas', isSystem: true }
-    ]
+    currentUser: mockUsersActor,
+    systemRoles: mockSystemRoles
   })
 }));
 
+const mockUsersToast = {
+  showSuccess: jest.fn(),
+  showError: jest.fn(),
+  setError: jest.fn()
+};
+
 jest.mock('../../../context/ToastContext', () => ({
-  useToast: () => ({
-    showSuccess,
-    showError,
-    setError: jest.fn()
-  })
+  useToast: () => mockUsersToast
 }));
 
 jest.mock('../../../context/ConfirmContext', () => ({
@@ -43,7 +45,6 @@ const { apiFetch } = require('../../../services/api');
 
 describe('Usuarios del sistema', () => {
   beforeEach(() => {
-    showSuccess.mockReset();
     Object.assign(navigator, {
       clipboard: { writeText: jest.fn(async () => {}) }
     });
@@ -74,7 +75,7 @@ describe('Usuarios del sistema', () => {
 
     expect(await screen.findByRole('heading', { name: 'Usuarios del sistema' })).toBeInTheDocument();
     expect(screen.getByText(/Para qué sirve:/)).toBeInTheDocument();
-    expect(screen.getByText(/Último ingreso/)).toBeInTheDocument();
+    expect(await screen.findByText(/Último ingreso/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Desactivar' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Eliminar ana' })).toBeInTheDocument();
 

@@ -13,13 +13,10 @@ jest.mock('../../../context/AuthContext', () => ({
   })
 }));
 
-const showSuccess = jest.fn();
-const showError = jest.fn();
-
 jest.mock('../../../context/ToastContext', () => ({
   useToast: () => ({
-    showSuccess,
-    showError
+    showSuccess: jest.fn(),
+    showError: jest.fn()
   })
 }));
 
@@ -43,8 +40,6 @@ const config = {
 
 describe('Avisos por mail', () => {
   beforeEach(() => {
-    showSuccess.mockReset();
-    showError.mockReset();
     apiFetch.mockImplementation(async (path) => {
       if (path === '/admin/notifications-config') return { config };
       if (path === '/admin/users') {

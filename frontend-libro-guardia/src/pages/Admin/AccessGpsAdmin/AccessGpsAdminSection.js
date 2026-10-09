@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Save, X } from 'lucide-react';
 import FleetGpsVehicleTable, { formatFleetTime } from '../../../components/FleetGpsVehicleTable';
@@ -11,7 +11,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
 
-function LazyFleetGpsLiveMap(props) {
+const LazyFleetGpsLiveMap = forwardRef(function LazyFleetGpsLiveMap(props, ref) {
   const [MapView, setMapView] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -23,8 +23,8 @@ function LazyFleetGpsLiveMap(props) {
     return () => { cancelled = true; };
   }, []);
   if (!MapView) return <p className="route-fallback" role="status">Cargando el mapa…</p>;
-  return <MapView {...props} />;
-}
+  return <MapView ref={ref} {...props} />;
+});
 
 function AccessGpsAdminSection({ pendingAction, runAction }) {
   const { authToken, currentUser } = useAuth();
