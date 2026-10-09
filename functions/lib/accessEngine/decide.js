@@ -10,7 +10,10 @@
  *   4. derechos    → unión de accessAll (D7), grupos, puertas directas, grants, pase de visita (D9/D10)
  *                    con turno (shiftScheduleId), citación obligatoria (requiresGrant) y feriados
  *   5. política    → requireGuardApproval (D16) → 'needs_approval'
- *   6. interlock   → estanco_ocupado | debe_ingresar_por_exterior (manual: AIRLOCK_OTHER_OPEN forzable)
+ *   6. interlock   → estanco_esperar (la otra puerta está abierta) | estanco_ocupado |
+ *                    debe_ingresar_por_exterior (manual: AIRLOCK_OTHER_OPEN forzable).
+ *                    Si ESTA puerta ya está destrabada o abierta, el escaneo se registra
+ *                    (paso_registrado_puerta_abierta) y no se trata como error.
  *   7. APB         → apb_advertencia (blando, se permite) | apb_violacion (duro)
  *
  * Nunca lee el reloj del sistema: el instante es `at` (ms). Síncrono.
@@ -63,6 +66,10 @@ const rankOf = (r) => {
 const pickFailure = (reasons) => reasons.slice().sort((a, b) => rankOf(a) - rankOf(b))[0] || 'puerta_no_autorizada';
 
 const CLOSED_PASS = new Set(['cancelada', 'revocada']);
+/** Puerta ya liberada: un escaneo autorizado registra el paso (no es un error). */
+const PASSAGE_STATES = new Set(['DESBLOQUEADA', 'ABIERTA_AUT', 'RETENIDA']);
+/** Hoja abierta: un intento de quien no está autorizado lleva aviso. */
+const LEAF_OPEN_STATES = new Set(['ABIERTA_AUT', 'RETENIDA', 'FORZADA']);
 
 /** ms epoch | ISO | {_seconds} → ms o null (las filas del edge ya vienen en ms; los pases pueden traer ISO). */
 const toMs = (v) => {
@@ -174,8 +181,12 @@ const evaluateCardholderRights = (ctx) => {
   }
 
   if (cardholder.requiresGrant === true) {
-    // Área con citación obligatoria: los derechos estáticos solo definen puertas.
-    if (staticRows.length && !successes.length && !failures.length) failures.push('sin_citacion_para_hoy');
+    // Los derechos estáticos solo definen puertas. Sin grant del día no se consulta
+    // el turno: sch_sin_turno devolvería sin_turno y taparía la falta de citación.
+    if (!successes.length) {
+      const reasons = failures.filter((r) => r !== 'sin_turno');
+      return { ok: false, reason: reasons.length ? pickFailure(reasons) : 'sin_citacion_para_hoy' };
+    }
   } else {
     for (const row of staticRows) {
       const r = evaluateStaticRow(row, ctx);
@@ -303,7 +314,14 @@ const decide = (input = {}) => {
     ...(extra.passId ? { passId: extra.passId } : {}),
     ...(extra.detail ? { detail: extra.detail } : {})
   });
-  const deny = (reason, extra) => out('deny', reason, extra);
+  const doorStateOf = (id) => ((state.doorStates || {})[id] || {}).state || null;
+  const deny = (reason, extra) => {
+    const authorized = Boolean(extra && extra.matched);
+    if (!authorized && LEAF_OPEN_STATES.has(doorStateOf(doorId)) && !warnings.includes('intento_con_puerta_abierta')) {
+      warnings.push('intento_con_puerta_abierta');
+    }
+    return out('deny', reason, extra);
+  };
 
   // ── 1. Credencial ──
   if (!manual) {
@@ -415,10 +433,13 @@ const decide = (input = {}) => {
   }
 
   // ── 6. Interlock ──
+  // Esta puerta ya está destrabada o abierta: el paso se registra igual (anti-colado).
+  // No se vuelve a evaluar el estanco: la otra hoja, si está abierta, no invalida el registro.
+  const passageState = !manual && PASSAGE_STATES.has(doorStateOf(door.id));
   const stateEffects = {};
   const group = typeof snap.interlockGroup === 'function' ? snap.interlockGroup(door.id) : null;
   let forced = false;
-  if (group) {
+  if (!passageState && group) {
     const il = evaluateInterlock({
       group,
       doorId: door.id,
@@ -465,6 +486,16 @@ const decide = (input = {}) => {
   if (passEffect) stateEffects.pass = passEffect;
 
   const unlockSec = Number(door.unlockSec) > 0 ? Number(door.unlockSec) : DEFAULT_UNLOCK_SEC;
+  if (passageState) {
+    // DESBLOQUEADA: el controlador extiende la ventana (la acción unlock no es un pulso nuevo
+    // si el relé sigue abierto). ABIERTA_AUT / RETENIDA: no hace falta accionar el relé.
+    const actions = doorStateOf(door.id) === 'DESBLOQUEADA'
+      ? [{ type: 'unlock', doorId: door.id, ms: Math.round(unlockSec * 1000) }]
+      : [];
+    return out('grant', 'paso_registrado_puerta_abierta', {
+      matched, actions, stateEffects, passId
+    });
+  }
   return out('grant', forced ? 'apertura_forzada_estanco' : grantReason, {
     matched,
     actions: [{ type: 'unlock', doorId: door.id, ms: Math.round(unlockSec * 1000) }],

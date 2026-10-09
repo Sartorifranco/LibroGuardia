@@ -22,6 +22,8 @@ const REASONS = Object.freeze({
   apertura_manual: 'Apertura manual.',
   apertura_remota: 'Apertura remota.',
   apertura_forzada_estanco: 'Apertura forzada del estanco (queda registrada).',
+  paso_registrado_puerta_abierta: 'Paso registrado.',
+  estanco_esperar: 'Esperá a que se cierre la otra puerta y volvé a escanear.',
 
   // ── Credencial ──
   credencial_desconocida: 'Credencial no registrada.',
@@ -70,6 +72,10 @@ const REASONS = Object.freeze({
 
   // ── Avisos ──
   citacion_fuera_de_horario: 'Aviso: citación fuera del horario indicado.',
+  intento_con_puerta_abierta: 'Aviso: intentó pasar con la puerta abierta.',
+  egreso_sin_ingreso: 'Aviso: salió sin ingreso registrado.',
+  ingreso_duplicado: 'Aviso: ya figuraba adentro.',
+  posible_colado: 'Posible colado: salió sin ingreso registrado.',
 
   // ── Otros ──
   error_interno: 'Error del sistema. Intente de nuevo o avise a sistemas.',
@@ -95,7 +101,9 @@ const REASONS = Object.freeze({
 const ENGINE_REASONS = Object.freeze(Object.keys(REASONS).filter((k) => ![
   'error_interno',
   'sin_citacion_hoy', 'sistemas_acceso_permanente', 'ingreso_excepcional', 'permanent', 'citacion',
-  'visita', 'temporal', 'visita_empleado', 'visita_no_encontrada', 'visita_sin_fecha', 'egreso'
+  'visita', 'temporal', 'visita_empleado', 'visita_no_encontrada', 'visita_sin_fecha', 'egreso',
+  // Los emite el hub al ingerir el paso (apbMonitor), no decide().
+  'egreso_sin_ingreso', 'ingreso_duplicado', 'posible_colado'
 ].includes(k)));
 
 const reasonMessage = (code) => REASONS[code] || 'Acceso denegado.';

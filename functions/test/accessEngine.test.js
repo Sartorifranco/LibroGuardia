@@ -44,6 +44,18 @@ test('motor: puerta con lados en forma corta [in, out] (sin áreas → sin APB)'
   assert.equal(decide({ ...base, side: 'out' }).reason, 'lado_no_habilitado');
 });
 
+test('citación obligatoria sin grants del día: sin_citacion_para_hoy y no sin_turno', () => {
+  const chunks = buildChunks();
+  const ch = chunks['ch-00'].cardholders.find((c) => c.id === 'ch_cit');
+  ch.requiresGrant = true;
+  ch.shiftScheduleId = 'vacio';
+  chunks['grants-20261008'].grants = chunks['grants-20261008'].grants.filter((g) => g.cardholderId !== 'ch_cit');
+  const snap = createMemorySnapshot(chunks);
+  const r = decide({ snap, credential: dni('20000008'), doorId: 'D1', at: THU_10, state: {} });
+  assert.equal(r.decision, 'deny');
+  assert.equal(r.reason, 'sin_citacion_para_hoy');
+});
+
 test('motor: findCredential con forma de array (compatibilidad)', () => {
   const snap = { ...SNAP, findCredential: (type, hash) => {
     const one = SNAP.findCredential(type, hash);
