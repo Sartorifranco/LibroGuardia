@@ -3,6 +3,8 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { db, FieldValue } = require('./firestore');
 const { fetchNearbyFleetAlerts, getFleetGpsConfig } = require('./fleetGps');
 const { checkAndNotifyStaleBridges } = require('./lib/bridgeHealth');
+const { withUsageCategory, flushUsage } = require('./lib/usage/meter');
+const { evaluateUsageBudget } = require('./lib/usage/budget');
 const app = require('./app');
 
 exports.api = onRequest(
@@ -28,15 +30,19 @@ exports.fleetGpsAutoPoll = onSchedule(
     memory: '256MiB'
   },
   async () => {
-    const config = await getFleetGpsConfig(db);
-    if (!config.enabled) return;
+    await withUsageCategory('gps', async () => {
+      const config = await getFleetGpsConfig(db);
+      if (!config.enabled) return;
 
-    await fetchNearbyFleetAlerts(db, FieldValue, {
-      userId: 'sistema_gps',
-      username: 'GPS automático',
-      forceUbika: true,
-      preferCache: false
+      await fetchNearbyFleetAlerts(db, FieldValue, {
+        userId: 'sistema_gps',
+        username: 'GPS automático',
+        forceUbika: true,
+        preferCache: false,
+        config
+      });
     });
+    await flushUsage({ force: true });
   }
 );
 
@@ -52,6 +58,16 @@ exports.bridgeHealthPoll = onSchedule(
     memory: '256MiB'
   },
   async () => {
-    await checkAndNotifyStaleBridges();
+    await withUsageCategory('edge', async () => {
+      await checkAndNotifyStaleBridges();
+    });
+    await withUsageCategory('admin', async () => {
+      try {
+        await evaluateUsageBudget();
+      } catch (err) {
+        console.error('[usage] alerta de tope', err.message);
+      }
+    });
+    await flushUsage({ force: true });
   }
 );

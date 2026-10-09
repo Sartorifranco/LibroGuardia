@@ -43,6 +43,7 @@ app.use(cors({
   }
 }));
 app.use(express.json({ limit: '5mb' }));
+app.use(require('./lib/usage/meter').usageCategoryMiddleware);
 app.use((err, req, res, next) => {
   if (err?.type === 'entity.too.large') {
     return res.status(413).json({
@@ -72,6 +73,7 @@ app.use(require('./routes/peopleDoors'));
 app.use(require('./routes/accessModel'));
 app.use(require('./routes/biostar'));
 app.use(require('./routes/system'));
+app.use(require('./routes/usage'));
 app.use(require('./routes/edge'));
 
 app.use((req, res, next) => {

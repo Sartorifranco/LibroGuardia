@@ -11,7 +11,8 @@ const EVENT_TYPES = [
   'duress_access',
   'edge_alarm',
   'access_request',
-  'ingreso_emergencia'
+  'ingreso_emergencia',
+  'usage_budget'
 ];
 
 const DEFAULT_EVENT = () => ({
@@ -42,7 +43,8 @@ const DEFAULT_CONFIG = {
     admin_sensitive: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
     bridge_offline: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
     access_request: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
-    ingreso_emergencia: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
+    ingreso_emergencia: { ...DEFAULT_EVENT(), enabled: true, recipients: [] },
+    usage_budget: { ...DEFAULT_EVENT(), enabled: true, recipients: [] }
   }
 };
 
