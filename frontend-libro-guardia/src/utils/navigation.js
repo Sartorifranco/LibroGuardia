@@ -63,6 +63,7 @@ export const ADMIN_SECTION_SEGMENTS = {
   roles: 'roles',
   activity: 'activity',
   audit: 'audit',
+  consumo: 'consumo',
   notifications: 'notifications',
   // Centro único de hardware (Fase A). URLs viejas redirigen acá.
   equiposAcceso: 'equipos-acceso',
@@ -178,7 +179,8 @@ const ADMIN_DEFAULT_SECTION_ORDER = [
       || hasPermission(u, 'settings.permissions')
       || hasPermission(u, 'audit.view')
   },
-  { id: 'audit', match: (u) => hasPermission(u, 'audit.view') }
+  { id: 'audit', match: (u) => hasPermission(u, 'audit.view') },
+  { id: 'consumo', match: (u) => hasPermission(u, 'consumo.ver') || hasPermission(u, 'settings.permissions') }
 ];
 
 export const getDefaultAdminSection = (user) => {

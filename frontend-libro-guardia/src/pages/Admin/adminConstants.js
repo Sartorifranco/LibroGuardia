@@ -48,6 +48,7 @@ export const ADMIN_SECTION_META = {
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
   activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },
   audit: { title: 'Auditoría', description: 'Trazabilidad de cambios administrativos (usuarios, roles, permisos, puertas).' },
+  consumo: { title: 'Consumo', description: 'Gasto estimado de la base de datos y aviso si el mes se va a pasar del tope.' },
   notifications: { title: 'Notificaciones', description: 'Alertas SMTP ante ingresos excepcionales, denegados repetidos y fallas de puerta.' },
 };
 

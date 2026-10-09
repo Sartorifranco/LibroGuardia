@@ -19,6 +19,7 @@ export const PERMISSION_LABELS = {
   'roles.view': 'Ver roles',
   'roles.manage': 'Gestionar roles',
   'settings.permissions': 'Configurar permisos',
+  'consumo.ver': 'Ver el consumo de Firebase',
   'audit.view': 'Ver auditoría administrativa',
   'notifications.config': 'Configurar alertas por email',
   'access.control': `Configurar GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`,
@@ -121,6 +122,7 @@ export const PERMISSION_CATEGORIES = [
       'roles.manage',
       'settings.permissions',
       'audit.view',
+      'consumo.ver',
       'notifications.config',
       'empresas.manage',
       'destinos.manage',
@@ -215,7 +217,8 @@ export const ROLE_TEMPLATES = {
       'access.groups.manage',
       'personas.puertas.asignar',
       'autorizaciones.solicitar',
-      'autorizaciones.aprobar_todas'
+      'autorizaciones.aprobar_todas',
+      'consumo.ver'
     ]
   },
   monitoreo: {
@@ -307,6 +310,7 @@ export const canAccessAdmin = (user) =>
   hasPermission(user, 'access.control') ||
   hasPermission(user, 'access.doors.manage') ||
   hasPermission(user, 'audit.view') ||
+  hasPermission(user, 'consumo.ver') ||
   hasPermission(user, 'notifications.config') ||
   hasPermission(user, 'empresas.manage') ||
   hasPermission(user, 'destinos.manage') ||

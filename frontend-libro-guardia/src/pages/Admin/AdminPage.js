@@ -17,7 +17,8 @@ import {
   MapPin,
   Satellite,
   Palette,
-  CalendarClock
+  CalendarClock,
+  Wallet
 } from 'lucide-react';
 import { hasPermission } from '../../utils/permissions';
 import { useAuth } from '../../context/AuthContext';
@@ -42,6 +43,7 @@ import DestinosAdminSection from './DestinosAdmin/DestinosAdminSection';
 import EquiposAccesoAdminSection from './EquiposAccesoAdmin/EquiposAccesoAdminSection';
 import VisitasAdminSection from './VisitasAdmin/VisitasAdminSection';
 import AppearanceAdminSection from './AppearanceAdmin/AppearanceAdminSection';
+import ConsumoAdminSection from './ConsumoAdmin/ConsumoAdminSection';
 import './admin-ui.css';
 
 /** Grupos de navegación admin (orden de producto). */
@@ -181,6 +183,7 @@ const ADMIN_NAV_GROUPS = [
         icon: ScrollText,
         match: (u) => hasPermission(u, 'audit.view')
       },
+      { id: 'consumo', label: 'Consumo', icon: Wallet, match: (u) => hasPermission(u, 'consumo.ver') || hasPermission(u, 'settings.permissions') },
       {
         id: 'appearance',
         label: 'Apariencia',
@@ -370,6 +373,10 @@ function AdminPage({ adminSection, onSectionChange, onExit, onAccessConfigSaved,
 
             {adminSection === 'audit' && hasPermission(currentUser, 'audit.view') && (
               <AuditAdminSection />
+            )}
+
+            {adminSection === 'consumo' && (hasPermission(currentUser, 'consumo.ver') || hasPermission(currentUser, 'settings.permissions')) && (
+              <ConsumoAdminSection />
             )}
 
             {adminSection === 'notifications' && hasPermission(currentUser, 'notifications.config') && (

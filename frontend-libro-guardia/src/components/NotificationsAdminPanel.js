@@ -39,6 +39,11 @@ const EVENT_META = [
     key: 'admin_sensitive',
     label: 'Cambios admin sensibles',
     hint: 'Borrado de usuario/rol, cambio de permisos (vía auditoría).'
+  },
+  {
+    key: 'usage_budget',
+    label: 'Tope de consumo',
+    hint: 'Cuando la proyección del mes supera el tope de gasto. Sale como máximo una vez por día.'
   }
 ];
 
@@ -60,7 +65,8 @@ const DEFAULT_CONFIG = {
     admin_sensitive: { enabled: true, recipients: [] },
     bridge_offline: { enabled: true, recipients: [] },
     access_request: { enabled: true, recipients: [] },
-    ingreso_emergencia: { enabled: true, recipients: [] }
+    ingreso_emergencia: { enabled: true, recipients: [] },
+    usage_budget: { enabled: true, recipients: [] }
   }
 };
 
