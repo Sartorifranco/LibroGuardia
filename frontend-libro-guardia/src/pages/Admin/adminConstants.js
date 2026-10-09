@@ -15,7 +15,7 @@ export const ADMIN_SECTION_META = {
     description: 'Grupos de puertas, horarios y feriados. También podés probar si una persona puede pasar.'
   },
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
-  nomina: { title: 'Nómina de personal', description: 'Importar, buscar y editar empleados, turnos y tipo de autorización.' },
+  nomina: { title: 'Importar nómina', description: 'Cargá quiénes trabajan acá, revisá altas y bajas, y confirmá.' },
   vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },
   fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
   empresas: {
