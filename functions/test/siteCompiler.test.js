@@ -99,6 +99,7 @@ test('compilado completo: chunks válidos, hash canónico, firma y sin secretos 
     timings: { outerCloseDelayMs: 5000, interDoorDelayMs: 2000, transitTimeoutMs: 120000 } }]);
   assert.deepEqual(doors.doors.find((d) => d.id === 'P1').readers, [{ id: 'INGRESO_P1', side: 'in' }, { id: 'EGRESO_P1', side: 'out' }]);
   assert.ok(doors.schedules.some((s) => s.id === 'sch_sin_turno'));
+  assert.equal(doors.policy.apbMode, 'soft');
 
   const ops = chunkBody(fs, 'operators').operators;
   assert.deepEqual(ops.map((o) => o.username), ['guardia1', 'operador']);
