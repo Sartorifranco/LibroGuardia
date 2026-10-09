@@ -9,14 +9,14 @@
  *   GET  /edge/config/chunks?names=a,b → { chunks:{ name:{v, hash, body} } }
  * Público en la LAN:
  *   GET  /edge/status           estado resumido del hub (sin secretos)
- *   GET  /api/runtime           { mode:'lan', capabilities:[] }   (API de guardia completa = T7)
- *   /api/*                      501 EDGE_UNSUPPORTED
+ *   /api/*                      API LAN de la app de guardia (lanApi/). Lo que no está en el contrato: 501.
  *   resto                       archivos estáticos de `staticDir` (build del frontend, fallback SPA)
  */
 
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { createLanApi } = require('./lanApi');
 
 const MAX_BODY = 8 * 1024 * 1024;
 
@@ -85,6 +85,7 @@ function serveStatic(staticDir, urlPath, res) {
  *   hub expone: ingestFromController(deviceId, body) → {ackSeq}, configSync, status()
  */
 function createLanServer({ hub, verifier, staticDir = null, log = console }) {
+  const lanApi = createLanApi(hub);
   async function handle(req, res) {
     const url = req.url || '/';
     const pathname = url.split('?')[0];
@@ -120,8 +121,7 @@ function createLanServer({ hub, verifier, staticDir = null, log = console }) {
       return sendJson(res, 404, { code: 'NOT_FOUND' });
     }
 
-    if (pathname === '/api/runtime') return sendJson(res, 200, { mode: 'lan', capabilities: [], hubId: hub.deviceId });
-    if (pathname === '/api' || pathname.startsWith('/api/')) return sendJson(res, 501, { code: 'EDGE_UNSUPPORTED' });
+    if (pathname === '/api' || pathname.startsWith('/api/')) return lanApi.handle(req, res);
     if (method !== 'GET' && method !== 'HEAD') return sendJson(res, 405, { code: 'METHOD_NOT_ALLOWED' });
     return serveStatic(staticDir, pathname, res);
   }
