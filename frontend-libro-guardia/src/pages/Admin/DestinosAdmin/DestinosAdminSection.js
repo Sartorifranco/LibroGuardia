@@ -8,6 +8,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
+import { Modal, PageContainer } from '../../../components/admin-ui';
 
 function DestinosAdminSection({ pendingAction, runAction }) {
   const { authToken, currentUser } = useAuth();
@@ -17,6 +18,7 @@ function DestinosAdminSection({ pendingAction, runAction }) {
   const [destinos, setDestinos] = useState([]);
   const [doorNames, setDoorNames] = useState({});
   const [editingId, setEditingId] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
   const [nombre, setNombre] = useState('');
   const [doorIds, setDoorIds] = useState([]);
   const [activo, setActivo] = useState(true);
@@ -51,6 +53,15 @@ function DestinosAdminSection({ pendingAction, runAction }) {
     setNombre('');
     setDoorIds([]);
     setActivo(true);
+    setFormOpen(false);
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setNombre('');
+    setDoorIds([]);
+    setActivo(true);
+    setFormOpen(true);
   };
 
   const startEdit = (dest) => {
@@ -58,6 +69,7 @@ function DestinosAdminSection({ pendingAction, runAction }) {
     setNombre(dest.nombre || '');
     setDoorIds(Array.isArray(dest.doorIds) ? dest.doorIds : []);
     setActivo(dest.activo !== false);
+    setFormOpen(true);
   };
 
   const handleSubmit = async (e) => {
@@ -72,7 +84,7 @@ function DestinosAdminSection({ pendingAction, runAction }) {
             body: { nombre, doorIds, activo }
           });
           setDestinos((prev) => prev.map((x) => (x.id === editingId ? data.destino : x)));
-          showSuccess('Destino actualizado');
+          showSuccess('Guardado');
         } else {
           const data = await apiFetch('/admin/destinos', {
             method: 'POST',
@@ -80,7 +92,7 @@ function DestinosAdminSection({ pendingAction, runAction }) {
             body: { nombre, doorIds, activo }
           });
           setDestinos((prev) => [...prev, data.destino].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre))));
-          showSuccess('Destino creado');
+          showSuccess('Guardado');
         }
         resetForm();
       } catch (err) {
@@ -112,31 +124,38 @@ function DestinosAdminSection({ pendingAction, runAction }) {
   }
 
   return (
+    <PageContainer width="medium">
     <div className="destinos-admin">
-      <aside className="destinos-admin__howto" aria-label="Cómo funciona Destinos">
-        <strong>Cómo funciona este módulo</strong>
-        <p>
-          Acá definís los
-          {' '}
-          <em>lugares</em>
-          {' '}
-          del predio (ej. Oficina Comercial, Planta) y las
-          {' '}
-          <em>puertas</em>
-          {' '}
-          que hacen falta para llegar. Esos destinos aparecen en el combo
-          {' '}
-          <strong>Destino</strong>
-          {' '}
-          cuando un empleado carga una visita en
-          {' '}
-          <code>/empleado/visitas</code>
-          . Sin destinos activos, el empleado no puede registrar visitas.
-        </p>
-      </aside>
+      <p className="historial-meta">
+        Un recorrido dice a qué lugar va la visita y por qué puertas llega. Si no hay recorridos, el empleado no puede cargar la visita.
+      </p>
+      <button type="button" className="btn btn-primary" onClick={openCreate}>
+        <PlusCircle size={16} /> Nuevo recorrido
+      </button>
 
-      <AdminBlock title={<><MapPin size={18} /> {editingId ? 'Editar destino' : 'Nuevo destino'}</>}>
-      <form onSubmit={handleSubmit} className="admin-form-card space-y-3">
+      <Modal
+        open={formOpen}
+        title={editingId ? 'Editar recorrido' : 'Nuevo recorrido'}
+        description="El nombre del lugar y las puertas para llegar."
+        onClose={resetForm}
+        size="lg"
+        dirty={Boolean(nombre.trim() || doorIds.length)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={resetForm}>Cancelar</button>
+            <PendingButton
+              type="submit"
+              form="destino-form"
+              className="btn btn-primary"
+              actionId={editingId ? 'updateDestino' : 'createDestino'}
+              pendingAction={pendingAction}
+            >
+              {editingId ? 'Guardar cambios' : 'Crear destino'}
+            </PendingButton>
+          </>
+        )}
+      >
+      <form id="destino-form" onSubmit={handleSubmit} className="space-y-3">
         <div>
           <label className="block text-sm font-medium mb-1" htmlFor="destinoNombre">Nombre</label>
           <input
@@ -154,41 +173,26 @@ function DestinosAdminSection({ pendingAction, runAction }) {
           onChange={(ids) => setDoorIds(Array.isArray(ids) ? ids : [])}
           forceRestricted
           label="Secuencia de puertas para llegar"
-          hint="Elegí las puertas del recorrido (mismo catálogo que allowedDoorIds). El orden de selección se conserva al guardar."
+          hint="Elegí las puertas en el orden en que se recorren."
         />
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={activo} onChange={(e) => setActivo(e.target.checked)} />
           Activo
         </label>
-        <div className="flex flex-wrap gap-2">
-          <PendingButton
-            type="submit"
-            className="btn btn-primary"
-            actionId={editingId ? 'updateDestino' : 'createDestino'}
-            pendingAction={pendingAction}
-          >
-            <PlusCircle size={16} /> {editingId ? 'Guardar cambios' : 'Crear destino'}
-          </PendingButton>
-          {editingId && (
-            <button type="button" className="btn btn-secondary" onClick={resetForm}>
-              Cancelar
-            </button>
-          )}
-        </div>
       </form>
-      </AdminBlock>
+      </Modal>
 
       <AdminBlock title={`Destinos (${destinos.length})`}>
         {destinos.length === 0 ? (
           <AdminEmpty
             icon={MapPin}
             title="Todavía no hay destinos"
-            description="Definí destinos del predio y la secuencia de puertas para llegar. Sin esto, el combo Destino del panel empleado queda vacío."
+            description="Definí a dónde puede ir una visita y por qué puertas llega."
           />
         ) : (
-          <ul className="user-list">
+          <div className="aui-card-grid">
             {destinos.map((dest) => (
-              <li key={dest.id} className="user-list-item">
+              <article key={dest.id} className="aui-card">
                 <div>
                   <strong>{dest.nombre}</strong>
                   <p className="historial-meta">
@@ -205,12 +209,13 @@ function DestinosAdminSection({ pendingAction, runAction }) {
                     <Trash2 size={14} />
                   </button>
                 </div>
-              </li>
+              </article>
             ))}
-          </ul>
+          </div>
         )}
       </AdminBlock>
     </div>
+    </PageContainer>
   );
 }
 

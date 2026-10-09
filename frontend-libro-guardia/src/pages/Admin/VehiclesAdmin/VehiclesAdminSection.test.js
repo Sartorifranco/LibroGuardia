@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import VehiclesAdminSection from './VehiclesAdminSection';
 
 jest.mock('../../../services/api', () => ({
@@ -29,8 +29,8 @@ describe('Vehículos', () => {
     render(<VehiclesAdminSection pendingAction={null} runAction={jest.fn()} setPendingAction={jest.fn()} />);
     expect(screen.getByRole('heading', { name: 'Vehículos' })).toBeInTheDocument();
     expect(screen.getByText(/Para qué sirve:/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Agregar vehículo/ }));
     expect(screen.getByLabelText('Patente')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Agregar vehículo/ })).toBeInTheDocument();
     expect(screen.getByText('Todavía no cargaste vehículos')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Opciones avanzadas' })).toBeInTheDocument();
   });

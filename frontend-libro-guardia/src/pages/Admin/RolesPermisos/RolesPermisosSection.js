@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AdvancedSection, PageHeader } from '../../../components/admin-ui';
+import { AdvancedSection, PageHeader, PageContainer } from '../../../components/admin-ui';
 import RolesAdminSection from '../RolesAdmin/RolesAdminSection';
 import PermissionsAdminSection from '../PermissionsAdmin/PermissionsAdminSection';
 
@@ -11,6 +11,7 @@ function RolesPermisosSection({ initialTab = 'roles', pendingAction, runAction, 
   }, [initialTab]);
 
   return (
+    <PageContainer width="medium">
     <div>
       <PageHeader
         title="Roles y permisos"
@@ -40,6 +41,7 @@ function RolesPermisosSection({ initialTab = 'roles', pendingAction, runAction, 
         </AdvancedSection>
       ) : null}
     </div>
+    </PageContainer>
   );
 }
 

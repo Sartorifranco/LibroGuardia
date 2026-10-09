@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { PageHeader } from '../../../components/admin-ui';
+import { PageHeader, PageContainer } from '../../../components/admin-ui';
 import ActivityAdminSection from '../ActivityAdmin/ActivityAdminSection';
 import AuditAdminSection from '../AuditAdmin/AuditAdminSection';
 
@@ -11,6 +11,7 @@ function RegistroAdminSection({ initialTipo = 'todos' }) {
   }, [initialTipo]);
 
   return (
+    <PageContainer width="wide">
     <div>
       <PageHeader
         title="Registro de cambios"
@@ -32,6 +33,7 @@ function RegistroAdminSection({ initialTipo = 'todos' }) {
       {tipo === 'todos' || tipo === 'actividad' ? <ActivityAdminSection /> : null}
       {tipo === 'todos' || tipo === 'auditoria' ? <AuditAdminSection /> : null}
     </div>
+    </PageContainer>
   );
 }
 

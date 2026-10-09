@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import EmpresasAdminSection from './EmpresasAdminSection';
 
 jest.mock('../../../services/api', () => ({
@@ -29,8 +29,9 @@ describe('Empresas y responsables', () => {
     render(<EmpresasAdminSection pendingAction={null} runAction={jest.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Empresas y responsables' })).toBeInTheDocument();
     expect(screen.getByText(/Para qué sirve:/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Mails de la empresa', { selector: 'input, textarea' })).toBeInTheDocument();
     expect(await screen.findByText('Todavía no cargaste empresas')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Nueva empresa' }));
+    expect(screen.getByLabelText('Mails de la empresa', { selector: 'input, textarea' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Guardar empresa' })).toBeInTheDocument();
   });
 });

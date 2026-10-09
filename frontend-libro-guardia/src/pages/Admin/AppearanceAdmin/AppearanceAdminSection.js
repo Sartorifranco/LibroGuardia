@@ -3,6 +3,7 @@ import { Loader2, Palette, RotateCcw, Sparkles } from 'lucide-react';
 import { AdminBlock } from '../../../components/admin/AdminUi';
 import PageHeader from '../../../components/admin-ui/PageHeader';
 import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
+import PageContainer from '../../../components/admin-ui/PageContainer';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -265,6 +266,7 @@ function AppearanceAdminSection() {
   }
 
   return (
+    <PageContainer width="narrow">
     <div className="appearance-admin admin-simple">
       <PageHeader
         title="Datos de la empresa"
@@ -373,6 +375,7 @@ function AppearanceAdminSection() {
         </div>
       </AdvancedSection>
     </div>
+    </PageContainer>
   );
 }
 

@@ -93,7 +93,8 @@ describe('reconocer alarma', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Cerrar' }));
     await userEvent.type(screen.getByRole('textbox'), 'ya quedó bien');
-    await userEvent.click(screen.getByRole('button', { name: 'Cerrar' }));
+    const cerrar = screen.getAllByRole('button', { name: 'Cerrar' });
+    await userEvent.click(cerrar[cerrar.length - 1]);
 
     await screen.findByText('No hay alarmas abiertas.');
     const ackCall = global.fetch.mock.calls.find(([url]) => String(url).includes('/ack'));

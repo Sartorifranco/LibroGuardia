@@ -5,6 +5,8 @@ import PageHeader from '../../../components/admin-ui/PageHeader';
 import EmptyState from '../../../components/admin-ui/EmptyState';
 import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
 import HelpTip from '../../../components/admin-ui/HelpTip';
+import Modal from '../../../components/admin-ui/Modal';
+import PageContainer from '../../../components/admin-ui/PageContainer';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -29,6 +31,7 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
   const [dominiosText, setDominiosText] = useState('');
   const [activa, setActiva] = useState(true);
   const [query, setQuery] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
 
   const canManage = hasPermission(currentUser, 'empresas.manage');
 
@@ -52,6 +55,15 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
     setNombre('');
     setDominiosText('');
     setActiva(true);
+    setFormOpen(false);
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setNombre('');
+    setDominiosText('');
+    setActiva(true);
+    setFormOpen(true);
   };
 
   const startEdit = (emp) => {
@@ -59,6 +71,7 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
     setNombre(emp.nombre || '');
     setDominiosText((emp.dominiosPermitidos || []).join(', '));
     setActiva(emp.activa !== false);
+    setFormOpen(true);
   };
 
   const parseDominios = () => {
@@ -82,7 +95,7 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
             body: { nombre, dominiosPermitidos, activa }
           });
           setEmpresas((prev) => prev.map((x) => (x.id === editingId ? data.empresa : x)));
-          showSuccess('Empresa actualizada');
+          showSuccess('Guardado');
         } else {
           const data = await apiFetch('/admin/empresas', {
             method: 'POST',
@@ -90,7 +103,7 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
             body: { nombre, dominiosPermitidos, activa }
           });
           setEmpresas((prev) => [...prev, data.empresa].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre))));
-          showSuccess('Empresa creada');
+          showSuccess('Guardado');
         }
         resetForm();
       } catch (err) {
@@ -127,6 +140,7 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
   });
 
   return (
+    <PageContainer width="medium">
     <div className="empresas-admin admin-simple">
       <PageHeader
         title="Empresas y responsables"
@@ -137,19 +151,32 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
           'Guardá. Después el responsable entra con ese mail y carga las visitas.'
         ]}
         action={(
-          <PendingButton
-            type="submit"
-            form="empresa-form"
-            className="btn btn-primary"
-            actionId={editingId ? 'updateEmpresa' : 'createEmpresa'}
-            pendingAction={pendingAction}
-          >
-            {editingId ? 'Guardar cambios' : 'Guardar empresa'}
-          </PendingButton>
+          <button type="button" className="btn btn-primary" onClick={openCreate}>Nueva empresa</button>
         )}
       />
 
-      <form id="empresa-form" onSubmit={handleSubmit} className="admin-form-card space-y-3">
+      <Modal
+        open={formOpen}
+        title={editingId ? 'Editar empresa' : 'Nueva empresa'}
+        description="El nombre y los mails con los que su gente pide visitas."
+        onClose={resetForm}
+        dirty={Boolean(nombre.trim() || dominiosText.trim())}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={resetForm}>Cancelar</button>
+            <PendingButton
+              type="submit"
+              form="empresa-form"
+              className="btn btn-primary"
+              actionId={editingId ? 'updateEmpresa' : 'createEmpresa'}
+              pendingAction={pendingAction}
+            >
+              {editingId ? 'Guardar cambios' : 'Guardar empresa'}
+            </PendingButton>
+          </>
+        )}
+      >
+      <form id="empresa-form" onSubmit={handleSubmit} className="space-y-3">
         <div>
           <label className="block text-sm font-medium mb-1" htmlFor="empresaNombre">Nombre de la empresa</label>
           <input
@@ -181,12 +208,8 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
           <input type="checkbox" checked={activa} onChange={(e) => setActiva(e.target.checked)} />
           La empresa puede cargar visitas
         </label>
-        {editingId ? (
-          <button type="button" className="btn btn-secondary" onClick={resetForm}>
-            Cancelar
-          </button>
-        ) : null}
       </form>
+      </Modal>
 
       <div className="admin-simple-search" style={{ marginTop: '1rem' }}>
         <input
@@ -206,12 +229,12 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
             ? 'Una empresa agrupa a su gente y los mails con los que pueden pedir visitas.'
             : 'Probá con otro nombre.'}
           actionLabel={empresas.length === 0 ? 'Cargar la primera' : undefined}
-          onAction={empresas.length === 0 ? () => document.getElementById('empresaNombre')?.focus() : undefined}
+          onAction={empresas.length === 0 ? openCreate : undefined}
         />
       ) : (
-        <ul className="user-list">
+        <div className="aui-card-grid">
           {filtered.map((emp) => (
-            <li key={emp.id} className="user-list-item">
+            <article key={emp.id} className="aui-card">
               <div>
                 <strong>{emp.nombre}</strong>
                 <p className="historial-meta">
@@ -228,9 +251,9 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
                   <Trash2 size={14} />
                 </button>
               </div>
-            </li>
+            </article>
           ))}
-        </ul>
+        </div>
       )}
 
       <AdvancedSection>
@@ -240,6 +263,7 @@ function EmpresasAdminSection({ pendingAction, runAction }) {
         </p>
       </AdvancedSection>
     </div>
+    </PageContainer>
   );
 }
 

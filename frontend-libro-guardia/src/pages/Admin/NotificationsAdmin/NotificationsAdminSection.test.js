@@ -66,7 +66,7 @@ describe('Avisos por mail', () => {
   it('el asistente de Gmail completa el servidor de correo', async () => {
     render(<NotificationsAdminSection pendingAction={null} runAction={async (_id, fn) => fn()} />);
     await screen.findByRole('heading', { name: 'Avisos por mail' });
-    fireEvent.click(screen.getByRole('button', { name: 'Opciones avanzadas' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configurar correo' }));
     fireEvent.click(screen.getByRole('button', { name: 'Gmail' }));
     expect(screen.getByLabelText('Servidor SMTP')).toHaveValue('smtp.gmail.com');
     expect(screen.getByLabelText('Puerto')).toHaveValue(587);

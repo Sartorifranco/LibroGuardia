@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Plus, X } from 'lucide-react';
+import { Check, Plus } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { apiFetch } from '../../services/api';
 import { hasPermission } from '../../utils/permissions';
+import { Modal, PageContainer } from '../../components/admin-ui';
 import './autorizaciones.css';
 
 const TABS = [
@@ -54,6 +55,8 @@ function AutorizacionesPage() {
   const [saving, setSaving] = useState(false);
   const [rejectId, setRejectId] = useState(null);
   const [rejectNote, setRejectNote] = useState('');
+  const [approveId, setApproveId] = useState(null);
+  const [approveNote, setApproveNote] = useState('');
   const [form, setForm] = useState({
     dni: '',
     name: '',
@@ -128,21 +131,19 @@ function AutorizacionesPage() {
     }
   };
 
-  const approve = async (row) => {
-    const ok = await confirm({
-      title: 'Aprobar ingreso',
-      message: `¿Aprobás el ingreso de ${row.persona?.name || 'esta persona'}? Va a poder pasar en el horario indicado.`,
-      confirmLabel: 'Aprobar',
-      tone: 'default'
-    });
-    if (!ok) return;
+  const approve = async () => {
+    const row = requests.find((item) => item.id === approveId);
+    if (!row) return;
     try {
-      const data = await apiFetch(`/requests/${row.id}/approve`, {
+      const nota = approveNote.trim();
+      await apiFetch(`/requests/${row.id}/approve`, {
         method: 'POST',
         token: authToken,
-        body: {}
+        body: nota ? { nota } : {}
       });
-      showSuccess(data.message || 'Solicitud aprobada.');
+      showSuccess('Guardado');
+      setApproveId(null);
+      setApproveNote('');
       await load();
     } catch (err) {
       showError(err.message || 'No se pudo aprobar.');
@@ -155,12 +156,12 @@ function AutorizacionesPage() {
       return;
     }
     try {
-      const data = await apiFetch(`/requests/${row.id}/reject`, {
+      await apiFetch(`/requests/${row.id}/reject`, {
         method: 'POST',
         token: authToken,
         body: { nota: rejectNote.trim() }
       });
-      showSuccess(data.message || 'Solicitud rechazada.');
+      showSuccess('Guardado');
       setRejectId(null);
       setRejectNote('');
       await load();
@@ -192,7 +193,11 @@ function AutorizacionesPage() {
     return 'No hay historial para mostrar.';
   }, [tab]);
 
+  const approveRow = requests.find((item) => item.id === approveId) || null;
+  const rejectRow = requests.find((item) => item.id === rejectId) || null;
+
   return (
+    <PageContainer width="medium">
     <div className="form-section auth-requests">
       <div className="section-heading">
         <h2 className="text-2xl font-semibold text-red-700">Autorizaciones</h2>
@@ -219,14 +224,28 @@ function AutorizacionesPage() {
       </div>
 
       {canAsk && (
-        <button type="button" className="btn btn-primary auth-requests__new" onClick={() => setShowForm((v) => !v)}>
-          {showForm ? <X size={18} /> : <Plus size={18} />}
-          {showForm ? 'Cerrar' : 'Nueva solicitud'}
+        <button type="button" className="btn btn-primary auth-requests__new" onClick={() => setShowForm(true)}>
+          <Plus size={18} />
+          Nueva solicitud
         </button>
       )}
 
-      {showForm && (
-        <form className="auth-requests__form" onSubmit={submitRequest}>
+      <Modal
+        open={showForm}
+        title="Nueva solicitud"
+        description="Pedí un ingreso. Lo aprueba el responsable de la empresa."
+        onClose={() => setShowForm(false)}
+        dirty={Boolean(form.dni || form.name || form.motivo)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>
+            <button type="submit" form="auth-request-form" className="btn btn-primary" disabled={saving}>
+              {saving ? 'Enviando…' : 'Enviar solicitud'}
+            </button>
+          </>
+        )}
+      >
+        <form id="auth-request-form" className="auth-requests__form" onSubmit={submitRequest}>
           <label>
             DNI
             <input className="input-field" inputMode="numeric" required value={form.dni} onChange={setField('dni')} />
@@ -273,11 +292,8 @@ function AutorizacionesPage() {
             Motivo
             <input className="input-field" required minLength={3} value={form.motivo} onChange={setField('motivo')} />
           </label>
-          <button type="submit" className="btn btn-primary auth-requests__full" disabled={saving}>
-            {saving ? 'Enviando…' : 'Enviar solicitud'}
-          </button>
         </form>
-      )}
+      </Modal>
 
       {loading && <p className="auth-requests__status">Cargando…</p>}
       {!loading && error && (
@@ -309,7 +325,7 @@ function AutorizacionesPage() {
             {(row.puedeDecidir || row.puedeCancelar) && (
               <div className="auth-requests__actions">
                 {row.puedeDecidir && (
-                  <button type="button" className="btn btn-primary" onClick={() => approve(row)}>
+                  <button type="button" className="btn btn-primary" onClick={() => { setApproveId(row.id); setApproveNote(''); }}>
                     <Check size={18} /> Aprobar
                   </button>
                 )}
@@ -329,38 +345,60 @@ function AutorizacionesPage() {
                 )}
               </div>
             )}
-            {rejectId === row.id && (
-              <form
-                className="auth-requests__reject"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  reject(row);
-                }}
-              >
-                <label>
-                  Por qué la rechazás
-                  <textarea
-                    className="input-field"
-                    required
-                    minLength={3}
-                    value={rejectNote}
-                    onChange={(event) => setRejectNote(event.target.value)}
-                  />
-                </label>
-                <div className="auth-requests__actions">
-                  <button type="button" className="btn btn-secondary" autoFocus onClick={() => setRejectId(null)}>
-                    Cancelar
-                  </button>
-                  <button type="submit" className="btn btn-primary" disabled={rejectNote.trim().length < 3}>
-                    Confirmar rechazo
-                  </button>
-                </div>
-              </form>
-            )}
           </li>
         ))}
       </ul>
+
+      <Modal
+        open={Boolean(approveRow)}
+        title="Aprobar ingreso"
+        description={approveRow ? `¿Aprobás el ingreso de ${approveRow.persona?.name || 'esta persona'}?` : ''}
+        onClose={() => setApproveId(null)}
+        size="sm"
+        dirty={Boolean(approveNote.trim())}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setApproveId(null)}>Cancelar</button>
+            <button type="button" className="btn btn-primary" onClick={approve}>Aprobar</button>
+          </>
+        )}
+      >
+        <label>
+          Nota (opcional)
+          <textarea className="input-field" aria-label="Nota de aprobación" value={approveNote} onChange={(event) => setApproveNote(event.target.value)} rows={3} />
+        </label>
+      </Modal>
+
+      <Modal
+        open={Boolean(rejectRow)}
+        title="Rechazar solicitud"
+        description="Contá por qué, para que quien la pidió lo entienda."
+        onClose={() => setRejectId(null)}
+        size="sm"
+        dirty={Boolean(rejectNote.trim())}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setRejectId(null)}>Cancelar</button>
+            <button type="button" className="btn btn-primary" disabled={rejectNote.trim().length < 3} onClick={() => rejectRow && reject(rejectRow)}>
+              Confirmar rechazo
+            </button>
+          </>
+        )}
+      >
+        <label>
+          Por qué la rechazás
+          <textarea
+            className="input-field"
+            aria-label="Por qué la rechazás"
+            required
+            minLength={3}
+            value={rejectNote}
+            onChange={(event) => setRejectNote(event.target.value)}
+          />
+        </label>
+      </Modal>
     </div>
+    </PageContainer>
   );
 }
 

@@ -5,6 +5,7 @@ import { useRuntime } from '../context/RuntimeContext';
 import { apiFetch } from '../services/api';
 import { guideFor } from '../utils/alarmGuide';
 import { hasPermission } from '../utils/permissions';
+import { Modal } from './admin-ui';
 
 const TYPE_OPTIONS = [
   { id: '', label: 'Todos los tipos' },
@@ -174,39 +175,6 @@ function GuardAlarmsPanel({ compact = false }) {
               <p className="alarm-card__kicker">Qué hacer</p>
               <p className="alarm-card__action">{guide.action}</p>
               {done ? <p className="alarm-card__where">{alarm.status === 'closed' ? 'Cerrada' : 'Reconocida'}</p> : null}
-              {!done && canAck && ackingId === alarm.id ? (
-                <form className="alarm-card__form" onSubmit={submitAck}>
-                  <label htmlFor={`ack-note-${alarm.id}`}>
-                    Nota (obligatoria)
-                    <textarea
-                      id={`ack-note-${alarm.id}`}
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      rows={3}
-                      maxLength={500}
-                      aria-label="Nota para reconocer la alarma"
-                    />
-                  </label>
-                  <p className="alarm-card__hint">Escribí al menos 3 caracteres.</p>
-                  {formError ? <p className="alarm-panel__error" role="alert">{formError}</p> : null}
-                  <div className="alarm-card__actions">
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => setAckingId(null)}
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      className="btn btn-primary"
-                      disabled={saving || note.trim().length < 3}
-                    >
-                      {saving ? 'Guardando…' : (closeMode ? 'Cerrar' : 'Reconocer')}
-                    </button>
-                  </div>
-                </form>
-              ) : null}
               {!done && canAck && ackingId !== alarm.id ? (
                 <div className="alarm-card__actions">
                   <button
@@ -229,6 +197,42 @@ function GuardAlarmsPanel({ compact = false }) {
           );
         })}
       </div>
+      <Modal
+        open={Boolean(ackingId)}
+        title={closeMode ? 'Cerrar alarma' : 'Reconocer alarma'}
+        description="Dejá una nota de lo que viste. Hacen falta al menos 3 letras."
+        onClose={() => setAckingId(null)}
+        size="sm"
+        dirty={note.trim().length > 0}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setAckingId(null)}>Cancelar</button>
+            <button
+              type="submit"
+              form="alarm-ack-form"
+              className="btn btn-primary"
+              disabled={saving || note.trim().length < 3}
+            >
+              {saving ? 'Guardando…' : (closeMode ? 'Cerrar' : 'Reconocer')}
+            </button>
+          </>
+        )}
+      >
+        <form id="alarm-ack-form" className="alarm-card__form" onSubmit={submitAck}>
+          <label htmlFor="ack-note">
+            Nota (obligatoria)
+            <textarea
+              id="ack-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+              maxLength={500}
+              aria-label="Nota para reconocer la alarma"
+            />
+          </label>
+          {formError ? <p className="alarm-panel__error" role="alert">{formError}</p> : null}
+        </form>
+      </Modal>
     </section>
   );
 }

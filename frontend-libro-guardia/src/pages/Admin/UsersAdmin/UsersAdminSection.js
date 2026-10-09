@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  XCircle,
   ToggleRight,
   ToggleLeft,
   Save,
@@ -17,7 +16,7 @@ import {
   AdminLoading,
   AdminTable
 } from '../../../components/admin/AdminUi';
-import { PageHeader, AdvancedSection, HelpTip, EmptyState } from '../../../components/admin-ui';
+import { PageHeader, AdvancedSection, HelpTip, EmptyState, Modal, WizardModal, PageContainer } from '../../../components/admin-ui';
 import { hasPermission, canManageTargetUser, PERMISSION_LABELS, isAccessStationAccount, ACCESS_STATION_ROLE_ID, ACCESS_STATION_ROLE_LABEL, humanRoleLabel, buildPermissionCategories } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -224,7 +223,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   const hasActiveFilters = Boolean(search.trim()) || roleFilter !== 'all' || statusFilter !== 'all';
 
   const handleCreateUser = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     setError(null);
     await runAction('createUser', async () => {
       try {
@@ -248,7 +247,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
         setJobCard('guardia');
         setNewEmpresaId('');
         setCreateOpen(false);
-        showSuccess('Usuario creado exitosamente.');
+        showSuccess('Guardado');
         await reloadUsers();
       } catch (createError) {
         console.error('Error al crear usuario:', createError);
@@ -282,7 +281,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
           body: updateData
         });
         setEditingUser(null);
-        showSuccess('Usuario actualizado exitosamente.');
+        showSuccess('Guardado');
         await reloadUsers();
       } catch (saveError) {
         console.error('Error al actualizar usuario:', saveError);
@@ -398,13 +397,13 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   ));
 
   const openCreate = () => {
-    if (createOpen) {
-      setCreateOpen(false);
-      return;
-    }
     setNewUserPassword(generateTempPassword());
     setJobCard('guardia');
     setNewUserRole(assignableRoles.some((role) => role.id === 'guardia') ? 'guardia' : (assignableRoles[0]?.id || 'guardia'));
+    setNewNombre('');
+    setNewUsername('');
+    setNewPuesto('');
+    setNewEmpresaId('');
     setCreateOpen(true);
   };
 
@@ -423,6 +422,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   };
 
   return (
+    <PageContainer width="medium">
     <div className="users-admin admin-simple">
       <PageHeader
         title="Usuarios del sistema"
@@ -434,110 +434,129 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
         ]}
         action={canCreate ? (
           <button type="button" className="btn btn-primary" onClick={openCreate}>
-            {createOpen ? 'Cerrar' : 'Nuevo usuario'}
+            Nuevo usuario
           </button>
         ) : null}
       />
-      <AdminBlock title="Listado">
-        {canCreate && createOpen && (
-          <form onSubmit={handleCreateUser} className="users-admin__create" style={{ display: 'grid', gap: '0.75rem' }}>
-            <h3 className="admin-block__title">¿Qué hace esta persona en el sistema?</h3>
-            <div className="admin-simple-choice">
-              {visibleJobs.map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  className={`admin-simple-choice__card${jobCard === card.id ? ' is-selected' : ''}`}
-                  onClick={() => chooseJob(card)}
-                >
-                  <strong>{card.title}</strong>
-                  <span>{card.text}</span>
-                </button>
-              ))}
-            </div>
-            <label className="field-label">
-              Nombre
-              <input
-                className="input-field"
-                aria-label="Nombre"
-                value={newNombre}
-                onChange={(e) => setNewNombre(e.target.value)}
-                required
-              />
-            </label>
-            <label className="field-label">
-              Usuario o mail
-              <input
-                type="text"
-                id="newUsername"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                className="input-field"
-                aria-label="Usuario o mail"
-                required
-                autoFocus
-              />
-            </label>
-            {newUserRole === 'responsable' ? (
-              <label className="field-label">
-                Empresa
-                <select
-                  id="newUserEmpresa"
-                  value={newEmpresaId}
-                  onChange={(e) => setNewEmpresaId(e.target.value)}
-                  className="input-field"
-                  aria-label="Empresa"
-                >
-                  <option value="">Elegí la empresa</option>
-                  {empresas.map((empresa) => (
-                    <option key={empresa.id} value={empresa.id}>{empresa.nombre}</option>
+      <WizardModal
+        open={canCreate && createOpen}
+        title="Nuevo usuario"
+        onClose={() => setCreateOpen(false)}
+        onFinish={handleCreateUser}
+        finishLabel={pendingAction === 'createUser' ? 'Creando…' : 'Crear usuario'}
+        steps={[
+          {
+            id: 'puesto',
+            title: 'Qué hace',
+            canContinue: Boolean(jobCard),
+            content: (
+              <>
+                <h3 className="admin-block__title">¿Qué hace esta persona en el sistema?</h3>
+                <div className="admin-simple-choice">
+                  {visibleJobs.map((card) => (
+                    <button
+                      key={card.id}
+                      type="button"
+                      className={`admin-simple-choice__card${jobCard === card.id ? ' is-selected' : ''}`}
+                      onClick={() => chooseJob(card)}
+                    >
+                      <strong>{card.title}</strong>
+                      <span>{card.text}</span>
+                    </button>
                   ))}
-                </select>
-              </label>
-            ) : null}
-            {newUserRole === 'guardia' ? (
+                </div>
+              </>
+            )
+          },
+          {
+            id: 'datos',
+            title: 'Datos',
+            canContinue: Boolean(newNombre.trim() && newUsername.trim()),
+            content: (
+              <>
+                <label className="field-label">
+                  Nombre
+                  <input
+                    className="input-field"
+                    aria-label="Nombre"
+                    value={newNombre}
+                    onChange={(e) => setNewNombre(e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="field-label">
+                  Usuario o mail
+                  <input
+                    type="text"
+                    id="newUsername"
+                    value={newUsername}
+                    onChange={(e) => setNewUsername(e.target.value)}
+                    className="input-field"
+                    aria-label="Usuario o mail"
+                    required
+                  />
+                </label>
+                {newUserRole === 'responsable' ? (
+                  <label className="field-label">
+                    Empresa
+                    <select
+                      id="newUserEmpresa"
+                      value={newEmpresaId}
+                      onChange={(e) => setNewEmpresaId(e.target.value)}
+                      className="input-field"
+                      aria-label="Empresa"
+                    >
+                      <option value="">Elegí la empresa</option>
+                      {empresas.map((empresa) => (
+                        <option key={empresa.id} value={empresa.id}>{empresa.nombre}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {newUserRole === 'guardia' ? (
+                  <label className="field-label">
+                    Puesto o puertas
+                    <HelpTip text="Por ejemplo: Portón principal, turno noche." />
+                    <input
+                      className="input-field"
+                      aria-label="Puesto o puertas"
+                      value={newPuesto}
+                      onChange={(e) => setNewPuesto(e.target.value)}
+                    />
+                  </label>
+                ) : null}
+              </>
+            )
+          },
+          {
+            id: 'clave',
+            title: 'Contraseña',
+            canContinue: String(newUserPassword || '').trim().length >= 8,
+            content: (
               <label className="field-label">
-                Puesto o puertas
-                <HelpTip text="Por ejemplo: Portón principal, turno noche." />
-                <input
-                  className="input-field"
-                  aria-label="Puesto o puertas"
-                  value={newPuesto}
-                  onChange={(e) => setNewPuesto(e.target.value)}
-                />
+                Contraseña temporal
+                <span className="admin-simple-sentence">
+                  <input
+                    type="text"
+                    id="newUserPassword"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    className="input-field"
+                    aria-label="Contraseña temporal"
+                    minLength={8}
+                    required
+                  />
+                  <button type="button" className="btn btn-secondary" onClick={copyPassword}>Copiar</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setNewUserPassword(generateTempPassword())}>
+                    Generar otra
+                  </button>
+                </span>
               </label>
-            ) : null}
-            <label className="field-label">
-              Contraseña temporal
-              <span className="admin-simple-sentence">
-                <input
-                  type="text"
-                  id="newUserPassword"
-                  value={newUserPassword}
-                  onChange={(e) => setNewUserPassword(e.target.value)}
-                  className="input-field"
-                  aria-label="Contraseña temporal"
-                  minLength={8}
-                  required
-                />
-                <button type="button" className="btn btn-secondary" onClick={copyPassword}>Copiar</button>
-                <button type="button" className="btn btn-secondary" onClick={() => setNewUserPassword(generateTempPassword())}>
-                  Generar otra
-                </button>
-              </span>
-            </label>
-            <PendingButton
-              type="submit"
-              actionId="createUser"
-              pendingAction={pendingAction}
-              className="btn btn-secondary"
-              pendingLabel="Creando…"
-            >
-              Crear usuario
-            </PendingButton>
-          </form>
-        )}
-
+            )
+          }
+        ]}
+      />
+      <AdminBlock title="Listado">
         <div className="users-admin__stats" aria-label="Resumen de usuarios">
           <span className="users-admin__stat"><strong>{stats.total}</strong> usuarios</span>
           <span className="users-admin__stat users-admin__stat--ok"><strong>{stats.active}</strong> activos</span>
@@ -751,16 +770,38 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
         )}
       </AdminBlock>
 
-      {editingUser && (
-        <div className="modal-overlay">
-          <div className="modal-content max-w-2xl">
-            <button type="button" className="close-button" onClick={() => setEditingUser(null)} aria-label="Cerrar">
-              <XCircle size={24} />
+      <Modal
+        open={Boolean(editingUser)}
+        title={editingUser ? `Editar usuario: ${editingUser.username}` : 'Editar usuario'}
+        description="Cambios de puesto, empresa o contraseña."
+        onClose={() => setEditingUser(null)}
+        size="lg"
+        dirty={Boolean(editingUser && (
+          editedUserPassword
+          || editedUserRole !== editingUser.role
+          || editedUserActive !== (editingUser.active !== false)
+          || (editedEmpresaId || '') !== (editingUser.empresaId || '')
+        ))}
+        footer={editingUser ? (
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setEditingUser(null)}>
+              Cancelar
             </button>
-            <h3 className="admin-block__title" style={{ marginBottom: '1rem' }}>
-              Editar usuario: {editingUser.username}
-            </h3>
-            <form onSubmit={handleSaveUserEdit} className="space-y-4">
+            <PendingButton
+              type="submit"
+              form="user-edit-form"
+              actionId="saveUserEdit"
+              pendingAction={pendingAction}
+              className="btn btn-primary"
+              pendingLabel="Guardando..."
+            >
+              <Save size={20} /> Guardar cambios
+            </PendingButton>
+          </>
+        ) : null}
+      >
+        {editingUser ? (
+            <form id="user-edit-form" onSubmit={handleSaveUserEdit} className="space-y-4">
               <input type="text" id="editedUsername" value={editedUsername} className="input-field" disabled />
               {canEdit && canManageTargetUser(currentUser, editingUser, systemRoles) && (
                 <select
@@ -850,25 +891,11 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                   ) : null}
                 </AdvancedSection>
               )}
-              <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setEditingUser(null)} className="btn btn-secondary">
-                  <XCircle size={20} /> Cancelar
-                </button>
-                <PendingButton
-                  type="submit"
-                  actionId="saveUserEdit"
-                  pendingAction={pendingAction}
-                  className="btn btn-primary"
-                  pendingLabel="Guardando..."
-                >
-                  <Save size={20} /> Guardar cambios
-                </PendingButton>
-              </div>
             </form>
-          </div>
-        </div>
-      )}
+        ) : null}
+      </Modal>
     </div>
+    </PageContainer>
   );
 }
 

@@ -78,7 +78,7 @@ describe('AutorizacionesPage', () => {
     expect(screen.getByText('Ana Pérez')).toBeInTheDocument();
     expect(screen.getByText(/Acme/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Aprobar/i }));
-    const dialog = await screen.findByRole('alertdialog');
+    const dialog = await screen.findByRole('dialog', { name: /Aprobar ingreso/i });
     expect(dialog).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole('button', { name: /^Aprobar$/i }).at(-1));
     await waitFor(() => {

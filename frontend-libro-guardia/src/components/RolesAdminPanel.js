@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Edit, Eye, EyeOff, PlusCircle, Save, Shield, Trash2 } from 'lucide-react';
 import { AdminEmpty, AdminLoading } from './admin/AdminUi';
+import { Modal } from './admin-ui';
 import {
   DASHBOARD_PROFILE_LABELS,
   PERMISSION_LABELS,
@@ -153,6 +154,7 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
   const [advancedByRole, setAdvancedByRole] = useState({});
   const [createAdvanced, setCreateAdvanced] = useState(false);
   const [showCreatePerms, setShowCreatePerms] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const canManage = hasPermission(currentUser, 'roles.manage');
   const generatedId = slugifyRoleId(newRoleLabel);
@@ -221,8 +223,9 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
           permissions: newRolePermissions
         }
       });
-      onSuccess?.('Rol creado correctamente.');
+      onSuccess?.('Guardado');
       resetCreateForm();
+      setCreateOpen(false);
       loadRoles();
     } catch (err) {
       onError?.(err.message);
@@ -293,7 +296,8 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
           permissions: role.permissions
         }
       });
-      onSuccess?.(`Rol ${role.label} actualizado.`);
+      onSuccess?.('Guardado');
+      setEditingRole(null);
       setEditingRole(null);
       loadRoles();
     } catch (err) {
@@ -340,52 +344,74 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
     isSystem: false
   };
 
+  const roleBeingEdited = roles.find((role) => role.id === editingRole) || null;
+
   return (
     <div className="roles-admin-panel">
       {canManage && (
-        <section className="admin-sub-section">
-          <h3 className="admin-block__title" style={{ marginBottom: '0.85rem' }}>
-            <PlusCircle size={18} /> Crear rol
-          </h3>
+        <button type="button" className="btn btn-primary" onClick={() => setCreateOpen(true)}>
+          <PlusCircle size={18} /> Nuevo rol
+        </button>
+      )}
 
-          <div className="roles-templates">
-            <p className="roles-templates__label">Plantillas rápidas</p>
-            <div className="roles-templates__row">
-              {TEMPLATE_ORDER.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={`btn btn-secondary-small${selectedTemplate === id ? ' roles-templates__btn--active' : ''}`}
-                  onClick={() => applyTemplate(id)}
-                >
-                  {ROLE_TEMPLATES[id].label}
-                </button>
-              ))}
-            </div>
+      <Modal
+        open={createOpen}
+        title="Nuevo rol"
+        description="Un rol es un tipo de usuario. Podés partir de una plantilla."
+        onClose={() => setCreateOpen(false)}
+        size="lg"
+        dirty={Boolean(newRoleLabel.trim() || newRoleDescription.trim() || newRolePermissions.length)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setCreateOpen(false)}>Cancelar</button>
+            <button type="submit" form="role-create-form" className="btn btn-primary" disabled={saving || !generatedId}>
+              {saving ? 'Creando...' : 'Crear rol'}
+            </button>
+          </>
+        )}
+      >
+        <div className="roles-templates">
+          <p className="roles-templates__label">Plantillas rápidas</p>
+          <div className="roles-templates__row">
+            {TEMPLATE_ORDER.map((id) => (
+              <button
+                key={id}
+                type="button"
+                className={`btn btn-secondary-small${selectedTemplate === id ? ' roles-templates__btn--active' : ''}`}
+                onClick={() => applyTemplate(id)}
+              >
+                {ROLE_TEMPLATES[id].label}
+              </button>
+            ))}
           </div>
-
-          <form onSubmit={handleCreateRole} className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-            <div className="md:col-span-2">
-              <input
-                className="input-field"
-                placeholder="Nombre del rol"
-                value={newRoleLabel}
-                onChange={(e) => setNewRoleLabel(e.target.value)}
-                required
-              />
-              <p className="roles-generated-id">
-                ID técnico: <code>{generatedId || '—'}</code>
-                <span className="roles-generated-id__hint"> (se genera automáticamente)</span>
-              </p>
-            </div>
+        </div>
+        <form id="role-create-form" onSubmit={handleCreateRole} className="grid grid-cols-1 gap-3 mt-3">
+          <label>
+            Nombre
             <input
-              className="input-field md:col-span-2"
-              placeholder="Descripción"
+              className="input-field"
+              aria-label="Nombre del rol"
+              placeholder="Nombre del rol"
+              value={newRoleLabel}
+              onChange={(e) => setNewRoleLabel(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Descripción
+            <input
+              className="input-field"
+              aria-label="Descripción del rol"
+              placeholder="Para qué sirve"
               value={newRoleDescription}
               onChange={(e) => setNewRoleDescription(e.target.value)}
             />
+          </label>
+          <label>
+            Pantalla de inicio
             <select
               className="input-field bg-white"
+              aria-label="Pantalla de inicio"
               value={newRoleProfile}
               onChange={(e) => setNewRoleProfile(e.target.value)}
             >
@@ -393,70 +419,62 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
                 <option key={value} value={value}>{label}</option>
               ))}
             </select>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowCreatePerms((v) => !v)}
-              >
-                {showCreatePerms ? 'Ocultar permisos' : `Permisos (${newRolePermissions.length})`}
-              </button>
-              <button type="submit" className="btn btn-primary" disabled={saving || !generatedId}>
-                {saving ? 'Creando...' : 'Crear rol'}
-              </button>
-            </div>
-          </form>
-
-          {showCreatePerms && (
-            <div className="mt-4">
-              <RolePermissionEditor
-                role={createDraftRole}
-                permissionKeys={permissionKeys}
-                categories={categories}
-                canManage={canManage}
-                showAdvanced={createAdvanced}
-                showMeta={false}
-                onToggleAdvanced={() => setCreateAdvanced((v) => !v)}
-                onTogglePermission={toggleCreatePermission}
-                onSetCategory={setCreateCategory}
-                onChangeMeta={() => {}}
-              />
-            </div>
-          )}
-        </section>
-      )}
+          </label>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => setShowCreatePerms((v) => !v)}
+          >
+            {showCreatePerms ? 'Ocultar permisos' : `Permisos (${newRolePermissions.length})`}
+          </button>
+        </form>
+        {showCreatePerms && (
+          <div className="mt-4">
+            <RolePermissionEditor
+              role={createDraftRole}
+              permissionKeys={permissionKeys}
+              categories={categories}
+              canManage={canManage}
+              showAdvanced={createAdvanced}
+              showMeta={false}
+              onToggleAdvanced={() => setCreateAdvanced((v) => !v)}
+              onTogglePermission={toggleCreatePermission}
+              onSetCategory={setCreateCategory}
+              onChangeMeta={() => {}}
+            />
+          </div>
+        )}
+      </Modal>
 
       <section className="admin-sub-section">
         <h3 className="admin-block__title" style={{ marginBottom: '0.85rem' }}>
           <Shield size={18} /> Roles del sistema
         </h3>
-        <div className="space-y-4">
-          {roles.length === 0 ? (
-            <AdminEmpty
-              icon={Shield}
-              title="Todavía no hay roles"
-              description="Creá el primero con el formulario de arriba."
-            />
-          ) : roles.map((role) => (
-            <article key={role.id} className="user-list-item flex-col items-stretch">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-semibold text-gray-900">{role.label}</p>
-                  <p className="text-sm text-gray-600">
-                    ID: {role.id} · Pantalla: {DASHBOARD_PROFILE_LABELS[role.dashboardProfile] || role.dashboardProfile}
-                    {role.isSystem ? ' · Rol del sistema' : ''}
-                    {' · '}{(role.permissions || []).length} permisos
-                  </p>
-                  {role.description && <p className="text-sm text-gray-500 mt-1">{role.description}</p>}
-                </div>
-                <div className="flex gap-2">
+        {roles.length === 0 ? (
+          <AdminEmpty
+            icon={Shield}
+            title="Todavía no hay roles"
+            description="Creá el primero con Nuevo rol."
+          />
+        ) : (
+          <div className="aui-card-grid">
+            {roles.map((role) => (
+              <article key={role.id} className="aui-card">
+                <p className="aui-card__title">{role.label}</p>
+                <p className="aui-card__meta">
+                  {DASHBOARD_PROFILE_LABELS[role.dashboardProfile] || 'Pantalla general'}
+                  {role.isSystem ? ' · Viene con el sistema' : ''}
+                  {' · '}{(role.permissions || []).length} permisos
+                </p>
+                {role.description ? <p className="aui-card__meta">{role.description}</p> : null}
+                <div className="access-actions">
                   {canManage && (
                     <button
                       type="button"
-                      className="btn btn-secondary-small"
-                      onClick={() => setEditingRole(editingRole === role.id ? null : role.id)}
+                      className="btn btn-secondary"
+                      onClick={() => setEditingRole(role.id)}
                     >
-                      <Edit size={16} /> {editingRole === role.id ? 'Cerrar' : 'Permisos'}
+                      <Edit size={16} /> Editar
                     </button>
                   )}
                   {canManage && !role.isSystem && (
@@ -465,38 +483,49 @@ function RolesAdminPanel({ authToken, currentUser, onSuccess, onError }) {
                     </button>
                   )}
                 </div>
-              </div>
-
-              {editingRole === role.id && canManage && (
-                <div className="mt-4 border-t pt-4">
-                  <RolePermissionEditor
-                    role={role}
-                    permissionKeys={permissionKeys}
-                    categories={categories}
-                    canManage={canManage}
-                    showAdvanced={Boolean(advancedByRole[role.id])}
-                    onToggleAdvanced={() => setAdvancedByRole((prev) => ({
-                      ...prev,
-                      [role.id]: !prev[role.id]
-                    }))}
-                    onTogglePermission={(permission) => togglePermission(role.id, permission)}
-                    onSetCategory={(perms, enable) => setCategoryPermissions(role.id, perms, enable)}
-                    onChangeMeta={(patch) => updateRoleLocal(role.id, patch)}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-primary mt-4"
-                    disabled={saving}
-                    onClick={() => saveRole(role)}
-                  >
-                    <Save size={16} /> Guardar rol
-                  </button>
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
+
+      <Modal
+        open={Boolean(roleBeingEdited)}
+        title={roleBeingEdited ? `Editar ${roleBeingEdited.label}` : 'Editar rol'}
+        description="Marcá lo que puede hacer quien tenga este rol."
+        onClose={() => setEditingRole(null)}
+        size="lg"
+        footer={roleBeingEdited ? (
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setEditingRole(null)}>Cancelar</button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saving}
+              onClick={() => saveRole(roleBeingEdited)}
+            >
+              <Save size={16} /> Guardar rol
+            </button>
+          </>
+        ) : null}
+      >
+        {roleBeingEdited ? (
+          <RolePermissionEditor
+            role={roleBeingEdited}
+            permissionKeys={permissionKeys}
+            categories={categories}
+            canManage={canManage}
+            showAdvanced={Boolean(advancedByRole[roleBeingEdited.id])}
+            onToggleAdvanced={() => setAdvancedByRole((prev) => ({
+              ...prev,
+              [roleBeingEdited.id]: !prev[roleBeingEdited.id]
+            }))}
+            onTogglePermission={(permission) => togglePermission(roleBeingEdited.id, permission)}
+            onSetCategory={(perms, enable) => setCategoryPermissions(roleBeingEdited.id, perms, enable)}
+            onChangeMeta={(patch) => updateRoleLocal(roleBeingEdited.id, patch)}
+          />
+        ) : null}
+      </Modal>
     </div>
   );
 }
