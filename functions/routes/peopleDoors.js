@@ -37,6 +37,7 @@ const {
   backfillPeopleLastAccess
 } = require('../lib/peopleLastAccess');
 const { bumpPeopleVersion } = require('../lib/dataVersions');
+const { listDoorLastScans } = require('../lib/doorLastScans');
 const {
   resolvePeopleListVersion,
   writePeopleListMeta
@@ -773,6 +774,29 @@ router.delete(
       res.json({ message: 'Puerta quitada de la persona', person: personToJSON(updated) });
     } catch (err) {
       res.status(500).json({ message: 'Error al desvincular persona', error: err.message });
+    }
+  }
+);
+
+/** Últimos escaneos de una puerta (entries + ventana corta del journal). */
+router.get(
+  '/api/admin/doors/:doorId/last-scans',
+  auth,
+  requireAnyPermission(['access.doors.manage', 'access.control', 'lectores.manage']),
+  async (req, res) => {
+    try {
+      const page = await listDoorLastScans({
+        doorId: req.params.doorId,
+        siteId: req.query.siteId || null,
+        limit: req.query.limit,
+        cursor: req.query.cursor || null
+      });
+      res.json(page);
+    } catch (err) {
+      const status = Number(err.status) || 500;
+      res.status(status).json({
+        message: status === 400 ? err.message : 'No se pudieron leer los escaneos'
+      });
     }
   }
 );
