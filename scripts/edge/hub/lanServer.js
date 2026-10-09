@@ -126,7 +126,7 @@ function createLanServer({ hub, verifier, staticDir = null, log = console }) {
     return serveStatic(staticDir, pathname, res);
   }
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       if (err.status) return sendJson(res, err.status, { code: err.code });
       log.error(`[hub] LAN ${req.method} ${req.url}: ${err.stack || err.message}`);
@@ -134,6 +134,10 @@ function createLanServer({ hub, verifier, staticDir = null, log = console }) {
       return undefined;
     });
   });
+  // Los equipos reusan conexiones cada ~5 s: con el default de Node (5 s) se cortan en carrera.
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
+  return server;
 }
 
 module.exports = { createLanServer };

@@ -128,12 +128,16 @@ function createLanServer({ controller, config, logger = nullLogger, now = () => 
     return send(res, 404, { ok: false, code: 'NOT_FOUND', message: `${req.method} ${p} no existe` });
   };
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       logger.error('Error en la API LAN', { error: err.message });
       if (!res.headersSent) send(res, err.status || 500, { ok: false, code: 'INTERNAL', message: err.message });
     });
   });
+  // Los equipos reusan conexiones cada ~5 s: con el default de Node (5 s) se cortan en carrera.
+  server.keepAliveTimeout = 65000;
+  server.headersTimeout = 66000;
+  return server;
 }
 
 module.exports = { createLanServer };
