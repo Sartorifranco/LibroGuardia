@@ -1,17 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Save, ShieldCheck, Satellite, X } from 'lucide-react';
-import PendingButton from '../../../components/PendingButton';
+import { Save, X } from 'lucide-react';
 import FleetGpsVehicleTable, { formatFleetTime } from '../../../components/FleetGpsVehicleTable';
-import {
-  AdminBlock,
-  AdminEmpty,
-  AdminFormCard,
-  AdminLoading
-} from '../../../components/admin/AdminUi';
+import { AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
+import { PageHeader, AdvancedSection, HelpTip } from '../../../components/admin-ui';
 import { normalizeGatePolygonsForSave } from '../../../utils/fleetGpsGeofence';
 import { hasPermission } from '../../../utils/permissions';
-import { gpsProviderDisplayName, DEFAULT_GPS_PROVIDER_DISPLAY_NAME } from '../../../utils/gpsProviderLabel';
+import { kmhToKnots, knotsToKmh } from '../../../utils/speedUnits';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
@@ -27,21 +22,19 @@ function LazyFleetGpsLiveMap(props) {
     });
     return () => { cancelled = true; };
   }, []);
-  if (!MapView) return <p className="route-fallback" role="status">Cargando…</p>;
+  if (!MapView) return <p className="route-fallback" role="status">Cargando el mapa…</p>;
   return <MapView {...props} />;
 }
 
-/**
- * Sección GPS flota del panel de administración. El id de sección permanece 'access'.
- * El nombre del proveedor sale de config.providerDisplayName (hoy UBIKA).
- * @param {{ pendingAction: string|null, runAction: Function }} props
- */
 function AccessGpsAdminSection({ pendingAction, runAction }) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+  const [speedKmh, setSpeedKmh] = useState(5);
+  const [liveCount, setLiveCount] = useState(null);
+  const [pendingDraw, setPendingDraw] = useState(null);
   const [fleetGpsConfig, setFleetGpsConfig] = useState({
     enabled: false,
     provider: 'ubika',
@@ -50,7 +43,7 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
     hasApiKey: false,
     guardiaLat: '',
     guardiaLng: '',
-    geofenceMode: 'circle',
+    geofenceMode: 'polygon',
     gatePolygons: [],
     plantPolygon: null,
     gateRadiusMeters: 45,
@@ -62,16 +55,19 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
     movementCooldownSeconds: 300,
     pollIntervalSeconds: 60,
     cloudSyncIntervalMinutes: 5,
-    approachAlertEnabled: false,
-    approachRadiusMeters: 400,
+    approachAlertEnabled: true,
+    approachRadiusMeters: 800,
     approachRequireMotion: true,
     lastError: null,
-    lastSyncAt: null,
-    providerDisplayName: DEFAULT_GPS_PROVIDER_DISPLAY_NAME
+    lastSyncAt: null
   });
   const [fleetGpsTestResult, setFleetGpsTestResult] = useState(null);
   const [testOpen, setTestOpen] = useState(false);
   const fleetGpsMapRef = useRef(null);
+
+  const onSnapshot = useCallback((snap) => {
+    if (snap && snap.vehicleCount != null) setLiveCount(Number(snap.vehicleCount) || 0);
+  }, []);
 
   useEffect(() => {
     const fetchFleetGps = async () => {
@@ -84,16 +80,18 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
         setFleetGpsConfig((prev) => ({
           ...prev,
           ...cfg,
-          geofenceMode: cfg.geofenceMode || prev.geofenceMode || 'circle',
+          geofenceMode: cfg.geofenceMode || 'polygon',
           gatePolygons: normalizeGatePolygonsForSave(cfg.gatePolygons || prev.gatePolygons || []),
           plantPolygon: cfg.plantPolygon ?? prev.plantPolygon ?? null,
           guardiaLat: cfg.guardiaLat ?? '',
           guardiaLng: cfg.guardiaLng ?? '',
-          apiKey: cfg.hasApiKey ? '********' : ''
+          apiKey: cfg.hasApiKey ? '********' : '',
+          approachRadiusMeters: cfg.approachRadiusMeters ?? 800
         }));
+        setSpeedKmh(knotsToKmh(cfg.minSpeedKnots ?? kmhToKnots(5)));
       } catch (err) {
-        setLoadError(err.message || 'No se pudo cargar la configuración GPS');
-        showError(err.message || 'No se pudo cargar GPS flota');
+        setLoadError(err.message || 'No se pudo cargar el mapa de vehículos');
+        showError(err.message || 'No se pudo cargar el mapa de vehículos');
       } finally {
         setLoading(false);
       }
@@ -101,31 +99,31 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
     fetchFleetGps();
   }, [currentUser, authToken, showError]);
 
-  const providerLabel = gpsProviderDisplayName(fleetGpsConfig);
+  useEffect(() => {
+    if (!pendingDraw) return;
+    fleetGpsMapRef.current?.startDraw(pendingDraw);
+  }, [pendingDraw, fleetGpsConfig.geofenceMode]);
 
-  const stats = useMemo(() => {
-    const gates = (fleetGpsConfig.gatePolygons || []).filter((g) => (g.points || []).length >= 3).length;
-    const plantOk = (fleetGpsConfig.plantPolygon?.points || []).length >= 3;
-    return {
-      enabled: Boolean(fleetGpsConfig.enabled),
-      mode: fleetGpsConfig.geofenceMode === 'polygon' ? 'Polígonos' : 'Círculos',
-      gates,
-      plantOk,
-      hasToken: Boolean(fleetGpsConfig.hasApiKey),
-      lastSyncAt: fleetGpsConfig.lastSyncAt,
-      lastError: fleetGpsConfig.lastError
-    };
-  }, [fleetGpsConfig]);
+  const vehicleCount = liveCount ?? fleetGpsTestResult?.vehicleCount ?? null;
+  const connected = Boolean(fleetGpsConfig.enabled && fleetGpsConfig.hasApiKey && !fleetGpsConfig.lastError);
+  const statusText = connected
+    ? `Conectado: ${vehicleCount == null ? '…' : vehicleCount} vehículos visibles`
+    : 'Sin conexión';
+
+  const startDraw = (target) => {
+    setFleetGpsConfig((prev) => ({ ...prev, geofenceMode: 'polygon' }));
+    setPendingDraw(target);
+  };
 
   const handleSaveFleetGps = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
     await runAction('saveFleetGps', async () => {
       try {
         const configToSave = {
           ...fleetGpsConfig,
           gatePolygons: normalizeGatePolygonsForSave(fleetGpsConfig.gatePolygons || [])
         };
-
+        const approachMeters = Number(configToSave.approachRadiusMeters) || 0;
         const saveBody = {
           enabled: configToSave.enabled,
           provider: 'ubika',
@@ -136,15 +134,15 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
           gateRadiusMeters: Number(configToSave.gateRadiusMeters) || 45,
           plantRadiusMeters: Number(configToSave.plantRadiusMeters) || 400,
           alertRadiusMeters: Number(configToSave.gateRadiusMeters) || 45,
-          minSpeedKnots: Number(configToSave.minSpeedKnots) || 0,
-          requireMotion: configToSave.requireMotion !== false,
+          minSpeedKnots: kmhToKnots(speedKmh),
+          requireMotion: Number(speedKmh) > 0,
           autoRegisterMovements: configToSave.autoRegisterMovements !== false,
           movementCooldownSeconds: Number(configToSave.movementCooldownSeconds) || 300,
           pollIntervalSeconds: Number(configToSave.pollIntervalSeconds) || 60,
           cloudSyncIntervalMinutes: Number(configToSave.cloudSyncIntervalMinutes) || 5,
-          approachAlertEnabled: configToSave.approachAlertEnabled === true,
-          approachRadiusMeters: Number(configToSave.approachRadiusMeters) || 400,
-          approachRequireMotion: configToSave.approachRequireMotion !== false
+          approachAlertEnabled: approachMeters > 0,
+          approachRadiusMeters: approachMeters || 800,
+          approachRequireMotion: Number(speedKmh) > 0
         };
 
         const data = await apiFetch('/admin/fleet-gps', {
@@ -156,16 +154,17 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
         setFleetGpsConfig((prev) => ({
           ...prev,
           ...cfg,
-          geofenceMode: cfg.geofenceMode || configToSave.geofenceMode || 'circle',
+          geofenceMode: cfg.geofenceMode || configToSave.geofenceMode || 'polygon',
           gatePolygons: normalizeGatePolygonsForSave(cfg.gatePolygons || configToSave.gatePolygons || []),
           plantPolygon: cfg.plantPolygon ?? configToSave.plantPolygon ?? prev.plantPolygon ?? null,
           guardiaLat: cfg.guardiaLat ?? '',
           guardiaLng: cfg.guardiaLng ?? '',
           apiKey: cfg.hasApiKey ? '********' : ''
         }));
-        showSuccess(`Configuración GPS ${providerLabel} guardada. Las geocercas del mapa se guardan aparte.`);
+        if (cfg.minSpeedKnots != null) setSpeedKmh(knotsToKmh(cfg.minSpeedKnots));
+        showSuccess('Reglas del mapa guardadas. El dibujo del portón se guarda con el botón del mapa.');
       } catch (err) {
-        showError(err.message || `Error al guardar GPS ${providerLabel}`);
+        showError(err.message || 'No se pudieron guardar las reglas');
       }
     });
   };
@@ -173,317 +172,239 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
   const handleTestFleetGps = async () => {
     await runAction('testFleetGps', async () => {
       try {
-        const data = await apiFetch('/admin/fleet-gps/test', {
-          method: 'POST',
-          token: authToken
-        });
+        const data = await apiFetch('/admin/fleet-gps/test', { method: 'POST', token: authToken });
         setFleetGpsTestResult(data);
+        if (data.vehicleCount != null) setLiveCount(Number(data.vehicleCount) || 0);
         setTestOpen(true);
-        if (data.error) {
-          showError(data.error);
-        } else {
-          showSuccess(data.message || `Conexión ${providerLabel} OK`);
-        }
+        if (data.error) showError(data.error);
+        else showSuccess(data.message || 'Conexión lista');
       } catch (err) {
         setFleetGpsTestResult(null);
         setTestOpen(false);
-        showError(err.message || `Error al probar GPS ${providerLabel}`);
+        showError(err.message || 'No se pudo probar la conexión');
       }
     });
   };
 
+  const gatesDrawn = useMemo(
+    () => (fleetGpsConfig.gatePolygons || []).filter((g) => (g.points || []).length >= 3).length,
+    [fleetGpsConfig.gatePolygons]
+  );
+  const plantDrawn = (fleetGpsConfig.plantPolygon?.points || []).length >= 3;
+
   if (!hasPermission(currentUser, 'access.control')) return null;
-
-  if (loading) {
-    return <AdminLoading label="Cargando GPS flota…" />;
-  }
-
+  if (loading) return <AdminLoading label="Cargando el mapa de vehículos…" />;
   if (loadError) {
     return (
       <AdminEmpty
-        icon={Satellite}
-        title="No se pudo cargar GPS flota"
+        title="No se pudo cargar el mapa"
         description={loadError}
       />
     );
   }
 
   return (
-    <div className="access-gps-admin">
-      <div className="access-gps-admin__stats" aria-label="Resumen GPS flota">
-        <div className={`access-gps-admin__stat${stats.enabled ? ' access-gps-admin__stat--ok' : ' access-gps-admin__stat--off'}`}>
-          <span className="access-gps-admin__stat-label">Monitoreo</span>
-          <strong className="access-gps-admin__stat-value">{stats.enabled ? 'Activo' : 'Apagado'}</strong>
-        </div>
-        <div className="access-gps-admin__stat">
-          <span className="access-gps-admin__stat-label">Geocerca</span>
-          <strong className="access-gps-admin__stat-value">{stats.mode}</strong>
-        </div>
-        <div className="access-gps-admin__stat">
-          <span className="access-gps-admin__stat-label">Portones</span>
-          <strong className="access-gps-admin__stat-value">{stats.gates}</strong>
-        </div>
-        <div className={`access-gps-admin__stat${stats.plantOk ? ' access-gps-admin__stat--ok' : ''}`}>
-          <span className="access-gps-admin__stat-label">Planta</span>
-          <strong className="access-gps-admin__stat-value">{stats.plantOk ? 'Polígono' : 'Por radio'}</strong>
-        </div>
-        <div className={`access-gps-admin__stat${stats.hasToken ? ' access-gps-admin__stat--ok' : ' access-gps-admin__stat--warn'}`}>
-          <span className="access-gps-admin__stat-label">Token</span>
-          <strong className="access-gps-admin__stat-value">{stats.hasToken ? 'OK' : 'Falta'}</strong>
-        </div>
-        {stats.lastSyncAt && (
-          <div className="access-gps-admin__stat access-gps-admin__stat--wide">
-            <span className="access-gps-admin__stat-label">Última sync</span>
-            <strong className="access-gps-admin__stat-value">{formatFleetTime(stats.lastSyncAt)}</strong>
-          </div>
+    <div className="access-gps-admin admin-simple">
+      <PageHeader
+        title="GPS de vehículos"
+        purpose="El mapa marca el portón y la planta para saber cuándo un vehículo entra o sale."
+        howTo={[
+          'Dibujá el portón y la planta sobre el mapa.',
+          'Ajustá a qué velocidad y a qué distancia se avisa.',
+          'Guardá. El dibujo se guarda aparte, en el mapa.'
+        ]}
+        action={(
+          <button type="button" className="btn btn-primary" onClick={handleSaveFleetGps}>
+            <Save size={16} />
+            Guardar
+          </button>
         )}
-        {stats.lastError && (
-          <div className="access-gps-admin__stat access-gps-admin__stat--warn access-gps-admin__stat--wide" title={stats.lastError}>
-            <span className="access-gps-admin__stat-label">Estado</span>
-            <strong className="access-gps-admin__stat-value">Último error</strong>
-          </div>
-        )}
+      />
+
+      <p className={`admin-simple-status${connected ? '' : ''}`} role="status">
+        {statusText}
+        {gatesDrawn ? ` · Portón dibujado` : ''}
+        {plantDrawn ? ' · Planta dibujada' : ''}
+      </p>
+
+      <div className="admin-simple-choice" style={{ marginBottom: '0.75rem' }}>
+        <button type="button" className="btn btn-secondary admin-simple-touch" onClick={() => startDraw('gate-1')}>
+          Dibujá el portón
+        </button>
+        <button type="button" className="btn btn-secondary admin-simple-touch" onClick={() => startDraw('plant')}>
+          Dibujá la planta
+        </button>
+        <button type="button" className="btn btn-secondary admin-simple-touch" onClick={handleTestFleetGps}>
+          Probar conexión
+        </button>
       </div>
 
-      <AdminBlock
-        title="Conexión y reglas"
-        description="Detecta tránsito en el portón (entrando/saliendo), no los móviles estacionados en planta."
-        action={(
-          <div className="access-gps-admin__block-actions">
-            <PendingButton
-              type="button"
-              actionId="testFleetGps"
-              pendingAction={pendingAction}
-              className="btn btn-secondary"
-              pendingLabel="Probando…"
-              onClick={handleTestFleetGps}
-            >
-              <ShieldCheck size={16} />
-              Probar conexión
-            </PendingButton>
-          </div>
-        )}
-      >
-        <AdminFormCard onSubmit={handleSaveFleetGps} className="access-gps-admin__form">
-          <div className="access-gps-admin__toggles">
-            <label className="access-gps-admin__check">
-              <input
-                type="checkbox"
-                checked={Boolean(fleetGpsConfig.enabled)}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
-              />
-              Habilitar monitoreo GPS en panel del guardia
-            </label>
-            <label className="access-gps-admin__check">
-              <input
-                type="checkbox"
-                checked={fleetGpsConfig.autoRegisterMovements !== false}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, autoRegisterMovements: e.target.checked }))}
-              />
-              Registrar automáticamente ingresos/egresos en el libro
-            </label>
-            <label className="access-gps-admin__check">
-              <input
-                type="checkbox"
-                checked={fleetGpsConfig.requireMotion !== false}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, requireMotion: e.target.checked }))}
-              />
-              Solo contar móviles en movimiento
-            </label>
-            <label className="access-gps-admin__check">
-              <input
-                type="checkbox"
-                checked={fleetGpsConfig.approachAlertEnabled === true}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, approachAlertEnabled: e.target.checked }))}
-              />
-              Alerta de acercamiento a planta (compatible con polígonos de portón)
-            </label>
-          </div>
-
-          <div className="access-gps-admin__grid">
-            <label className="access-gps-admin__field">
-              <span>Latitud guardia</span>
-              <input
-                type="number"
-                step="any"
-                value={fleetGpsConfig.guardiaLat}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, guardiaLat: e.target.value }))}
-                className="input-field"
-                placeholder="-31.420000"
-                required={fleetGpsConfig.enabled}
-              />
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Longitud guardia</span>
-              <input
-                type="number"
-                step="any"
-                value={fleetGpsConfig.guardiaLng}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, guardiaLng: e.target.value }))}
-                className="input-field"
-                placeholder="-64.180000"
-                required={fleetGpsConfig.enabled}
-              />
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Radio portón (m)</span>
-              <input
-                type="number"
-                min="15"
-                max="120"
-                value={fleetGpsConfig.gateRadiusMeters ?? fleetGpsConfig.alertRadiusMeters ?? 45}
-                onChange={(e) => setFleetGpsConfig((prev) => ({
-                  ...prev,
-                  gateRadiusMeters: Number(e.target.value),
-                  alertRadiusMeters: Number(e.target.value)
-                }))}
-                className="input-field"
-                disabled={fleetGpsConfig.geofenceMode === 'polygon'}
-              />
-              <small>
-                {fleetGpsConfig.geofenceMode === 'polygon'
-                  ? 'En modo polígonos se usa el dibujo del mapa.'
-                  : 'Zona de tránsito. Recomendado 35–50 m.'}
-              </small>
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Radio planta (m)</span>
-              <input
-                type="number"
-                min="80"
-                max="2000"
-                value={fleetGpsConfig.plantRadiusMeters ?? 400}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, plantRadiusMeters: Number(e.target.value) }))}
-                className="input-field"
-              />
-              <small>Respaldo si no hay polígono de planta.</small>
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Radio alerta llegada (m)</span>
-              <input
-                type="number"
-                min="100"
-                max="3000"
-                value={fleetGpsConfig.approachRadiusMeters ?? 400}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, approachRadiusMeters: Number(e.target.value) }))}
-                className="input-field"
-                disabled={!fleetGpsConfig.approachAlertEnabled}
-              />
-              <small>Avisa antes del cruce; el registro ocurre al pasar el portón.</small>
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Velocidad mínima (nudos)</span>
-              <input
-                type="number"
-                min="0"
-                max="20"
-                step="0.5"
-                value={fleetGpsConfig.minSpeedKnots ?? 1}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, minSpeedKnots: Number(e.target.value) }))}
-                className="input-field"
-              />
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Espera entre registros (seg)</span>
-              <input
-                type="number"
-                min="60"
-                max="3600"
-                value={fleetGpsConfig.movementCooldownSeconds ?? 300}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, movementCooldownSeconds: Number(e.target.value) }))}
-                className="input-field"
-              />
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Actualizar pantalla cada (seg)</span>
-              <input
-                type="number"
-                min="30"
-                max="300"
-                value={fleetGpsConfig.pollIntervalSeconds}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, pollIntervalSeconds: Number(e.target.value) }))}
-                className="input-field"
-              />
-              <small>Solo refresca lo que ya está guardado. No consulta {providerLabel}.</small>
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Consulta {providerLabel} cada (min)</span>
-              <input
-                type="number"
-                min="2"
-                max="30"
-                value={fleetGpsConfig.cloudSyncIntervalMinutes ?? 5}
-                onChange={(e) => setFleetGpsConfig((prev) => ({
-                  ...prev,
-                  cloudSyncIntervalMinutes: Number(e.target.value)
-                }))}
-                className="input-field"
-              />
-              <small>
-                Es el costo real. Cada 5 min alcanza para registrar el portón.
-                El servidor ya corre cada 5 min; este valor marca cuánto tiempo vale la foto guardada.
-              </small>
-            </label>
-            <label className="access-gps-admin__field">
-              <span>URL API {providerLabel}</span>
-              <input
-                type="text"
-                value={fleetGpsConfig.apiUrl}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, apiUrl: e.target.value }))}
-                className="input-field"
-                placeholder="https://ubika.rastreo.com.ar"
-              />
-            </label>
-            <label className="access-gps-admin__field">
-              <span>Token API</span>
-              <input
-                type="password"
-                value={fleetGpsConfig.apiKey}
-                onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, apiKey: e.target.value }))}
-                className="input-field"
-                placeholder={fleetGpsConfig.hasApiKey ? 'Token configurado' : 'Bearer token'}
-                autoComplete="off"
-              />
-            </label>
-          </div>
-
-          {stats.lastError && (
-            <p className="access-gps-admin__error">Último error de sync: {stats.lastError}</p>
-          )}
-
-          <div className="access-gps-admin__form-footer">
-            <p className="access-gps-admin__hint">
-              Este guardado es de conexión y reglas. Las geocercas se guardan en el mapa.
-            </p>
-            <PendingButton
-              type="submit"
-              actionId="saveFleetGps"
-              pendingAction={pendingAction}
-              className="btn btn-primary"
-              pendingLabel="Guardando…"
-            >
-              <Save size={16} />
-              Guardar configuración
-            </PendingButton>
-          </div>
-        </AdminFormCard>
-      </AdminBlock>
-
-      <AdminBlock
-        title="Mapa y geocercas"
-        description="Dibujá portones o ajustá radios. Guardá los cambios del mapa con el botón del propio mapa."
-      >
-        <LazyFleetGpsLiveMap
-          ref={fleetGpsMapRef}
-          authToken={authToken}
-          previewConfig={fleetGpsConfig}
-          active
-          editable
-          onGeofenceChange={(patch) => setFleetGpsConfig((prev) => ({ ...prev, ...patch }))}
-          onGeofenceSaved={() => showSuccess('Geocercas del mapa guardadas.')}
-          onGeofenceError={(message) => showError(message)}
+      <label className="admin-simple-sentence" style={{ marginBottom: '0.75rem' }}>
+        <input
+          type="checkbox"
+          checked={Boolean(fleetGpsConfig.enabled)}
+          onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
         />
-      </AdminBlock>
+        Usar el mapa en la pantalla del guardia
+      </label>
+
+      <LazyFleetGpsLiveMap
+        ref={fleetGpsMapRef}
+        authToken={authToken}
+        previewConfig={fleetGpsConfig}
+        active
+        editable
+        simpleMode
+        onSnapshot={onSnapshot}
+        onGeofenceChange={(patch) => setFleetGpsConfig((prev) => ({ ...prev, ...patch }))}
+        onGeofenceSaved={() => showSuccess('Dibujo del mapa guardado.')}
+        onGeofenceError={(message) => showError(message)}
+      />
+
+      <h3 className="admin-block__title" style={{ marginTop: '1.25rem' }}>Reglas</h3>
+      <p className="admin-simple-sentence">
+        Ignorar vehículos que van a menos de
+        <input
+          className="input-field"
+          aria-label="Velocidad mínima en kilómetros por hora"
+          type="number"
+          min="0"
+          max="40"
+          step="0.5"
+          value={speedKmh}
+          onChange={(e) => setSpeedKmh(e.target.value)}
+        />
+        km/h
+        <HelpTip text="Así no se anota un vehículo que está estacionado o apenas se mueve." />
+      </p>
+      <p className="admin-simple-sentence">
+        Avisar al guardia cuando un vehículo está a
+        <input
+          className="input-field"
+          aria-label="Distancia de aviso en metros"
+          type="number"
+          min="0"
+          max="3000"
+          value={fleetGpsConfig.approachRadiusMeters ?? 800}
+          onChange={(e) => setFleetGpsConfig((prev) => ({
+            ...prev,
+            approachRadiusMeters: Number(e.target.value)
+          }))}
+        />
+        metros del portón
+        <HelpTip text="El aviso llega antes de que el vehículo cruce. El ingreso se anota al pasar el portón. 0 apaga el aviso." />
+      </p>
+      <label className="admin-simple-sentence">
+        Registrar ingresos y egresos automáticamente
+        <select
+          className="input-field"
+          aria-label="Registrar ingresos y egresos automáticamente"
+          style={{ width: 'auto', minHeight: 44 }}
+          value={fleetGpsConfig.autoRegisterMovements !== false ? 'si' : 'no'}
+          onChange={(e) => setFleetGpsConfig((prev) => ({
+            ...prev,
+            autoRegisterMovements: e.target.value === 'si'
+          }))}
+        >
+          <option value="si">Sí</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+
+      <AdvancedSection title="Opciones avanzadas">
+        <p className="historial-meta">Datos para el instalador. No hace falta tocarlos el primer día.</p>
+        <label className="field-label">
+          URL del proveedor
+          <input
+            className="input-field"
+            aria-label="URL del proveedor"
+            value={fleetGpsConfig.apiUrl}
+            onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, apiUrl: e.target.value }))}
+          />
+        </label>
+        <label className="field-label">
+          Token
+          <input
+            className="input-field"
+            type="password"
+            aria-label="Token"
+            value={fleetGpsConfig.apiKey}
+            placeholder={fleetGpsConfig.hasApiKey ? 'Ya hay una clave guardada' : 'Clave del proveedor'}
+            onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, apiKey: e.target.value }))}
+            autoComplete="off"
+          />
+        </label>
+        <label className="field-label">
+          Consultar posiciones cada (minutos)
+          <input
+            className="input-field"
+            aria-label="Frecuencia de consulta en minutos"
+            type="number"
+            min="2"
+            max="30"
+            value={fleetGpsConfig.cloudSyncIntervalMinutes ?? 5}
+            onChange={(e) => setFleetGpsConfig((prev) => ({
+              ...prev,
+              cloudSyncIntervalMinutes: Number(e.target.value)
+            }))}
+          />
+        </label>
+        <label className="field-label">
+          Actualizar la pantalla cada (segundos)
+          <input
+            className="input-field"
+            aria-label="Segundos entre actualizaciones de pantalla"
+            type="number"
+            min="30"
+            max="300"
+            value={fleetGpsConfig.pollIntervalSeconds}
+            onChange={(e) => setFleetGpsConfig((prev) => ({
+              ...prev,
+              pollIntervalSeconds: Number(e.target.value)
+            }))}
+          />
+        </label>
+        <label className="field-label">
+          Latitud
+          <HelpTip text="Solo si el mapa no centra solo. Es un número, por ejemplo -31.42." />
+          <input
+            className="input-field"
+            aria-label="Latitud"
+            type="number"
+            step="any"
+            value={fleetGpsConfig.guardiaLat}
+            onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, guardiaLat: e.target.value }))}
+          />
+        </label>
+        <label className="field-label">
+          Longitud
+          <input
+            className="input-field"
+            aria-label="Longitud"
+            type="number"
+            step="any"
+            value={fleetGpsConfig.guardiaLng}
+            onChange={(e) => setFleetGpsConfig((prev) => ({ ...prev, guardiaLng: e.target.value }))}
+          />
+        </label>
+        <label className="field-label">
+          Esperar entre dos registros del mismo vehículo (segundos)
+          <input
+            className="input-field"
+            type="number"
+            min="60"
+            max="3600"
+            value={fleetGpsConfig.movementCooldownSeconds ?? 300}
+            onChange={(e) => setFleetGpsConfig((prev) => ({
+              ...prev,
+              movementCooldownSeconds: Number(e.target.value)
+            }))}
+          />
+        </label>
+        {fleetGpsConfig.lastError ? (
+          <p className="access-gps-admin__error">Último problema de conexión: {fleetGpsConfig.lastError}</p>
+        ) : null}
+      </AdvancedSection>
 
       {testOpen && fleetGpsTestResult && createPortal(
         <div className="admin-modal-backdrop" role="presentation" onClick={() => setTestOpen(false)}>
@@ -491,91 +412,50 @@ function AccessGpsAdminSection({ pendingAction, runAction }) {
             className="admin-modal admin-modal--wide access-gps-admin__test-modal"
             role="dialog"
             aria-modal="true"
-            aria-label={`Resultado prueba ${providerLabel}`}
+            aria-label="Resultado de la conexión"
             onClick={(e) => e.stopPropagation()}
           >
             <header className="access-gps-admin__modal-head">
               <div>
-                <h3 className="admin-modal-title">Resultado de conexión</h3>
+                <h3 className="admin-modal-title">Resultado de la conexión</h3>
                 <p className="theme-section-desc">
-                  {fleetGpsTestResult.error || fleetGpsTestResult.message || `Prueba ${providerLabel}`}
+                  {fleetGpsTestResult.error || fleetGpsTestResult.message || statusText}
                 </p>
               </div>
-              <button
-                type="button"
-                className="estaciones-admin__icon-btn"
-                onClick={() => setTestOpen(false)}
-                aria-label="Cerrar"
-              >
+              <button type="button" className="estaciones-admin__icon-btn" onClick={() => setTestOpen(false)} aria-label="Cerrar">
                 <X size={16} />
               </button>
             </header>
-
             <div className="fleet-gps-summary">
               <div className="fleet-gps-summary__card">
-                <span className="fleet-gps-summary__label">Flota total</span>
+                <span className="fleet-gps-summary__label">Vehículos visibles</span>
                 <span className="fleet-gps-summary__value">{fleetGpsTestResult.vehicleCount ?? '—'}</span>
               </div>
-              <div className={`fleet-gps-summary__card${(fleetGpsTestResult.transit || fleetGpsTestResult.alerts || []).length ? ' fleet-gps-summary__card--alert' : ''}`}>
-                <span className="fleet-gps-summary__label">En tránsito</span>
+              <div className="fleet-gps-summary__card">
+                <span className="fleet-gps-summary__label">En el portón</span>
                 <span className="fleet-gps-summary__value">{(fleetGpsTestResult.transit || fleetGpsTestResult.alerts || []).length}</span>
               </div>
-              <div className="fleet-gps-summary__card">
-                <span className="fleet-gps-summary__label">En planta quietos</span>
-                <span className="fleet-gps-summary__value">{(fleetGpsTestResult.inPlant || []).length}</span>
-              </div>
-              <div className="fleet-gps-summary__card fleet-gps-summary__card--wide">
-                <span className="fleet-gps-summary__label">Radios</span>
-                <span className="fleet-gps-summary__text">
-                  Portón {fleetGpsTestResult.gateRadiusMeters || fleetGpsConfig.gateRadiusMeters || 45} m
-                  {' · '}
-                  Planta {fleetGpsTestResult.plantRadiusMeters || fleetGpsConfig.plantRadiusMeters || 400} m
-                </span>
-                {fleetGpsTestResult.config?.lastSyncAt && (
-                  <span className="fleet-gps-summary__meta">
-                    Sync {formatFleetTime(fleetGpsTestResult.config.lastSyncAt)}
-                  </span>
-                )}
-              </div>
             </div>
-
             {(fleetGpsTestResult.transit || fleetGpsTestResult.alerts || []).length > 0 ? (
-              <>
-                <h4 className="fleet-gps-section-title">Tránsito en portón</h4>
-                <FleetGpsVehicleTable
-                  vehicles={(fleetGpsTestResult.transit || fleetGpsTestResult.alerts).map((item) => ({
-                    ...item,
-                    name: `${item.directionLabel || item.direction || ''}: ${item.name}`
-                  }))}
-                  radiusMeters={Number(fleetGpsTestResult.gateRadiusMeters || fleetGpsConfig.gateRadiusMeters) || 45}
-                />
-              </>
+              <FleetGpsVehicleTable
+                vehicles={(fleetGpsTestResult.transit || fleetGpsTestResult.alerts).map((item) => ({
+                  ...item,
+                  name: `${item.directionLabel || item.direction || ''}: ${item.name}`
+                }))}
+                radiusMeters={Number(fleetGpsConfig.gateRadiusMeters) || 45}
+              />
             ) : (
-              <>
-                <h4 className="fleet-gps-section-title">Más cercanos al portón</h4>
-                <FleetGpsVehicleTable
-                  vehicles={fleetGpsTestResult.nearest || []}
-                  radiusMeters={Number(fleetGpsTestResult.gateRadiusMeters || fleetGpsConfig.gateRadiusMeters) || 45}
-                  emptyMessage="No se obtuvieron posiciones de la flota"
-                />
-              </>
+              <FleetGpsVehicleTable
+                vehicles={fleetGpsTestResult.nearest || []}
+                radiusMeters={Number(fleetGpsConfig.gateRadiusMeters) || 45}
+                emptyMessage="No llegaron posiciones de vehículos"
+              />
             )}
-
+            {fleetGpsTestResult.config?.lastSyncAt ? (
+              <p className="historial-meta">Última actualización {formatFleetTime(fleetGpsTestResult.config.lastSyncAt)}</p>
+            ) : null}
             <div className="estaciones-admin__modal-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setTestOpen(false)}>
-                Cerrar
-              </button>
-              <PendingButton
-                type="button"
-                actionId="testFleetGps"
-                pendingAction={pendingAction}
-                className="btn btn-primary"
-                pendingLabel="Probando…"
-                onClick={handleTestFleetGps}
-              >
-                <ShieldCheck size={16} />
-                Probar de nuevo
-              </PendingButton>
+              <button type="button" className="btn btn-secondary" onClick={() => setTestOpen(false)}>Cerrar</button>
             </div>
           </div>
         </div>,

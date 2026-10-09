@@ -1,8 +1,6 @@
-import { DEFAULT_GPS_PROVIDER_DISPLAY_NAME } from '../../utils/gpsProviderLabel';
-
 export const ADMIN_SECTION_META = {
   users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
-  access: { title: `GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`, description: 'Conexión, reglas de tránsito y geocercas del mapa en vivo.' },
+  access: { title: 'GPS de vehículos', description: 'Mapa del portón y de la planta, y cuándo se avisa al guardia.' },
   equiposAcceso: {
     title: 'Sistemas',
     description: 'Equipos del sitio, puertas y la forma anterior de instalar.'
