@@ -145,4 +145,12 @@ describe('hub: resumen vivo', { skip: k.SKIP }, () => {
     assert.equal(presenceOf('pass:QR-1'), undefined);
     assert.equal(built.hub.live.passState()['QR-1'].status, 'egreso_registrado');
   });
+
+  it('alarmas con la forma del controlador (type alarm + reason + state)', () => {
+    const row = () => built.hub.edge.db.get("SELECT type, state FROM alarms WHERE id = 'lock_fault:p2'");
+    ingest(ev({ type: 'alarm', doorId: 'p2', reason: 'lock_fault', payload: { state: 'raised', detail: 'traba_no_engancho' } }));
+    assert.deepEqual({ ...row() }, { type: 'lock_fault', state: 'active' });
+    ingest(ev({ type: 'alarm', doorId: 'p2', reason: 'lock_fault', payload: { state: 'cleared' } }));
+    assert.equal(row().state, 'cleared');
+  });
 });

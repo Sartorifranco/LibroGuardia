@@ -15,8 +15,9 @@
  *    Sin stateEffects (eventos viejos) se deriva de `door.sides[side].zoneTo`. Puertas con `sides`
  *    en forma array no tienen áreas → sin presencia.
  *  - type 'door_state' con `payload.state` (o `state`) → door_state. SEGURA restaura held_open/door_forced.
- *  - alarmas: type en ALARM_TYPES o `payload.alarm === true` → alarms (id `${type}:${doorId|deviceId}`).
- *  - type 'alarm_clear' con `payload.alarmType` → alarma 'cleared'.
+ *  - alarmas: contrato del controlador `type:'alarm'`, `reason:<tipo>`, `payload.state:'raised'|'cleared'`;
+ *    también type en ALARM_TYPES o `payload.alarm === true` → alarms (id `${tipo}:${doorId|deviceId}`).
+ *  - type 'alarm_clear' con `payload.alarmType` (o 'alarm' con state 'cleared') → alarma 'cleared'.
  *
  * Subida a la nube: como mucho 1 vez cada 60 s y solo si el resumen cambió (hash persistido).
  */
@@ -25,18 +26,32 @@ const crypto = require('crypto');
 const { readMeta, writeMeta } = require('../lib/db/migrations');
 const { canonicalJson } = require('../lib/db/chunkStore');
 
+// Mantener en sincronía con functions/lib/edgeIngest.js ALARM_TYPES.
 const ALARM_TYPES = new Set([
   'door_forced', 'held_open', 'lock_fault', 'duress', 'device_offline', 'tamper',
-  'apertura_forzada_estanco', 'hub_offline', 'config_stale'
+  'apertura_forzada_estanco', 'hub_offline', 'config_stale', 'emergency', 'interlock_violation',
+  'credential_key_missing'
 ]);
 const RESTORED_BY_SECURE = new Set(['door_forced', 'held_open']);
+
+/** Tipo de alarma del evento o null. */
+function alarmTypeOf(e) {
+  if (e.type === 'alarm') return e.reason || 'alarm';
+  if (ALARM_TYPES.has(e.type) || Boolean(e.payload && e.payload.alarm === true)) return e.type;
+  return null;
+}
+
+function isAlarmCleared(e) {
+  return e.type === 'alarm' && e.payload && e.payload.state === 'cleared';
+}
 const MOVEMENTS = 50;
 const PEOPLE_PER_AREA = 200;
 
 const e2id = (id) => (id === undefined ? null : id);
 
+/** ¿Alarma que se levanta? (un 'cleared' no dispara subida inmediata). */
 function isAlarmEvent(e) {
-  return ALARM_TYPES.has(e.type) || Boolean(e.payload && e.payload.alarm === true);
+  return Boolean(alarmTypeOf(e)) && !isAlarmCleared(e);
 }
 
 class LiveState {
@@ -64,6 +79,8 @@ class LiveState {
         if (isAlarmEvent(e)) {
           alarm = true;
           this.raiseAlarm(e);
+        } else if (isAlarmCleared(e)) {
+          this.clearAlarm({ ...e, payload: { ...e.payload, alarmType: alarmTypeOf(e) } });
         }
         if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant') {
           const fx = e.payload && e.payload.stateEffects;
@@ -78,7 +95,8 @@ class LiveState {
   }
 
   raiseAlarm(e) {
-    const id = `${e.type}:${e.doorId || e.deviceId}`;
+    const type = alarmTypeOf(e) || e.type;
+    const id = `${type}:${e.doorId || e.deviceId}`;
     const ts = Number(e.ts) || this.now();
     const row = this.db.get('SELECT state FROM alarms WHERE id = ?', id);
     if (!row || row.state === 'cleared') {
@@ -86,7 +104,7 @@ class LiveState {
         `INSERT INTO alarms(id, type, door_id, state, first_ts, last_ts, count) VALUES (?, ?, ?, 'active', ?, ?, 1)
          ON CONFLICT(id) DO UPDATE SET state = 'active', first_ts = excluded.first_ts, last_ts = excluded.last_ts,
            count = 1, ack_by = NULL, ack_note = NULL`,
-        id, e.type, e.doorId ?? null, ts, ts
+        id, type, e.doorId ?? null, ts, ts
       );
     } else {
       this.db.run("UPDATE alarms SET state = 'active', last_ts = MAX(last_ts, ?), count = count + 1 WHERE id = ?", ts, id);
@@ -275,4 +293,4 @@ class LiveState {
   }
 }
 
-module.exports = { LiveState, ALARM_TYPES, isAlarmEvent };
+module.exports = { LiveState, ALARM_TYPES, isAlarmEvent, alarmTypeOf };

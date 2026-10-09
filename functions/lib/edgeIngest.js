@@ -26,7 +26,12 @@ const COMMAND_TTL_MS = 45 * 1000;
 const MAX_LIVE_SUMMARY_BYTES = 64 * 1024;
 const MAX_CHUNK_NAMES = 80;
 
-/** Tipos de evento que proyectan una alarma (§5). */
+/**
+ * Tipos de alarma (§5). Mantener en sincronía con scripts/edge/hub/liveState.js ALARM_TYPES.
+ * Contrato del controlador (scripts/edge/controller/controller.js onDoorEffect): las alarmas
+ * llegan como `type:'alarm'`, `reason:<tipo>`, `payload.state:'raised'|'cleared'`. También se
+ * aceptan eventos cuyo `type` ya es el tipo de alarma (hub, BioStar).
+ */
 const ALARM_TYPES = new Set([
   'door_forced',
   'held_open',
@@ -34,8 +39,18 @@ const ALARM_TYPES = new Set([
   'interlock_violation',
   'device_offline',
   'lock_fault',
-  'emergency'
+  'emergency',
+  'tamper',
+  'hub_offline',
+  'config_stale',
+  'credential_key_missing'
 ]);
+
+/** Tipo de alarma del evento (o null si no es alarma). */
+const alarmTypeOf = (ev) => {
+  if (ev.type === 'alarm') return ev.reason || 'alarm';
+  return ALARM_TYPES.has(ev.type) ? ev.type : null;
+};
 
 /**
  * Alarmas críticas → mail (D20: solo email). Valor = tipo de evento de lib/notifications.
@@ -100,7 +115,7 @@ const normalizeEvent = (raw, index) => {
   };
 };
 
-const isGrantedMovement = (ev) => ev.decision === 'grant' && !ALARM_TYPES.has(ev.type);
+const isGrantedMovement = (ev) => ev.decision === 'grant' && !alarmTypeOf(ev);
 
 const maskIdNumber = (ev) => {
   const p = ev.payload || {};
@@ -149,31 +164,40 @@ const buildEntryDoc = (ev, { siteId, hubId }) => {
   };
 };
 
-const alarmIdFor = (ev, hubId) => safeIdPart(ev.payload?.alarmId || `${hubId}_${ev.id}`);
+/**
+ * Un doc por (tipo, puerta|equipo): el 'cleared' del controlador cierra el mismo doc que abrió
+ * el 'raised'. `payload.alarmId` explícito manda.
+ */
+const alarmIdFor = (ev, hubId) => safeIdPart(
+  ev.payload?.alarmId || `${hubId}_${alarmTypeOf(ev)}_${ev.doorId || ev.deviceId || 'sitio'}`
+);
+
+const ALARM_STATE = { raised: 'active', active: 'active', cleared: 'cleared', restored: 'cleared', acked: 'acked' };
 
 const buildAlarmDoc = (ev, { siteId, hubId }) => {
   const p = ev.payload || {};
-  const state = ['active', 'cleared', 'acked'].includes(p.state) ? p.state : 'active';
+  const state = ALARM_STATE[p.state] || 'active';
+  const type = alarmTypeOf(ev);
   return {
     siteId,
-    type: ev.type,
+    type,
     doorId: ev.doorId || null,
     deviceId: p.deviceId || ev.deviceId || null,
     hubId,
     state,
-    critical: Object.prototype.hasOwnProperty.call(CRITICAL_ALARM_NOTIFY, ev.type),
+    critical: Object.prototype.hasOwnProperty.call(CRITICAL_ALARM_NOTIFY, type),
     firstTs: Number(p.firstTs) || ev.ts,
     lastTs: Number(p.lastTs) || ev.ts,
     count: Number.isFinite(Number(p.count)) ? Number(p.count) : 1,
     eventId: ev.id,
     cardholderId: ev.cardholderId || null,
-    message: p.message ? String(p.message).slice(0, 300) : null,
+    message: p.message ? String(p.message).slice(0, 300) : (p.detail ? String(p.detail).slice(0, 300) : null),
     updatedAt: FieldValue.serverTimestamp()
   };
 };
 
 const notifyCriticalAlarm = (notifySafe, ev, alarm) => {
-  const eventType = CRITICAL_ALARM_NOTIFY[ev.type];
+  const eventType = CRITICAL_ALARM_NOTIFY[alarm.type];
   if (!eventType || alarm.state !== 'active' || typeof notifySafe !== 'function') return false;
   const p = ev.payload || {};
   const at = new Date(ev.ts).toISOString();
@@ -183,7 +207,7 @@ const notifyCriticalAlarm = (notifySafe, ev, alarm) => {
     notifySafe(eventType, { name: p.name || alarm.deviceId, id: alarm.deviceId, kind: 'edge', lastAt: at });
   } else if (eventType === 'edge_alarm') {
     notifySafe(eventType, {
-      alarmType: ev.type,
+      alarmType: alarm.type,
       doorId: ev.doorId || null,
       doorName: p.doorName || null,
       deviceId: alarm.deviceId || ev.deviceId || null,
@@ -246,7 +270,7 @@ const ingestEventBatch = async ({ siteId, hubId, body = {}, notifySafe = null, n
   let entries = 0;
   const alarms = [];
   normalized.forEach((ev) => {
-    if (ALARM_TYPES.has(ev.type)) {
+    if (alarmTypeOf(ev)) {
       const alarm = buildAlarmDoc(ev, { siteId, hubId });
       batch.set(site.collection('alarms').doc(alarmIdFor(ev, hubId)), alarm, { merge: true });
       alarms.push({ ev, alarm });
@@ -624,7 +648,7 @@ const readHead = async (siteId) => {
     publicKey = await compiler.getSigningPublicKey();
   }
   const keyId = (publicKey && typeof publicKey === 'object' ? publicKey.keyId : null) || head?.keyId || null;
-  const pem = publicKey && typeof publicKey === 'object' ? (publicKey.publicKey || publicKey.pem || null)
+  const pem = publicKey && typeof publicKey === 'object' ? (publicKey.publicKeyPem || publicKey.publicKey || publicKey.pem || null)
     : (typeof publicKey === 'string' ? publicKey : null);
   return { siteId, head: head || null, keyId, publicKey: pem, pendingCommands };
 };
@@ -654,6 +678,7 @@ module.exports = {
   HEARTBEAT_MIN_WRITE_INTERVAL_MS,
   COMMAND_TTL_MS,
   ALARM_TYPES,
+  alarmTypeOf,
   CRITICAL_ALARM_NOTIFY,
   journalDocId,
   normalizeEvent,

@@ -6,7 +6,9 @@
  * Autenticación del equipo:
  *   POST /api/edge/v1/token { deviceId, ts, signature, refreshToken }
  *     signature = base64(Ed25519(`mss-edge-token\n${deviceId}\n${ts}`)) con la clave del equipo
- *   → { token (JWT 1 h), refreshToken (rotado), firebaseCustomToken }
+ *   → { token (JWT 1 h), refreshToken (rotado), firebaseToken (custom token, solo hub) }
+ *   Si se pierde la respuesta (corte justo después de rotar), la nube acepta UNA vez el refresh
+ *   anterior dentro de 5 min (gracia de rotación, functions/lib/devices.js).
  * El refresh token rotado se guarda cifrado en `meta` ANTES de usar el JWT nuevo.
  * El primer refresh token sale del enrolamiento (config `cloud.refreshToken`, solo si la base no tiene uno).
  *
@@ -118,7 +120,9 @@ class CloudClient {
     if (data.refreshToken && data.refreshToken !== refreshToken) this.secrets.set('refreshToken', data.refreshToken);
     this.token = data.token;
     this.tokenExp = jwtExpMs(data.token) || (ts + (Number(data.expiresIn) || 3600) * 1000);
-    if (data.firebaseCustomToken) this.firebaseCustomToken = data.firebaseCustomToken; // fase 2: listener Firestore
+    // La nube (functions/lib/devices.js) lo devuelve como `firebaseToken`; se acepta el nombre viejo.
+    const fbToken = data.firebaseToken || data.firebaseCustomToken;
+    if (fbToken) this.firebaseCustomToken = fbToken; // fase 2: listener Firestore
     return this.token;
   }
 
