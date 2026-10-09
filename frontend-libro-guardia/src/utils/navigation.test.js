@@ -25,6 +25,7 @@ describe('navigation routes', () => {
     expect(adminPath('lectores')).toBe('/admin/equipos-acceso');
     expect(adminPath('visitas')).toBe('/admin/visitas');
     expect(adminPath('appearance')).toBe('/admin/appearance');
+    expect(adminPath('negocioAccesos')).toBe('/admin/accesos');
   });
 
   test('segmentos se mapean de vuelta a tabs/secciones', () => {
@@ -40,6 +41,7 @@ describe('navigation routes', () => {
     expect(sectionFromAdminSegment('citaciones')).toBe('citaciones');
     expect(sectionFromAdminSegment('visitas')).toBe('visitas');
     expect(sectionFromAdminSegment('appearance')).toBe('appearance');
+    expect(sectionFromAdminSegment('accesos')).toBe('negocioAccesos');
   });
 
   test('resolveHomePath según permisos', () => {
@@ -81,6 +83,9 @@ describe('navigation routes', () => {
     // Deep-link: segmento válido no depende del default
     expect(sectionFromAdminSegment('doors')).toBe('equiposAcceso');
     expect(adminPath('doors')).toBe('/admin/equipos-acceso');
+
+    const soloAccesos = { role: 'custom', permissions: ['access.groups.manage'] };
+    expect(getDefaultAdminSection(soloAccesos)).toBe('negocioAccesos');
   });
 
   test('guardia, supervisor y monitoreo usan las mismas etiquetas de menú', () => {

@@ -42,7 +42,9 @@ export const PERMISSION_LABELS = {
   'visitas.create': 'Cargar visitas autorizadas (sin aprobación)',
   'visitas.request': 'Solicitar visita (queda pendiente de aprobación)',
   'visitas.approve': 'Aprobar o rechazar solicitudes de visita',
-  'visitas.view.own': 'Ver solo mis visitas cargadas'
+  'visitas.view.own': 'Ver solo mis visitas cargadas',
+  'access.groups.manage': 'Gestionar grupos, horarios y feriados',
+  'personas.puertas.asignar': 'Asignar grupos y acceso total a personas'
 };
 
 /** Agrupación de permisos para la UI de roles (nombres de uso diario). */
@@ -92,7 +94,9 @@ export const PERMISSION_CATEGORIES = [
       'puertas.estanco.forzar',
       'access.manual_override',
       'monitoring.doors.panel',
-      'guard.doors.panel'
+      'guard.doors.panel',
+      'access.groups.manage',
+      'personas.puertas.asignar'
     ]
   },
   {
@@ -192,7 +196,9 @@ export const ROLE_TEMPLATES = {
       'access.kiosk',
       'access.exceptional_entry',
       'attendance.alerts.read',
-      'visitas.approve'
+      'visitas.approve',
+      'access.groups.manage',
+      'personas.puertas.asignar'
     ]
   },
   monitoreo: {
@@ -282,7 +288,9 @@ export const canAccessAdmin = (user) =>
   hasPermission(user, 'empresas.manage') ||
   hasPermission(user, 'destinos.manage') ||
   hasPermission(user, 'lectores.manage') ||
-  hasPermission(user, 'visitas.approve');
+  hasPermission(user, 'visitas.approve') ||
+  hasPermission(user, 'access.groups.manage') ||
+  hasPermission(user, 'personas.puertas.asignar');
 
 /**
  * Árbol operativo /guardia (sidebar de operación, no panel admin).
