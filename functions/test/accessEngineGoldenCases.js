@@ -196,6 +196,10 @@ const CASES = [
     state: { doorStates: { D1: { state: 'ABIERTA_AUT', dps: 'open' } } },
     expect: ['deny', 'puerta_no_autorizada'],
     check: (r) => assert.ok(r.warnings.includes('intento_con_puerta_abierta')) },
+  { name: 'puerta destrabada sin hoja abierta: quien no está autorizado lleva el mismo aviso', credential: dni('20000003'), doorId: 'D1',
+    state: { doorStates: { D1: { state: 'DESBLOQUEADA' } } },
+    expect: ['deny', 'puerta_no_autorizada'],
+    check: (r) => assert.ok(r.warnings.includes('intento_con_puerta_abierta')) },
 
   // ── 7. Anti-passback ──
   { name: 'APB duro: ya figura adentro', credential: dni('20000001'), doorId: 'D1', overrides: { policy: { apbMode: 'hard' } },

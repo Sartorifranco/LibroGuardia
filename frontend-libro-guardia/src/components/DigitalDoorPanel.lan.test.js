@@ -93,7 +93,7 @@ describe('puertas en planta y apertura remota', () => {
     global.EventSource = originalEventSource;
   });
 
-  test('un evento en vivo pasa la puerta de Cerrada a Abierta', async () => {
+  test('un evento en vivo pasa la puerta de Cerrada a Destrabada y luego a Abierta', async () => {
     global.fetch = jest.fn(async (url) => {
       const path = String(url);
       if (path.includes('/runtime')) {
@@ -133,8 +133,22 @@ describe('puertas en planta y apertura remota', () => {
       });
     });
 
-    expect(screen.getByText('Abierta')).toBeInTheDocument();
+    expect(screen.getByText('Destrabada')).toBeInTheDocument();
+    expect(screen.getByText('Destrabada').closest('[role="status"]')).toHaveClass('door-live--open');
     expect(screen.queryByText('Cerrada')).not.toBeInTheDocument();
+
+    act(() => {
+      source.emit('door', {
+        doorId: 'd1',
+        state: 'ABIERTA_AUT',
+        dps: 'open',
+        bond: 'released',
+        since: 1
+      });
+    });
+
+    expect(screen.getByText('Abierta')).toBeInTheDocument();
+    expect(screen.queryByText('Destrabada')).not.toBeInTheDocument();
   });
 
   test('la apertura remota consulta el comando hasta que termina', async () => {
