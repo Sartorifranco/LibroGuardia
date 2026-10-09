@@ -9,7 +9,7 @@ export const isDoorAccessEntry = (entry = {}) => {
   if (entry.type !== 'personal') return false;
   if (entry.doorId) return true;
   const source = String(entry.entrySource || '').toLowerCase();
-  return source === 'kiosk' || source === 'molinete' || source === 'reader';
+  return source === 'kiosk' || source === 'molinete' || source === 'reader' || source === 'edge';
 };
 
 /** Carga manual de personal sin puerta (formulario / excepcional sin doorId). */
@@ -74,7 +74,8 @@ export const resolveDoorName = (entry = {}, doorNamesById = {}) => {
 
 export const formatDoorAccessPhrase = (entry = {}, doorNamesById = {}) => {
   const name = entry.name || entry.nameSnapshot || 'Persona';
-  const verb = entry.movementType === 'egreso' ? 'egresó' : 'ingresó';
+  const movement = String(entry.movementType || entry.tipoMovimiento || '').toLowerCase();
+  const verb = movement.includes('egreso') ? 'egresó' : 'ingresó';
   const door = resolveDoorName(entry, doorNamesById);
   return { name, verb, door, phrase: `${name} ${verb} por ${door}` };
 };
@@ -83,6 +84,7 @@ export const formatDoorAccessPhrase = (entry = {}, doorNamesById = {}) => {
 export const resolveDoorEntryOrigin = (entry = {}) => {
   const source = String(entry.entrySource || '').toLowerCase();
   if (source === 'biostar') return 'biostar';
+  if (source === 'edge') return 'edge';
   if (source === 'kiosk' || source === 'molinete' || source === 'reader') return 'kiosk';
   if (entry.doorId && !source) return 'kiosk';
   return 'manual';
@@ -92,6 +94,7 @@ export const DOOR_ENTRY_ORIGIN_FILTERS = [
   { id: 'all', label: 'Todos los orígenes' },
   { id: 'biostar', label: 'Lector biométrico' },
   { id: 'kiosk', label: 'Lector' },
+  { id: 'edge', label: 'Red local' },
   { id: 'manual', label: 'Manual con puerta' }
 ];
 

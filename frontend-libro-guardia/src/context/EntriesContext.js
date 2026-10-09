@@ -11,7 +11,9 @@ import { apiFetch } from '../services/api';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { useOfflineQueue } from './OfflineQueueContext';
+import { useHubLive } from './HubLiveContext';
 import { toLocalYmd } from '../utils/historialFilters';
+import { entryIdentity, normalizeAccessEntry } from '../utils/accessEventText';
 import usePolling from '../hooks/usePolling';
 
 const EntriesContext = createContext(null);
@@ -29,6 +31,7 @@ export function EntriesProvider({ children }) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
   const { enqueueEntry } = useOfflineQueue();
+  const { subscribe } = useHubLive();
   const [entries, setEntries] = useState([]);
   const [entriesLoading, setEntriesLoading] = useState(false);
   const [entriesRefreshFailed, setEntriesRefreshFailed] = useState(false);
@@ -53,7 +56,7 @@ export function EntriesProvider({ children }) {
         limit: '200'
       });
       const data = await apiFetch(`/entries?${params.toString()}`, { token: authToken });
-      const next = data.entries || [];
+      const next = (data.entries || []).map(normalizeAccessEntry);
       setEntries(next);
       setEntriesUpdatedAt(new Date());
       setEntriesRefreshFailed(false);
@@ -117,6 +120,18 @@ export function EntriesProvider({ children }) {
     if (st.trailing) clearTimeout(st.trailing);
     st.trailing = null;
   }, []);
+
+  useEffect(() => subscribe((event) => {
+    if (event.type !== 'access' || !event.data) return;
+    const entry = normalizeAccessEntry(event.data.entry || event.data);
+    const key = entryIdentity(entry);
+    setEntries((prev) => {
+      if (prev.some((item) => entryIdentity(item) === key)) return prev;
+      return [entry, ...prev].slice(0, 200);
+    });
+    setEntriesUpdatedAt(new Date());
+    setEntriesRefreshFailed(false);
+  }), [subscribe]);
 
   const pollEntries = useCallback(() => reloadEntries(true), [reloadEntries]);
   // Pausa con la pestaña oculta; backoff 15 s → 60 s si falla.
