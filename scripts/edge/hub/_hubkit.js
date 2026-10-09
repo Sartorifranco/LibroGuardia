@@ -90,7 +90,7 @@ async function startFakeCloud({ hubPublicKey, refreshToken = 'rt-0', deviceId = 
       cloud.usedRefreshTokens.push(cloud.refreshToken);
       cloud.refreshToken = `rt-${cloud.tokenCalls}`;
       cloud.token = `${fakeJwt(Date.now() + 3600 * 1000)}${cloud.tokenCalls}`;
-      return send(res, 200, { token: cloud.token, refreshToken: cloud.refreshToken, firebaseCustomToken: 'fb-custom' });
+      return send(res, 200, { token: cloud.token, refreshToken: cloud.refreshToken, firebaseToken: 'fb-custom' });
     }
     if (req.headers.authorization !== `Bearer ${cloud.token}`) return send(res, 401, { code: 'UNAUTHENTICATED' });
     if (p === '/api/edge/v1/head') {

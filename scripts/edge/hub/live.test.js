@@ -112,4 +112,45 @@ describe('hub: resumen vivo', { skip: k.SKIP }, () => {
     assert.equal(cloud.lives.at(-1).alarms.some((a) => a.type === 'door_forced'), true);
     if (built.hub.uploader.running) await built.hub.uploader.running;
   });
+
+  it('aplica los stateEffects del controlador: presencia por zoneTo, salida al exterior y cierre del pase', () => {
+    const presenceOf = (key) => built.hub.edge.db.get('SELECT area_id FROM presence WHERE cardholder_id = ?', key);
+    // Persona: el motor dice planta (aunque la puerta no tenga sides como objeto).
+    ingest(ev({
+      type: 'access', decision: 'grant', doorId: 'p3', side: 'in', cardholderId: 'ana',
+      payload: { stateEffects: { presence: { ana: { areaId: 'planta', ts: t } } } }
+    }));
+    assert.equal(presenceOf('ana').area_id, 'planta');
+    // Salida a un área marcada exterior → deja de estar en el sitio.
+    ingest(ev({
+      type: 'access', decision: 'grant', doorId: 'p3', side: 'out', cardholderId: 'ana',
+      payload: { stateEffects: { presence: { ana: { areaId: 'exterior', ts: t + 1 } } } }
+    }));
+    assert.equal(presenceOf('ana'), undefined);
+    // Visita con pase: ingreso registra presencia 'pass:<id>' y estado del pase.
+    ingest(ev({
+      type: 'access', decision: 'grant', doorId: 'p1', side: 'in', cardholderId: null,
+      payload: { passId: 'QR-1', stateEffects: { presence: { 'pass:QR-1': { areaId: 'estanco', ts: t } }, pass: { id: 'QR-1', status: 'ingreso_registrado', usesDelta: 1 } } }
+    }));
+    assert.equal(presenceOf('pass:QR-1').area_id, 'estanco');
+    assert.deepEqual(
+      (({ status, uses }) => ({ status, uses }))(built.hub.live.passState()['QR-1']),
+      { status: 'ingreso_registrado', uses: 1 }
+    );
+    // Egreso hacia el exterior: cierra el pase y borra su presencia.
+    ingest(ev({
+      type: 'access', decision: 'grant', doorId: 'p1', side: 'out', cardholderId: null,
+      payload: { passId: 'QR-1', stateEffects: { presence: { 'pass:QR-1': { areaId: 'exterior', ts: t + 2 } }, pass: { id: 'QR-1', status: 'egreso_registrado' } } }
+    }));
+    assert.equal(presenceOf('pass:QR-1'), undefined);
+    assert.equal(built.hub.live.passState()['QR-1'].status, 'egreso_registrado');
+  });
+
+  it('alarmas con la forma del controlador (type alarm + reason + state)', () => {
+    const row = () => built.hub.edge.db.get("SELECT type, state FROM alarms WHERE id = 'lock_fault:p2'");
+    ingest(ev({ type: 'alarm', doorId: 'p2', reason: 'lock_fault', payload: { state: 'raised', detail: 'traba_no_engancho' } }));
+    assert.deepEqual({ ...row() }, { type: 'lock_fault', state: 'active' });
+    ingest(ev({ type: 'alarm', doorId: 'p2', reason: 'lock_fault', payload: { state: 'cleared' } }));
+    assert.equal(row().state, 'cleared');
+  });
 });

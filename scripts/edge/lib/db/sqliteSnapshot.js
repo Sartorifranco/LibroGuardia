@@ -6,7 +6,7 @@
  *
  *   findCredential(type, valueHash) cardholder(id) rightsFor(cardholderId, doorId)
  *   schedule(id) isHoliday(ymd, setId) door(id) interlockGroup(doorId) pass(qrIdOrDni)
- *   isRevoked(id) policy()
+ *   isRevoked(id) policy() credentialKey() area(id)
  *
  * Todo sincrónico, statements preparados y cacheados. Los objetos de config chicos
  * (puertas, horarios, estancos, política) se cachean en memoria y se invalidan cuando
@@ -42,7 +42,10 @@ class SqliteSnapshot {
     const key = `${readMeta(this.db, 'config_version')}|${readMeta(this.db, 'config_applied_at')}`;
     if (key !== this.cacheKey) {
       this.cacheKey = key;
-      this.cache = { doors: new Map(), schedules: new Map(), interlockByDoor: null, policy: undefined, site: undefined };
+      this.cache = {
+        doors: new Map(), schedules: new Map(), interlockByDoor: null, policy: undefined, site: undefined, credentialKey: undefined,
+        areas: undefined
+      };
     }
     return this;
   }
@@ -170,7 +173,25 @@ class SqliteSnapshot {
     return cache.interlockByDoor.get(String(doorId)) || null;
   }
 
-  /** Pase de visita por id de QR o por DNI (si hay varios por DNI, el de validTo más tardío). */
+  /**
+   * Clave HMAC de credenciales del sitio (chunk `secrets`) o null si el sitio no usa clave.
+   * El motor la usa para `hashCredential` (decide.js lee `snap.credentialKey()`).
+   */
+  credentialKey() {
+    const cache = this.c();
+    if (cache.credentialKey === undefined) cache.credentialKey = readMeta(this.db, 'credential_key') || null;
+    return cache.credentialKey;
+  }
+
+  /** Id de la clave (sha256 corto) para diagnóstico; nunca la clave. */
+  credentialKeyId() {
+    return readMeta(this.db, 'credential_key_id') || null;
+  }
+
+  /**
+   * Pase de visita por id de QR o por DNI / dniHash (con clave del sitio el motor busca por
+   * hashCredential('dni', dni, key)). Si hay varios, el de validTo más tardío.
+   */
   pass(qrIdOrDni) {
     const key = String(qrIdOrDni);
     const byId = this.db.get('SELECT json FROM passes WHERE id = ?', key);
@@ -194,6 +215,15 @@ class SqliteSnapshot {
     const cache = this.c();
     if (cache.policy === undefined) cache.policy = parse(readMeta(this.db, 'policy'), {}) || {};
     return cache.policy;
+  }
+
+  /** Área del sitio (chunk doors `areas`), p. ej. {id:'exterior', exterior:true}; null si no existe. */
+  area(id) {
+    const cache = this.c();
+    if (cache.areas === undefined) {
+      cache.areas = new Map((parse(readMeta(this.db, 'areas'), []) || []).map((a) => [String(a.id), a]));
+    }
+    return cache.areas.get(String(id)) || null;
   }
 
   /** Datos del sitio (tz, etc.) del chunk doors. */

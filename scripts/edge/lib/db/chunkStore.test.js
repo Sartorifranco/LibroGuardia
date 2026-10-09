@@ -252,4 +252,41 @@ describe('chunkStore', { skip: SKIP }, () => {
       db.close();
     }
   });
+
+  it('chunk secrets: lo guardan hub y controlador, es parte del todo-o-nada y pasa a meta', () => {
+    for (const role of ['hub', 'controller']) {
+      const { db, store } = setup({ role });
+      try {
+        const secrets = { secrets: { credentialKey: 'a2V5LWRlLXBydWViYQ==', keyId: 'k1', alg: 'HMAC-SHA256' } };
+        const v1 = { doors: doorsBody(), secrets };
+        assert.equal(store.isRelevant('secrets'), true);
+        assert.deepEqual(store.needsChunks(makeHead(1, v1)), ['doors', 'secrets']);
+        const sinSecrets = store.applyHead(makeHead(1, v1), { doors: v1.doors });
+        assert.deepEqual(sinSecrets, { applied: false, reason: 'missing_chunks', missing: ['secrets'] });
+        assert.equal(store.applyHead(makeHead(1, v1), v1).applied, true);
+        assert.equal(readMeta(db, 'credential_key'), 'a2V5LWRlLXBydWViYQ==');
+        assert.equal(readMeta(db, 'credential_key_id'), 'k1');
+        assert.deepEqual(store.getChunk('secrets').body, secrets);
+        // head sin secrets → se borra
+        const v2 = { doors: doorsBody() };
+        assert.equal(store.applyHead(makeHead(2, v2), v2).applied, true);
+        assert.equal(readMeta(db, 'credential_key'), null);
+        assert.equal(store.getChunk('secrets'), null);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  it('pases con dniHash se indexan en passes.dni', () => {
+    const { db, store } = setup();
+    try {
+      const v1 = { doors: doorsBody(), passes: { passes: [{ id: 'QR1', dniHash: 'f'.repeat(64), doors: ['p1'] }, { id: 'QR2', dni: '123', doors: ['p1'] }] } };
+      assert.equal(store.applyHead(makeHead(1, v1), v1).applied, true);
+      assert.equal(db.get('SELECT id FROM passes WHERE dni = ?', 'f'.repeat(64)).id, 'QR1');
+      assert.equal(db.get('SELECT id FROM passes WHERE dni = ?', '123').id, 'QR2');
+    } finally {
+      db.close();
+    }
+  });
 });

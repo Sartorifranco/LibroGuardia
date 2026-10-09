@@ -6,11 +6,18 @@
  * `live/summary` para la vista remota.
  *
  * Eventos que entiende (contrato con T5; lo desconocido se ignora sin error):
- *  - type 'access' (o 'passage') con decision 'grant' → movimiento; presencia en `door.sides[side].zoneTo`
- *    (zoneTo null = salió del sitio). Puertas con `sides` en forma array no tienen áreas → sin presencia.
+ *  - type 'access' (o 'passage') con decision 'grant' → movimiento. Presencia: se aplican los
+ *    `payload.stateEffects` que calculó el motor en el controlador:
+ *      presence {[cardholderId | 'pass:<id>']: {areaId, ts}} → tabla presence (área exterior o null
+ *        = salió del sitio → se borra la fila);
+ *      pass {id, status:'ingreso_registrado'|'egreso_registrado', usesDelta?} → meta `hub_pass_state`
+ *        (el egreso hacia el exterior cierra el pase y borra su presencia).
+ *    Sin stateEffects (eventos viejos) se deriva de `door.sides[side].zoneTo`. Puertas con `sides`
+ *    en forma array no tienen áreas → sin presencia.
  *  - type 'door_state' con `payload.state` (o `state`) → door_state. SEGURA restaura held_open/door_forced.
- *  - alarmas: type en ALARM_TYPES o `payload.alarm === true` → alarms (id `${type}:${doorId|deviceId}`).
- *  - type 'alarm_clear' con `payload.alarmType` → alarma 'cleared'.
+ *  - alarmas: contrato del controlador `type:'alarm'`, `reason:<tipo>`, `payload.state:'raised'|'cleared'`;
+ *    también type en ALARM_TYPES o `payload.alarm === true` → alarms (id `${tipo}:${doorId|deviceId}`).
+ *  - type 'alarm_clear' con `payload.alarmType` (o 'alarm' con state 'cleared') → alarma 'cleared'.
  *
  * Subida a la nube: como mucho 1 vez cada 60 s y solo si el resumen cambió (hash persistido).
  */
@@ -19,16 +26,32 @@ const crypto = require('crypto');
 const { readMeta, writeMeta } = require('../lib/db/migrations');
 const { canonicalJson } = require('../lib/db/chunkStore');
 
+// Mantener en sincronía con functions/lib/edgeIngest.js ALARM_TYPES.
 const ALARM_TYPES = new Set([
   'door_forced', 'held_open', 'lock_fault', 'duress', 'device_offline', 'tamper',
-  'apertura_forzada_estanco', 'hub_offline', 'config_stale'
+  'apertura_forzada_estanco', 'hub_offline', 'config_stale', 'emergency', 'interlock_violation',
+  'credential_key_missing'
 ]);
 const RESTORED_BY_SECURE = new Set(['door_forced', 'held_open']);
+
+/** Tipo de alarma del evento o null. */
+function alarmTypeOf(e) {
+  if (e.type === 'alarm') return e.reason || 'alarm';
+  if (ALARM_TYPES.has(e.type) || Boolean(e.payload && e.payload.alarm === true)) return e.type;
+  return null;
+}
+
+function isAlarmCleared(e) {
+  return e.type === 'alarm' && e.payload && e.payload.state === 'cleared';
+}
 const MOVEMENTS = 50;
 const PEOPLE_PER_AREA = 200;
 
+const e2id = (id) => (id === undefined ? null : id);
+
+/** ¿Alarma que se levanta? (un 'cleared' no dispara subida inmediata). */
 function isAlarmEvent(e) {
-  return ALARM_TYPES.has(e.type) || Boolean(e.payload && e.payload.alarm === true);
+  return Boolean(alarmTypeOf(e)) && !isAlarmCleared(e);
 }
 
 class LiveState {
@@ -56,8 +79,14 @@ class LiveState {
         if (isAlarmEvent(e)) {
           alarm = true;
           this.raiseAlarm(e);
+        } else if (isAlarmCleared(e)) {
+          this.clearAlarm({ ...e, payload: { ...e.payload, alarmType: alarmTypeOf(e) } });
         }
-        if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant') this.updatePresence(e);
+        if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant') {
+          const fx = e.payload && e.payload.stateEffects;
+          if (fx && (fx.presence || fx.pass)) this.applyStateEffects(e, fx);
+          else this.updatePresence(e);
+        }
         else if (e.type === 'door_state') this.updateDoorState(e);
         else if (e.type === 'alarm_clear') this.clearAlarm(e);
       }
@@ -66,7 +95,8 @@ class LiveState {
   }
 
   raiseAlarm(e) {
-    const id = `${e.type}:${e.doorId || e.deviceId}`;
+    const type = alarmTypeOf(e) || e.type;
+    const id = `${type}:${e.doorId || e.deviceId}`;
     const ts = Number(e.ts) || this.now();
     const row = this.db.get('SELECT state FROM alarms WHERE id = ?', id);
     if (!row || row.state === 'cleared') {
@@ -74,7 +104,7 @@ class LiveState {
         `INSERT INTO alarms(id, type, door_id, state, first_ts, last_ts, count) VALUES (?, ?, ?, 'active', ?, ?, 1)
          ON CONFLICT(id) DO UPDATE SET state = 'active', first_ts = excluded.first_ts, last_ts = excluded.last_ts,
            count = 1, ack_by = NULL, ack_note = NULL`,
-        id, e.type, e.doorId ?? null, ts, ts
+        id, type, e.doorId ?? null, ts, ts
       );
     } else {
       this.db.run("UPDATE alarms SET state = 'active', last_ts = MAX(last_ts, ?), count = count + 1 WHERE id = ?", ts, id);
@@ -105,6 +135,59 @@ class LiveState {
     }
   }
 
+  /** ¿El área es "fuera del sitio"? (`exterior:true` en el chunk doors, o el id 'exterior'). */
+  isExterior(areaId) {
+    if (!areaId) return true;
+    if (areaId === 'exterior') return true;
+    const s = this.edge.snapshot;
+    const area = typeof s.area === 'function' ? s.area(areaId) : null;
+    return Boolean(area && area.exterior === true);
+  }
+
+  /** Presencia de una clave (cardholderId o 'pass:<id>'); ignora eventos viejos fuera de orden. */
+  setPresence(key, areaId, ts, eventId) {
+    const cur = this.db.get('SELECT ts FROM presence WHERE cardholder_id = ?', key);
+    if (cur && Number(cur.ts) > ts) return;
+    if (this.isExterior(areaId)) {
+      this.db.run('DELETE FROM presence WHERE cardholder_id = ?', key);
+      return;
+    }
+    this.db.run(
+      `INSERT INTO presence(cardholder_id, area_id, ts, event_id) VALUES (?, ?, ?, ?)
+       ON CONFLICT(cardholder_id) DO UPDATE SET area_id = excluded.area_id, ts = excluded.ts, event_id = excluded.event_id`,
+      key, areaId, ts, e2id(eventId)
+    );
+  }
+
+  passState() {
+    try { return JSON.parse(readMeta(this.db, 'hub_pass_state') || '{}') || {}; } catch (_) { return {}; }
+  }
+
+  /** Efectos del motor calculados en el controlador (presencia por zoneTo y estado de pases). */
+  applyStateEffects(e, fx) {
+    const ts = Number(e.ts) || this.now();
+    for (const [key, val] of Object.entries(fx.presence || {})) {
+      if (!key || !val) continue;
+      this.setPresence(key, val.areaId || null, Number(val.ts) || ts, e.id);
+    }
+    const p = fx.pass;
+    if (p && p.id) {
+      const all = this.passState();
+      const prev = all[p.id] || { uses: 0 };
+      if (!(prev.ts && prev.ts > ts)) {
+        all[p.id] = {
+          status: p.status || prev.status || null,
+          uses: (Number(prev.uses) || 0) + (Number(p.usesDelta) || 0),
+          ts,
+          eventId: e.id
+        };
+        writeMeta(this.db, 'hub_pass_state', JSON.stringify(all));
+      }
+      if (p.status === 'egreso_registrado') this.db.run('DELETE FROM presence WHERE cardholder_id = ?', `pass:${p.id}`);
+    }
+  }
+
+  /** Respaldo sin stateEffects: área destino del lado cruzado. */
   updatePresence(e) {
     if (!e.cardholderId || !e.doorId) return;
     const door = this.edge.snapshot.door(e.doorId);
@@ -112,22 +195,15 @@ class LiveState {
     if (!sides || Array.isArray(sides)) return;
     const side = sides[e.side];
     if (!side || !('zoneTo' in side)) return;
-    const ts = Number(e.ts) || this.now();
-    const cur = this.db.get('SELECT ts FROM presence WHERE cardholder_id = ?', e.cardholderId);
-    if (cur && Number(cur.ts) > ts) return;
-    if (side.zoneTo) {
-      this.db.run(
-        `INSERT INTO presence(cardholder_id, area_id, ts, event_id) VALUES (?, ?, ?, ?)
-         ON CONFLICT(cardholder_id) DO UPDATE SET area_id = excluded.area_id, ts = excluded.ts, event_id = excluded.event_id`,
-        e.cardholderId, side.zoneTo, ts, e.id
-      );
-    } else {
-      this.db.run('DELETE FROM presence WHERE cardholder_id = ?', e.cardholderId);
-    }
+    this.setPresence(e.cardholderId, side.zoneTo || null, Number(e.ts) || this.now(), e.id);
   }
 
   personName(id) {
     try {
+      if (id && String(id).startsWith('pass:')) {
+        const p = this.edge.snapshot.pass(String(id).slice(5));
+        return (p && p.name) || null;
+      }
       const ch = id ? this.edge.snapshot.cardholder(id) : null;
       return (ch && ch.name) || null;
     } catch (_) {
@@ -217,4 +293,4 @@ class LiveState {
   }
 }
 
-module.exports = { LiveState, ALARM_TYPES, isAlarmEvent };
+module.exports = { LiveState, ALARM_TYPES, isAlarmEvent, alarmTypeOf };

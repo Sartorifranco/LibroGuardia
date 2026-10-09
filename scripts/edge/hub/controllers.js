@@ -148,8 +148,19 @@ class ControllerRegistry {
     }
   }
 
-  openDoor(deviceId, doorId, { requestedBy, reason, force = false }) {
-    return this.call(deviceId, 'POST', `/edge/doors/${encodeURIComponent(doorId)}/open`, { requestedBy, reason, force: Boolean(force) });
+  /**
+   * Apertura en el controlador. `forceAuthorized:true` solo cuando quien pide YA validó el permiso
+   * `puertas.estanco.forzar` + motivo (la nube en /remote-open, o la API LAN de guardia del hub).
+   */
+  openDoor(deviceId, doorId, {
+    requestedBy, reason, force = false, forceAuthorized = false, forceReason = null, mode = 'manual', commandId = null
+  }) {
+    const body = { requestedBy, reason, force: Boolean(force), mode, ...(commandId ? { commandId } : {}) };
+    if (force) {
+      body.forceAuthorized = forceAuthorized === true;
+      if (forceReason) body.forceReason = String(forceReason);
+    }
+    return this.call(deviceId, 'POST', `/edge/doors/${encodeURIComponent(doorId)}/open`, body);
   }
 
   /** Resumen para heartbeat/estado (sin claves). */

@@ -36,6 +36,32 @@ function toWire(e) {
   };
 }
 
+/**
+ * Nombre de la persona y de la puerta para la proyección `entries` de la nube (el libro muestra
+ * `name`/`doorName`; el controlador no los manda para no inflar sus eventos). Sin DNI en claro.
+ */
+function enrichForCloud(e, snapshot) {
+  if (!snapshot || e.decision !== 'grant') return e;
+  const payload = { ...(e.payload || {}) };
+  try {
+    if (!payload.name && e.cardholderId) {
+      const ch = snapshot.cardholder(e.cardholderId);
+      if (ch && ch.name) payload.name = String(ch.name).slice(0, 160);
+    }
+    if (!payload.name && payload.passId) {
+      const p = snapshot.pass(payload.passId);
+      if (p && p.name) payload.name = String(p.name).slice(0, 160);
+    }
+    if (!payload.doorName && e.doorId) {
+      const d = snapshot.door(e.doorId);
+      if (d && d.name) payload.doorName = String(d.name).slice(0, 120);
+    }
+  } catch (_) {
+    return e;
+  }
+  return { ...e, payload };
+}
+
 class EventUploader {
   /**
    * @param {{ edge:{db, journal}, client, hubId:string, intervalMs?:number, batchMax?:number,
@@ -107,7 +133,10 @@ class EventUploader {
       let res;
       try {
         res = await this.client.postEvents({
-          hubId: this.hubId, events: batch.events.map(toWire), hubSeqFrom: batch.from, hubSeqTo: batch.to
+          hubId: this.hubId,
+          events: batch.events.map((e) => toWire(enrichForCloud(e, this.edge.snapshot))),
+          hubSeqFrom: batch.from,
+          hubSeqTo: batch.to
         });
       } catch (err) {
         this.failures += 1;
@@ -177,4 +206,4 @@ class EventUploader {
   }
 }
 
-module.exports = { EventUploader, toWire, BATCH_MAX };
+module.exports = { EventUploader, toWire, enrichForCloud, BATCH_MAX };

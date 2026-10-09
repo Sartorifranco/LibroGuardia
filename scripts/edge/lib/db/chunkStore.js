@@ -2,7 +2,8 @@
 
 /**
  * Chunk store del edge: guarda los chunks del snapshot compilado por la nube
- * (`sites/{s}/compiled/head` + chunks `doors`, `ch-NN`, `grants-YYYYMMDD`, `passes`, `operators`),
+ * (`sites/{s}/compiled/head` + chunks `doors`, `ch-NN`, `grants-YYYYMMDD`, `passes`, `operators`,
+ * `secrets`),
  * verifica su hash (sha256 del JSON canónico del cuerpo) y los materializa en las tablas
  * que consulta el motor (ver sqliteSnapshot.js).
  *
@@ -11,6 +12,11 @@
  * - `rights` se materializa SOLO para las puertas de este equipo (`myDoorIds`, o todas en el hub).
  * - `accessAll` (D7) queda como flag de la persona; no se explota en filas de rights.
  * - La firma Ed25519 del head la verifica quien llama (o el hook `verifyHead`).
+ * - `secrets` ({secrets:{credentialKey, keyId, alg}}, clave HMAC de credenciales del sitio): lo
+ *   guardan hub y controlador (tabla chunks + meta `credential_key*`), nunca va a logs/journal.
+ *   Sin él un sitio con clave no puede reconocer ningún DNI: es parte del todo-o-nada.
+ *   El hub solo lo sirve a controladores enrolados (requests LAN firmadas).
+ *   TODO fase 2: cifrado a la clave pública de cada equipo.
  */
 
 const crypto = require('crypto');
@@ -72,11 +78,14 @@ function chunkKind(name) {
   if (GRANTS_RE.test(name)) return 'grants';
   if (name === 'passes') return 'passes';
   if (name === 'operators') return 'operators';
+  if (name === 'secrets') return 'secrets';
   return null;
 }
 
 /** Orden de aplicación: doors primero (grupos/puertas), después personas, grants y el resto. */
-const KIND_ORDER = { doors: 0, cardholders: 1, grants: 2, passes: 3, operators: 4 };
+const KIND_ORDER = { secrets: -1, doors: 0, cardholders: 1, grants: 2, passes: 3, operators: 4 };
+
+const SECRET_META_KEYS = ['credential_key', 'credential_key_id', 'credential_key_alg'];
 
 function asArray(v) {
   if (Array.isArray(v)) return v;
@@ -280,6 +289,7 @@ class ChunkStore {
       case 'grants': this.applyGrants(name, body); break;
       case 'passes': this.applyPasses(name, body); break;
       case 'operators': this.applyOperators(body); break;
+      case 'secrets': this.applySecrets(body); break;
       default: break;
     }
     this.db.run('UPDATE chunks SET applied_hash = ? WHERE name = ?', row.hash, name);
@@ -301,6 +311,9 @@ class ChunkStore {
         break;
       case 'operators':
         if (this.role === 'hub') this.db.run('DELETE FROM operators');
+        break;
+      case 'secrets':
+        for (const k of SECRET_META_KEYS) this.db.run('DELETE FROM meta WHERE key = ?', k);
         break;
       default:
         break;
@@ -342,6 +355,8 @@ class ChunkStore {
     }
     writeMeta(db, 'policy', json(body.policy ?? body.policies ?? {}));
     writeMeta(db, 'site', json(body.site ?? {}));
+    // Áreas (presencia/APB; `exterior:true` = fuera del sitio). Pocas: van en meta.
+    writeMeta(db, 'areas', json(asArray(body.areas).filter((a) => a && a.id)));
     // Cambian puertas/grupos → rematerializar rights directos y por grupo de todas las personas.
     this.rebuildPersonRights();
   }
@@ -483,11 +498,24 @@ class ChunkStore {
     for (const p of asArray(body.passes)) {
       const id = p && (p.id ?? p.qrId);
       if (!id) continue;
-      ins.run(String(id), p.dni ? String(p.dni) : null, json(p), name);
+      // Con clave del sitio el pase trae dniHash (no el DNI): se indexa igual en passes.dni.
+      const dniKey = p.dni ?? p.dniHash;
+      ins.run(String(id), dniKey ? String(dniKey) : null, json(p), name);
     }
     db.run('DELETE FROM revocations');
     for (const id of asArray(body.revoked ?? body.revocations)) {
       if (id) db.run('INSERT OR IGNORE INTO revocations(id) VALUES (?)', String(id));
+    }
+  }
+
+  /** Clave HMAC del sitio → meta (no se materializa en otra tabla ni se loguea). */
+  applySecrets(body) {
+    const s = (body && body.secrets) || body || {};
+    for (const k of SECRET_META_KEYS) this.db.run('DELETE FROM meta WHERE key = ?', k);
+    if (s.credentialKey) {
+      writeMeta(this.db, 'credential_key', String(s.credentialKey));
+      if (s.keyId) writeMeta(this.db, 'credential_key_id', String(s.keyId));
+      if (s.alg) writeMeta(this.db, 'credential_key_alg', String(s.alg));
     }
   }
 

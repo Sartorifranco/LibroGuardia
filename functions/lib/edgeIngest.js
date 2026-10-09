@@ -6,7 +6,10 @@
  *   `sites/{s}/alarms/{id}` y cursor `sites/{s}/status/hub`. Mails D20 solo para alarmas críticas.
  *   Presupuesto por lote: 1 lectura + (1 + #entries + #alarmas + 1) escrituras, en un batch.
  * - Heartbeat de equipos con escritura condicionada (cambio o > 5 min).
- * - Comandos nube → hub (`sites/{s}/commands/{id}`, TTL 45 s) y su resultado.
+ * - Comandos nube → hub (`sites/{s}/commands/{id}`, TTL 45 s) y su resultado. Señal barata:
+ *   `sites/{s}/status/commands {pending, updatedAt}` (FieldValue.increment: +1 al crear, −1 al
+ *   terminar/vencer; se acota a ≥ 0 al leer) → `pendingCommands` en GET /head; el hub solo
+ *   consulta GET /commands?status=pending cuando es > 0.
  * - `live/summary` (lo escribe el hub; la vista remota lo lee con caché).
  * - Adaptador del compilador por sitio (T2, `lib/siteCompiler`), con carga perezosa.
  */
@@ -23,7 +26,12 @@ const COMMAND_TTL_MS = 45 * 1000;
 const MAX_LIVE_SUMMARY_BYTES = 64 * 1024;
 const MAX_CHUNK_NAMES = 80;
 
-/** Tipos de evento que proyectan una alarma (§5). */
+/**
+ * Tipos de alarma (§5). Mantener en sincronía con scripts/edge/hub/liveState.js ALARM_TYPES.
+ * Contrato del controlador (scripts/edge/controller/controller.js onDoorEffect): las alarmas
+ * llegan como `type:'alarm'`, `reason:<tipo>`, `payload.state:'raised'|'cleared'`. También se
+ * aceptan eventos cuyo `type` ya es el tipo de alarma (hub, BioStar).
+ */
 const ALARM_TYPES = new Set([
   'door_forced',
   'held_open',
@@ -31,8 +39,18 @@ const ALARM_TYPES = new Set([
   'interlock_violation',
   'device_offline',
   'lock_fault',
-  'emergency'
+  'emergency',
+  'tamper',
+  'hub_offline',
+  'config_stale',
+  'credential_key_missing'
 ]);
+
+/** Tipo de alarma del evento (o null si no es alarma). */
+const alarmTypeOf = (ev) => {
+  if (ev.type === 'alarm') return ev.reason || 'alarm';
+  return ALARM_TYPES.has(ev.type) ? ev.type : null;
+};
 
 /**
  * Alarmas críticas → mail (D20: solo email). Valor = tipo de evento de lib/notifications.
@@ -47,7 +65,9 @@ const CRITICAL_ALARM_NOTIFY = {
   interlock_violation: 'edge_alarm'
 };
 
-const COMMAND_RESULT_STATUSES = ['done', 'failed'];
+/** Estados finales que puede reportar el hub (scripts/edge/hub/commands.js). */
+const COMMAND_RESULT_STATUSES = ['done', 'failed', 'expired', 'rejected'];
+const MAX_PENDING_COMMANDS_LISTED = 50;
 
 const siteRef = (siteId) => db.collection('sites').doc(String(siteId));
 
@@ -95,7 +115,7 @@ const normalizeEvent = (raw, index) => {
   };
 };
 
-const isGrantedMovement = (ev) => ev.decision === 'grant' && !ALARM_TYPES.has(ev.type);
+const isGrantedMovement = (ev) => ev.decision === 'grant' && !alarmTypeOf(ev);
 
 const maskIdNumber = (ev) => {
   const p = ev.payload || {};
@@ -144,31 +164,40 @@ const buildEntryDoc = (ev, { siteId, hubId }) => {
   };
 };
 
-const alarmIdFor = (ev, hubId) => safeIdPart(ev.payload?.alarmId || `${hubId}_${ev.id}`);
+/**
+ * Un doc por (tipo, puerta|equipo): el 'cleared' del controlador cierra el mismo doc que abrió
+ * el 'raised'. `payload.alarmId` explícito manda.
+ */
+const alarmIdFor = (ev, hubId) => safeIdPart(
+  ev.payload?.alarmId || `${hubId}_${alarmTypeOf(ev)}_${ev.doorId || ev.deviceId || 'sitio'}`
+);
+
+const ALARM_STATE = { raised: 'active', active: 'active', cleared: 'cleared', restored: 'cleared', acked: 'acked' };
 
 const buildAlarmDoc = (ev, { siteId, hubId }) => {
   const p = ev.payload || {};
-  const state = ['active', 'cleared', 'acked'].includes(p.state) ? p.state : 'active';
+  const state = ALARM_STATE[p.state] || 'active';
+  const type = alarmTypeOf(ev);
   return {
     siteId,
-    type: ev.type,
+    type,
     doorId: ev.doorId || null,
     deviceId: p.deviceId || ev.deviceId || null,
     hubId,
     state,
-    critical: Object.prototype.hasOwnProperty.call(CRITICAL_ALARM_NOTIFY, ev.type),
+    critical: Object.prototype.hasOwnProperty.call(CRITICAL_ALARM_NOTIFY, type),
     firstTs: Number(p.firstTs) || ev.ts,
     lastTs: Number(p.lastTs) || ev.ts,
     count: Number.isFinite(Number(p.count)) ? Number(p.count) : 1,
     eventId: ev.id,
     cardholderId: ev.cardholderId || null,
-    message: p.message ? String(p.message).slice(0, 300) : null,
+    message: p.message ? String(p.message).slice(0, 300) : (p.detail ? String(p.detail).slice(0, 300) : null),
     updatedAt: FieldValue.serverTimestamp()
   };
 };
 
 const notifyCriticalAlarm = (notifySafe, ev, alarm) => {
-  const eventType = CRITICAL_ALARM_NOTIFY[ev.type];
+  const eventType = CRITICAL_ALARM_NOTIFY[alarm.type];
   if (!eventType || alarm.state !== 'active' || typeof notifySafe !== 'function') return false;
   const p = ev.payload || {};
   const at = new Date(ev.ts).toISOString();
@@ -178,7 +207,7 @@ const notifyCriticalAlarm = (notifySafe, ev, alarm) => {
     notifySafe(eventType, { name: p.name || alarm.deviceId, id: alarm.deviceId, kind: 'edge', lastAt: at });
   } else if (eventType === 'edge_alarm') {
     notifySafe(eventType, {
-      alarmType: ev.type,
+      alarmType: alarm.type,
       doorId: ev.doorId || null,
       doorName: p.doorName || null,
       deviceId: alarm.deviceId || ev.deviceId || null,
@@ -241,7 +270,7 @@ const ingestEventBatch = async ({ siteId, hubId, body = {}, notifySafe = null, n
   let entries = 0;
   const alarms = [];
   normalized.forEach((ev) => {
-    if (ALARM_TYPES.has(ev.type)) {
+    if (alarmTypeOf(ev)) {
       const alarm = buildAlarmDoc(ev, { siteId, hubId });
       batch.set(site.collection('alarms').doc(alarmIdFor(ev, hubId)), alarm, { merge: true });
       alarms.push({ ev, alarm });
@@ -287,9 +316,80 @@ const stableJson = (value) => {
   try { return JSON.stringify(value); } catch { return String(value); }
 };
 
+const MAX_REPORTED_CONTROLLERS = 64;
+/** Aunque no cambie nada, el estado de cada controlador se refresca cada 30 min (lastSeenAt). */
+const CONTROLLER_STATUS_REFRESH_MS = 30 * 60 * 1000;
+
+/** `controllers` del heartbeat del hub → { id: {configVersionApplied, online, lastSeenAt, lastError} }. */
+const normalizeReportedControllers = (raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).slice(0, MAX_REPORTED_CONTROLLERS).forEach(([id, st]) => {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || !st || typeof st !== 'object') return;
+    const v = st.configVersionApplied == null ? null : Number(st.configVersionApplied);
+    const seen = st.lastSeenAt == null ? null : Number(st.lastSeenAt);
+    out[id] = {
+      configVersionApplied: Number.isFinite(v) ? v : null,
+      online: st.online === true,
+      lastSeenAt: Number.isFinite(seen) ? seen : null,
+      lastError: st.lastError ? String(st.lastError).slice(0, 120) : null
+    };
+  });
+  return out;
+};
+
+const controllerStatusChanged = (prev, cur, now) => !prev
+  || (prev.configVersionApplied ?? null) !== cur.configVersionApplied
+  || Boolean(prev.online) !== cur.online
+  || (prev.lastError ?? null) !== cur.lastError
+  || now - (Number(prev.writtenAt) || 0) > CONTROLLER_STATUS_REFRESH_MS;
+
+/**
+ * Estado de controladores informado por el hub → `devices/{ctl}` SOLO de los que cambiaron
+ * (configVersionApplied / online / lastError, o refresco cada 30 min). Lo último informado
+ * queda en el doc del hub (`controllersReported`, ya leído) para comparar sin leer cada
+ * controlador. Por cada cambio: 1 lectura (validar sitio/tipo/estado) + 1 escritura.
+ */
+const applyReportedControllers = async ({ hubData, hubId, siteId, reported, now }) => {
+  const prevMap = hubData.controllersReported && typeof hubData.controllersReported === 'object'
+    ? hubData.controllersReported : {};
+  const nextMap = {};
+  let written = 0;
+  let ignored = 0;
+  for (const [id, cur] of Object.entries(reported)) {
+    const prev = prevMap[id];
+    if (!controllerStatusChanged(prev, cur, now)) {
+      nextMap[id] = prev;
+      continue;
+    }
+    const ref = db.collection(DEVICES_COLLECTION).doc(id);
+    // eslint-disable-next-line no-await-in-loop
+    const snap = await ref.get();
+    const c = snap.exists ? snap.data() || {} : null;
+    if (!c || c.kind !== 'controller' || (c.siteId || 'principal') !== siteId || c.status !== 'active') {
+      ignored += 1;
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await ref.set({
+      configVersionApplied: cur.configVersionApplied,
+      online: cur.online,
+      lastSeenAt: cur.lastSeenAt,
+      lastError: cur.lastError,
+      reportedBy: hubId,
+      statusUpdatedAt: now
+    }, { merge: true });
+    nextMap[id] = { ...cur, writtenAt: now };
+    written += 1;
+  }
+  const mapChanged = stableJson(prevMap) !== stableJson(nextMap);
+  return { nextMap, written, ignored, mapChanged };
+};
+
 /**
  * Heartbeat: 1 lectura del equipo; escribe solo si cambió algo o pasaron > 5 min
- * desde la última escritura. El hub además publica `sites/{s}.lanUrl` si cambió.
+ * desde la última escritura. El hub además publica `sites/{s}.lanUrl` si cambió y el
+ * estado de sus controladores (`controllers`, ver applyReportedControllers).
  */
 const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = Date.now() }) => {
   const ref = db.collection(DEVICES_COLLECTION).doc(String(deviceId));
@@ -309,11 +409,19 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
   const lastWrite = toMillis(d.lastSeenAt) || 0;
   const stale = now - lastWrite > HEARTBEAT_MIN_WRITE_INTERVAL_MS;
 
+  let controllers = { written: 0, ignored: 0, mapChanged: false, nextMap: null };
+  if (deviceKind === 'hub' && body.controllers) {
+    controllers = await applyReportedControllers({
+      hubData: d, hubId: deviceId, siteId, reported: normalizeReportedControllers(body.controllers), now
+    });
+  }
+
   let wrote = false;
   let siteWrote = false;
-  if (changed || stale) {
+  if (changed || stale || controllers.mapChanged) {
     const update = { lastSeenAt: now, configVersionApplied, checks };
     if (deviceKind === 'hub') update.lanUrl = lanUrl;
+    if (controllers.mapChanged) update.controllersReported = controllers.nextMap;
     await ref.set(update, { merge: true });
     wrote = true;
   }
@@ -325,6 +433,8 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
     ok: true,
     wrote,
     siteWrote,
+    controllersWritten: controllers.written,
+    controllersIgnored: controllers.ignored,
     nextHeartbeatSec: HEARTBEAT_MIN_WRITE_INTERVAL_MS / 1000
   };
 };
@@ -337,6 +447,13 @@ const commandRef = (siteId, id) => {
   return siteRef(siteId).collection('commands').doc(cid);
 };
 
+const commandsStatusRef = (siteId) => siteRef(siteId).collection('status').doc('commands');
+
+/** Contador de pendientes (+1/−1). Nunca se lee acá: el clamp a ≥ 0 se hace en readPendingCommands. */
+const bumpPendingCommands = (writer, siteId, delta, now) => {
+  writer.set(commandsStatusRef(siteId), { pending: FieldValue.increment(delta), updatedAt: now }, { merge: true });
+};
+
 const effectiveCommand = (id, data = {}, now = Date.now()) => {
   const expired = data.status === 'pending' && Number(data.expiresAt) < now;
   return {
@@ -346,6 +463,8 @@ const effectiveCommand = (id, data = {}, now = Date.now()) => {
     action: data.action || 'open',
     status: expired ? 'expired' : (data.status || 'pending'),
     force: Boolean(data.force),
+    forceReason: data.forceReason || null,
+    controllerId: data.controllerId || null,
     reason: data.reason || null,
     requestedBy: data.requestedBy || null,
     createdAt: data.createdAt || null,
@@ -355,7 +474,7 @@ const effectiveCommand = (id, data = {}, now = Date.now()) => {
   };
 };
 
-/** Encola una apertura remota (1 escritura). La recoge el listener del hub. */
+/** Encola una apertura remota (2 escrituras: comando + contador). La recoge el hub. */
 const createOpenCommand = async ({ siteId, door, requestedBy, reason, force = false, forceReason = null, now = Date.now() }) => {
   const id = `cmd_${now.toString(36)}_${crypto.randomBytes(5).toString('hex')}`;
   const data = {
@@ -373,7 +492,10 @@ const createOpenCommand = async ({ siteId, door, requestedBy, reason, force = fa
     expiresAt: now + COMMAND_TTL_MS,
     result: null
   };
-  await commandRef(siteId, id).set(data);
+  const batch = db.batch();
+  batch.set(commandRef(siteId, id), data);
+  bumpPendingCommands(batch, siteId, 1, now);
+  await batch.commit();
   return effectiveCommand(id, data, now);
 };
 
@@ -383,25 +505,81 @@ const getCommand = async ({ siteId, id, now = Date.now() }) => {
   return effectiveCommand(snap.id || id, snap.data() || {}, now);
 };
 
-/** Resultado real del hub (idempotente: un comando terminado no se pisa). */
+/**
+ * Pendientes del sitio para el hub (GET /api/edge/v1/commands?status=pending).
+ * Costo: 1 query (≥ 1 lectura) + 1 escritura por comando vencido (pasa a 'expired') + el contador.
+ * Solo se llama cuando `pendingCommands` > 0, así que si la query vuelve vacía se re-sincroniza
+ * el contador a 0 (corrige derivas).
+ */
+const listPendingCommands = async ({ siteId, now = Date.now(), limit = MAX_PENDING_COMMANDS_LISTED }) => {
+  const snap = await siteRef(siteId).collection('commands')
+    .where('status', '==', 'pending')
+    .limit(limit)
+    .get();
+  const pending = [];
+  let expired = 0;
+  const batch = db.batch();
+  snap.docs.forEach((doc) => {
+    const data = doc.data() || {};
+    if (Number(data.expiresAt) < now) {
+      batch.set(doc.ref, { status: 'expired', expiredAt: now }, { merge: true });
+      expired += 1;
+      return;
+    }
+    pending.push(effectiveCommand(doc.id, data, now));
+  });
+  if (expired) bumpPendingCommands(batch, siteId, -expired, now);
+  else if (!snap.docs.length) batch.set(commandsStatusRef(siteId), { pending: 0, updatedAt: now }, { merge: true });
+  if (expired || !snap.docs.length) await batch.commit();
+  pending.sort((a, b) => Number(a.createdAt) - Number(b.createdAt));
+  return { commands: pending, expired };
+};
+
+/** Normaliza el resultado del hub: `{status, result:{ok, relayConfirmed, doorOpened, code, ...}}` o plano. */
+const normalizeCommandResult = (body = {}) => {
+  const r = body.result && typeof body.result === 'object' ? body.result : {};
+  const pick = (k) => (body[k] !== undefined ? body[k] : r[k]);
+  const relay = pick('relayConfirmed');
+  const opened = pick('doorOpened');
+  const reason = pick('reason') ?? r.code ?? r.message ?? null;
+  return {
+    relayConfirmed: relay === true,
+    doorOpened: opened == null ? null : opened === true,
+    reason: reason ? String(reason).slice(0, 300) : null,
+    ...(r.code ? { code: String(r.code).slice(0, 80) } : {}),
+    ...(r.controllerId ? { controllerId: String(r.controllerId).slice(0, 120) } : {}),
+    ...(r.eventId ? { eventId: String(r.eventId).slice(0, 200) } : {})
+  };
+};
+
+/**
+ * Resultado real del hub (idempotente: un comando terminado no se pisa). Si estaba 'pending'
+ * descuenta el contador; un resultado tardío sobre un 'expired' (vencido por la nube) se guarda
+ * una vez (lateResult) sin volver a descontar.
+ */
 const recordCommandResult = async ({ siteId, id, hubId, body = {}, now = Date.now() }) => {
   const status = String(body.status || '');
-  if (!COMMAND_RESULT_STATUSES.includes(status)) throw httpError(400, "status debe ser 'done' o 'failed'");
+  if (!COMMAND_RESULT_STATUSES.includes(status)) {
+    throw httpError(400, `status debe ser uno de: ${COMMAND_RESULT_STATUSES.join(', ')}`);
+  }
   const ref = commandRef(siteId, id);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw httpError(404, 'Comando no encontrado');
     const data = snap.data() || {};
-    if (COMMAND_RESULT_STATUSES.includes(data.status)) {
-      return { ...effectiveCommand(id, data, now), duplicate: true };
-    }
-    const result = {
-      relayConfirmed: body.relayConfirmed === true,
-      doorOpened: body.doorOpened == null ? null : body.doorOpened === true,
-      reason: body.reason ? String(body.reason).slice(0, 300) : null
+    const wasPending = (data.status || 'pending') === 'pending';
+    const final = ['done', 'failed', 'rejected'].includes(data.status)
+      || (data.status === 'expired' && (status === 'expired' || Boolean(data.result)));
+    if (final) return { ...effectiveCommand(id, data, now), duplicate: true };
+    const update = {
+      status,
+      result: normalizeCommandResult(body),
+      completedAt: now,
+      completedBy: hubId,
+      lateResult: Number(data.expiresAt) < now
     };
-    const update = { status, result, completedAt: now, completedBy: hubId, lateResult: Number(data.expiresAt) < now };
     tx.set(ref, update, { merge: true });
+    if (wasPending) bumpPendingCommands(tx, siteId, -1, now);
     return { ...effectiveCommand(id, { ...data, ...update }, now), duplicate: false };
   });
 };
@@ -455,17 +633,24 @@ const requireSiteCompiler = () => {
   return compiler;
 };
 
+/** Pendientes según el contador (1 lectura), acotado a ≥ 0. */
+const readPendingCommands = async (siteId) => {
+  const snap = await commandsStatusRef(siteId).get();
+  const n = snap.exists ? Number((snap.data() || {}).pending) : 0;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
+
 const readHead = async (siteId) => {
   const compiler = requireSiteCompiler();
-  const head = await compiler.getHead(siteId);
+  const [head, pendingCommands] = await Promise.all([compiler.getHead(siteId), readPendingCommands(siteId)]);
   let publicKey = null;
   if (typeof compiler.getSigningPublicKey === 'function') {
     publicKey = await compiler.getSigningPublicKey();
   }
   const keyId = (publicKey && typeof publicKey === 'object' ? publicKey.keyId : null) || head?.keyId || null;
-  const pem = publicKey && typeof publicKey === 'object' ? (publicKey.publicKey || publicKey.pem || null)
+  const pem = publicKey && typeof publicKey === 'object' ? (publicKey.publicKeyPem || publicKey.publicKey || publicKey.pem || null)
     : (typeof publicKey === 'string' ? publicKey : null);
-  return { siteId, head: head || null, keyId, publicKey: pem };
+  return { siteId, head: head || null, keyId, publicKey: pem, pendingCommands };
 };
 
 const parseChunkNames = (raw) => {
@@ -493,6 +678,7 @@ module.exports = {
   HEARTBEAT_MIN_WRITE_INTERVAL_MS,
   COMMAND_TTL_MS,
   ALARM_TYPES,
+  alarmTypeOf,
   CRITICAL_ALARM_NOTIFY,
   journalDocId,
   normalizeEvent,
@@ -501,8 +687,12 @@ module.exports = {
   buildAlarmDoc,
   ingestEventBatch,
   recordHeartbeat,
+  normalizeReportedControllers,
   createOpenCommand,
   getCommand,
+  listPendingCommands,
+  readPendingCommands,
+  normalizeCommandResult,
   recordCommandResult,
   effectiveCommand,
   writeLiveSummary,

@@ -19,6 +19,13 @@ const { toMs } = require('../lib/db/chunkStore');
 
 const FINAL = new Set(['done', 'failed', 'expired', 'rejected']);
 
+/** La nube manda `requestedBy` como {id, username}; la tabla guarda texto. */
+function actorText(requestedBy) {
+  if (requestedBy == null) return null;
+  if (typeof requestedBy !== 'object') return String(requestedBy);
+  return String(requestedBy.username || requestedBy.id || JSON.stringify(requestedBy)).slice(0, 120);
+}
+
 class CommandRouter {
   /**
    * @param {{ edge:{db, journal, snapshot}, client, controllers, hubId:string, intervalMs?:number,
@@ -100,7 +107,7 @@ class CommandRouter {
     this.db.run(
       `INSERT INTO commands(id, source, door_id, action, status, requested_by, reason, result_json, ts) VALUES (?, 'cloud', ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET status = excluded.status, result_json = excluded.result_json, ts = excluded.ts`,
-      cmd.id, cmd.doorId ?? null, cmd.action ?? null, status, cmd.requestedBy ?? null, cmd.reason ?? null,
+      cmd.id, cmd.doorId ?? null, cmd.action ?? null, status, actorText(cmd.requestedBy), cmd.reason ?? null,
       JSON.stringify({ result, reported }), this.now()
     );
   }
@@ -132,8 +139,15 @@ class CommandRouter {
       } else {
         this.save(cmd, 'running', null, false);
         try {
+          // La nube ya validó puertas.estanco.forzar + motivo al encolar un comando forzado.
           const r = await this.controllers.openDoor(owner.deviceId, cmd.doorId, {
-            requestedBy: cmd.requestedBy, reason: cmd.reason, force: cmd.force
+            requestedBy: cmd.requestedBy,
+            reason: cmd.reason,
+            force: cmd.force === true,
+            forceAuthorized: cmd.force === true,
+            forceReason: cmd.forceReason || null,
+            mode: 'remote',
+            commandId: cmd.id
           });
           const ok = !(r && r.ok === false);
           status = ok ? 'done' : 'failed';

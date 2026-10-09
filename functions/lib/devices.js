@@ -30,6 +30,13 @@ const DEVICE_TOKEN_TTL = '1h';
 const DEVICE_TOKEN_TTL_SECONDS = 3600;
 /** Ventana de la firma del pedido de token (reloj del equipo vs nube). */
 const TOKEN_SIGNATURE_WINDOW_MS = 60 * 1000;
+/**
+ * Gracia de rotación del refresh token: si el equipo perdió la respuesta de /token (corte de red
+ * justo después de rotar), puede presentar UNA vez el refresh inmediatamente anterior dentro de
+ * esta ventana, siempre que el más nuevo nunca se haya usado. Pasada la ventana (o usada la gracia)
+ * → REFRESH_REUSED como siempre.
+ */
+const REFRESH_GRACE_MS = 5 * 60 * 1000;
 const DEFAULT_SITE_ID = 'principal';
 const INVALID_CODE_MESSAGE = 'Código inválido o expirado';
 const INVALID_DEVICE_CREDENTIALS = 'Credenciales de equipo inválidas';
@@ -97,6 +104,14 @@ const publicKeyToPem = (key) => key.export({ type: 'spki', format: 'pem' }).toSt
 /** Id corto de la clave (para logs / Admin). */
 const publicKeyId = (pem) => sha256(pem).slice(0, 16);
 
+/**
+ * Mensaje firmado del pedido de token. Formato vigente (el que usa el hub,
+ * scripts/edge/hub/cloudClient.js): "mss-edge-token\n<deviceId>\n<ts>" (con prefijo de dominio,
+ * no se puede confundir con otra firma del equipo). Se acepta además el formato original
+ * "<deviceId>.<ts>" (legado, primeros prototipos) — TODO: quitar cuando no queden equipos que lo usen.
+ */
+const tokenSigningMessages = (deviceId, ts) => [`mss-edge-token\n${deviceId}\n${ts}`, `${deviceId}.${ts}`];
+
 const verifyDeviceSignature = (pem, message, signatureB64) => {
   try {
     const key = crypto.createPublicKey(pem);
@@ -130,7 +145,10 @@ const deviceToJSON = (id, data = {}) => ({
   lastSeenAt: toMillis(data.lastSeenAt),
   configVersionApplied: data.configVersionApplied ?? null,
   checks: data.checks || null,
-  lanUrl: data.lanUrl || null
+  lanUrl: data.lanUrl || null,
+  online: data.online ?? null,
+  statusUpdatedAt: toMillis(data.statusUpdatedAt),
+  reportedBy: data.reportedBy || null
 });
 
 /** Crea un código nuevo para el equipo (doc id = sha256 del código). */
@@ -294,8 +312,9 @@ const createFirebaseCustomToken = async ({ deviceId, siteId, kind }) => (
 );
 
 /**
- * Pedido de token: firma Ed25519 de `${deviceId}.${ts}` + refresh vigente.
- * Rota el refresh (el viejo queda como `prevRefreshHash` solo para detectar reuso).
+ * Pedido de token: firma Ed25519 (ver `tokenSigningMessages`) + refresh vigente.
+ * Rota el refresh: el viejo queda como `prevRefreshHash` (+ `refreshRotatedAt`) para detectar
+ * reuso y para la gracia de `REFRESH_GRACE_MS` (respuesta de rotación perdida).
  */
 const exchangeDeviceToken = async ({ deviceId, ts, signature, refreshToken } = {}, now = Date.now()) => {
   const id = String(deviceId || '').trim();
@@ -317,19 +336,36 @@ const exchangeDeviceToken = async ({ deviceId, ts, signature, refreshToken } = {
     if (d.status !== 'active') {
       return { error: httpError(401, 'Equipo revocado o reemplazado', 'DEVICE_REVOKED') };
     }
-    if (!verifyDeviceSignature(d.pubKey, `${id}.${t}`, signature)) {
+    if (!tokenSigningMessages(id, t).some((msg) => verifyDeviceSignature(d.pubKey, msg, signature))) {
       return { error: httpError(401, INVALID_DEVICE_CREDENTIALS, 'BAD_SIGNATURE') };
     }
+    let grace = false;
     if (d.refreshHash !== presentedHash) {
       if (d.prevRefreshHash && d.prevRefreshHash === presentedHash) {
-        tx.set(devRef, { refreshReuseAt: now, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-        return { error: httpError(401, 'Refresh token ya usado', 'REFRESH_REUSED') };
+        // El más nuevo nunca se usó (si se hubiera usado, prevRefreshHash sería el suyo).
+        const rotatedAt = toMillis(d.refreshRotatedAt);
+        const inGrace = rotatedAt != null && now - rotatedAt <= REFRESH_GRACE_MS && !d.refreshGraceUsed;
+        if (!inGrace) {
+          tx.set(devRef, { refreshReuseAt: now, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+          return { error: httpError(401, 'Refresh token ya usado', 'REFRESH_REUSED') };
+        }
+        grace = true;
+      } else {
+        return { error: httpError(401, INVALID_DEVICE_CREDENTIALS, 'BAD_REFRESH') };
       }
-      return { error: httpError(401, INVALID_DEVICE_CREDENTIALS, 'BAD_REFRESH') };
     }
-    tx.set(devRef, {
+    tx.set(devRef, grace ? {
+      // Gracia: se vuelve a rotar; el anterior sigue como prev pero ya no tiene otra gracia.
+      refreshHash: sha256(nextRefresh),
+      refreshGraceUsed: true,
+      refreshGraceAt: now,
+      lastTokenAt: now,
+      updatedAt: FieldValue.serverTimestamp()
+    } : {
       refreshHash: sha256(nextRefresh),
       prevRefreshHash: presentedHash,
+      refreshRotatedAt: now,
+      refreshGraceUsed: false,
       lastTokenAt: now,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
@@ -348,7 +384,13 @@ const exchangeDeviceToken = async ({ deviceId, ts, signature, refreshToken } = {
     kind: device.kind
   };
   if (device.kind === 'hub') {
-    out.firebaseToken = await createFirebaseCustomToken({ deviceId: device.id, siteId: device.siteId, kind: device.kind });
+    // Best effort: el hub del Hito 1 no lo usa (poll HTTP); el listener Firestore es fase 2. Sin
+    // credenciales que puedan firmar (API local con ADC de usuario) no se corta el token del equipo.
+    try {
+      out.firebaseToken = await createFirebaseCustomToken({ deviceId: device.id, siteId: device.siteId, kind: device.kind });
+    } catch (err) {
+      console.warn(`[devices] custom token Firebase no disponible para ${device.id}: ${err.message}`);
+    }
   }
   return out;
 };
@@ -361,6 +403,7 @@ module.exports = {
   DEVICE_KINDS,
   DEVICE_TOKEN_TTL_SECONDS,
   TOKEN_SIGNATURE_WINDOW_MS,
+  REFRESH_GRACE_MS,
   DEFAULT_SITE_ID,
   INVALID_CODE_MESSAGE,
   httpError,
@@ -372,6 +415,7 @@ module.exports = {
   publicKeyToPem,
   publicKeyId,
   verifyDeviceSignature,
+  tokenSigningMessages,
   deviceToJSON,
   toMillis,
   createDevice,

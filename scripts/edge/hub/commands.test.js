@@ -45,7 +45,7 @@ describe('hub: comandos remotos', { skip: k.SKIP }, () => {
     const future = Date.now() + 45000;
     cloud.commands = [
       { id: 'c1', doorId: 'p1', action: 'open', requestedBy: 'jefe', reason: 'proveedor', force: false, status: 'pending', expiresAt: future },
-      { id: 'c2', doorId: 'p3', action: 'open', requestedBy: 'guardia', reason: 'x', force: true, status: 'pending', expiresAt: new Date(future).toISOString() },
+      { id: 'c2', doorId: 'p3', action: 'open', requestedBy: 'guardia', reason: 'x', force: true, forceReason: 'evacuación', status: 'pending', expiresAt: new Date(future).toISOString() },
       { id: 'c3', doorId: 'p9', action: 'open', requestedBy: 'g', status: 'pending', expiresAt: future },
       { id: 'c4', doorId: 'p1', action: 'open', requestedBy: 'g', status: 'pending', expiresAt: { _seconds: Math.floor((Date.now() - 1000) / 1000) } },
       { id: 'c5', doorId: 'p1', action: 'lockdown', requestedBy: 'g', status: 'pending', expiresAt: future },
@@ -53,8 +53,11 @@ describe('hub: comandos remotos', { skip: k.SKIP }, () => {
     ];
     const r = await built.hub.commands.poll();
     assert.equal(r.processed, 6);
-    assert.deepEqual(ctlA.opens, [{ doorId: 'p1', requestedBy: 'jefe', reason: 'proveedor', force: false }]);
-    assert.deepEqual(ctlB.opens, [{ doorId: 'p3', requestedBy: 'guardia', reason: 'x', force: true }]);
+    assert.deepEqual(ctlA.opens, [{ doorId: 'p1', requestedBy: 'jefe', reason: 'proveedor', force: false, mode: 'remote', commandId: 'c1' }]);
+    // Comando forzado: la nube ya validó puertas.estanco.forzar + motivo → el hub lo atestigua.
+    assert.deepEqual(ctlB.opens, [{
+      doorId: 'p3', requestedBy: 'guardia', reason: 'x', force: true, mode: 'remote', commandId: 'c2', forceAuthorized: true, forceReason: 'evacuación'
+    }]);
     const byId = Object.fromEntries(cloud.commandResults.map((x) => [x.id, x]));
     assert.equal(byId.c1.status, 'done');
     assert.equal(byId.c1.result.relayConfirmed, true);
@@ -76,6 +79,15 @@ describe('hub: comandos remotos', { skip: k.SKIP }, () => {
     const r = await built.hub.commands.poll();
     assert.equal(r.processed, 0);
     assert.equal(ctlA.opens.length, before);
+  });
+
+  it('requestedBy con la forma de la nube ({id, username}) se guarda como texto', async () => {
+    cloud.commands = [{ id: 'c0', doorId: 'p2', action: 'open', requestedBy: { id: 'u1', username: 'jefe' }, reason: 'nube', status: 'pending', expiresAt: Date.now() + 45000 }];
+    const r = await built.hub.commands.poll();
+    assert.equal(r.processed, 1);
+    assert.equal(built.hub.edge.db.get("SELECT requested_by FROM commands WHERE id = 'c0'").requested_by, 'jefe');
+    assert.deepEqual(ctlA.opens.at(-1).requestedBy, { id: 'u1', username: 'jefe' });
+    assert.equal(cloud.commandResults.find((x) => x.id === 'c0').status, 'done');
   });
 
   it('reporte fallido se reintenta en el próximo poll sin re-ejecutar', async () => {

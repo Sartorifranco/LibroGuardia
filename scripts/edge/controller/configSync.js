@@ -11,47 +11,24 @@
  * 3. chunkStore.applyHead(head, cuerpos): hash por chunk, todo-o-nada, configVersion monotónico
  *    (una versión vieja se rechaza con reason 'stale').
  * Cada aplicación o rechazo queda en el journal (config_applied / config_rejected).
+ *
+ * Clave HMAC de credenciales del sitio: viaja en el chunk `secrets` del bundle firmado y la guarda
+ * el ChunkStore como cualquier otro chunk (todo-o-nada: sin ella un sitio con clave no reconoce
+ * ningún DNI, así que se sigue con la config anterior). El motor la lee de `snap.credentialKey()`.
+ * Si el hub no la entrega → alarma `credential_key_missing` (una vez por versión).
+ * TODO fase 2: chunk cifrado a la clave del equipo.
  */
 
-const { ChunkHashError, hashBody } = require('../lib/db/chunkStore');
-const { readMeta, writeMeta } = require('../lib/db/migrations');
+const { ChunkHashError } = require('../lib/db/chunkStore');
 const { nullLogger } = require('../drivers/logger');
 
-const META_KEY = 'controller_credential_key';
-const META_KEY_HASH = 'controller_credential_key_chunk_hash';
-const normHash = (h) => (h ? String(h).replace(/^sha256:/i, '').toLowerCase() : null);
-
-/**
- * Clave HMAC de credenciales del sitio (chunk 'secrets' del bundle firmado; ver siteCompiler/README).
- * El ChunkStore no guarda ese chunk: el controlador lo baja aparte, verifica su hash contra el head
- * firmado y guarda solo la clave en meta. TODO fase 2: chunk cifrado a la clave del equipo.
- */
-class CredentialKeyStore {
-  constructor(db) {
-    this.db = db;
-    this.cache = undefined;
-  }
-
-  get() {
-    if (this.cache === undefined) this.cache = readMeta(this.db, META_KEY) || null;
-    return this.cache;
-  }
-
-  chunkHash() {
-    return readMeta(this.db, META_KEY_HASH) || null;
-  }
-
-  set(key, chunkHash) {
-    writeMeta(this.db, META_KEY, key || '');
-    writeMeta(this.db, META_KEY_HASH, chunkHash || '');
-    this.cache = key || null;
-  }
-}
+/** Metas de la versión anterior (clave guardada aparte); se limpian al aplicar config nueva. */
+const LEGACY_META_KEYS = ['controller_credential_key', 'controller_credential_key_chunk_hash'];
 
 class ConfigSync {
   /**
-   * @param {{edge:{chunks:object, snapshot:object}, hub:{getChunks:Function}, verifyHead:(head)=>boolean,
-   *          journal?:(evt:object)=>void, logger?:object, onApplied?:(result)=>void}} opts
+   * @param {{edge:{db:object, chunks:object, snapshot:object}, hub:{getHead:Function, getChunks:Function},
+   *          verifyHead:(head)=>boolean, journal?:(evt:object)=>void, logger?:object, onApplied?:(result)=>void}} opts
    */
   constructor({ edge, hub, verifyHead, journal = () => {}, logger = nullLogger, onApplied = () => {} }) {
     this.edge = edge;
@@ -64,50 +41,38 @@ class ConfigSync {
     this.again = false;
     this.lastRejectKey = null;
     this.lastKeyAlarm = null;
-    this.keys = new CredentialKeyStore(edge.db);
     this.status = { lastAttemptAt: null, lastOkAt: null, lastResult: null, lastError: null, appliedVersion: edge.chunks.configVersion() };
   }
 
   /** Clave HMAC vigente (null = sitio sin clave o todavía no recibida). */
   credentialKey() {
-    return this.keys.get();
+    const s = this.edge.snapshot;
+    return typeof s.credentialKey === 'function' ? s.credentialKey() : null;
   }
 
   credentialKeyStatus(head = null) {
-    const declared = head ? Boolean(head.chunks && head.chunks.secrets) : Boolean(this.keys.chunkHash());
-    return { present: Boolean(this.keys.get()), declared };
+    const declared = head ? Boolean(head.chunks && head.chunks.secrets) : Boolean(this.edge.chunks.getChunk('secrets'));
+    return { present: Boolean(this.credentialKey()), declared };
   }
 
-  /**
-   * Después de aplicar (o si ya estaba al día): guarda la clave del chunk 'secrets' si vino y su
-   * hash coincide con el head firmado; si el head la declara y no llegó → alarma (una vez por versión).
-   */
-  applySecrets(head, secretsBody) {
-    const meta = head.chunks && head.chunks.secrets;
-    if (!meta) {
-      if (this.keys.get()) this.keys.set(null, null);
+  /** Alarma (una vez por versión) si el head declara `secrets` y no hay clave utilizable. */
+  checkSecrets(head, { missing = false } = {}) {
+    const meta = head && head.chunks && head.chunks.secrets;
+    if (!meta) return;
+    if (!missing && this.credentialKey()) {
+      this.lastKeyAlarm = null;
       return;
     }
-    const want = normHash(meta.hash);
-    if (secretsBody !== undefined && secretsBody !== null) {
-      if (hashBody(secretsBody) !== want) {
-        this.logger.error('Chunk secrets con hash distinto al del head firmado: se ignora');
-      } else {
-        const key = secretsBody.secrets ? secretsBody.secrets.credentialKey : secretsBody.credentialKey;
-        if (key) {
-          this.keys.set(String(key), want);
-          this.lastKeyAlarm = null;
-          return;
-        }
-      }
-    }
-    if (this.keys.chunkHash() === want && this.keys.get()) return;
-    const tag = `${head.version}|${want}`;
-    if (this.lastKeyAlarm !== tag) {
-      this.lastKeyAlarm = tag;
-      this.logger.error('El bundle usa clave de credenciales pero el hub no entregó el chunk "secrets": los DNI/QR no van a coincidir');
-      this.journal({ type: 'alarm', reason: 'credential_key_missing', payload: { state: 'raised', version: Number(head.version) } });
-    }
+    const tag = `${head.version}|${meta.hash}`;
+    if (this.lastKeyAlarm === tag) return;
+    this.lastKeyAlarm = tag;
+    this.logger.error('El bundle usa clave de credenciales pero el hub no entregó el chunk "secrets": se sigue con la config anterior');
+    this.journal({ type: 'alarm', reason: 'credential_key_missing', payload: { state: 'raised', version: Number(head.version) } });
+  }
+
+  /** Compatibilidad con `--import-bundle` (antes la clave se aplicaba aparte). */
+  applySecrets(head) {
+    this.checkSecrets(head);
   }
 
   reject(head, reason, extra = {}) {
@@ -158,20 +123,14 @@ class ConfigSync {
       const current = this.edge.chunks.configVersion();
       if (Number(head.version) < current) return this.reject(head, 'stale');
       const names = this.edge.chunks.needsChunks(head);
-      const secretsMeta = head.chunks && head.chunks.secrets;
-      const wantSecrets = Boolean(secretsMeta)
-        && (!this.keys.get() || this.keys.chunkHash() !== normHash(secretsMeta.hash));
-      const ask = wantSecrets ? [...names, 'secrets'] : names;
       const bodies = {};
-      if (ask.length) {
-        const res = await this.hub.getChunks(ask);
+      if (names.length) {
+        const res = await this.hub.getChunks(names);
         for (const [name, entry] of Object.entries((res && res.chunks) || {})) {
           // Hub: {v, hash, body}. También se acepta el cuerpo pelado.
           bodies[name] = entry && typeof entry === 'object' && 'body' in entry && 'hash' in entry ? entry.body : entry;
         }
       }
-      const secretsBody = bodies.secrets;
-      delete bodies.secrets;
       let r;
       try {
         r = this.edge.chunks.applyHead(head, bodies);
@@ -185,9 +144,10 @@ class ConfigSync {
       }
       this.status.lastOkAt = Date.now();
       this.status.lastError = null;
-      if (r.applied || r.reason === 'up_to_date') this.applySecrets(head, secretsBody);
       if (r.applied) {
+        for (const k of LEGACY_META_KEYS) this.edge.db.run('DELETE FROM meta WHERE key = ?', k);
         this.edge.snapshot.refresh();
+        this.checkSecrets(head);
         this.status.appliedVersion = r.version;
         this.status.lastResult = r;
         this.lastRejectKey = null;
@@ -201,10 +161,11 @@ class ConfigSync {
         return r;
       }
       if (r.reason === 'missing_chunks' && attempt < MAX_ATTEMPTS) continue;
+      if (r.reason === 'missing_chunks' && (r.missing || []).includes('secrets')) this.checkSecrets(head, { missing: true });
       return this.reject(head, r.reason, r.missing ? { missing: r.missing } : {});
     }
     return { applied: false, reason: 'head_inestable' };
   }
 }
 
-module.exports = { ConfigSync, CredentialKeyStore };
+module.exports = { ConfigSync };

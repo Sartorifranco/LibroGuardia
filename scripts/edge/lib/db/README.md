@@ -8,7 +8,7 @@ Base local del hub y de cada controlador. Sin dependencias de Firebase; todo sin
 | `migrations.js` | `migrate(db, {role})`, versión en `meta.schema_version`. Tablas comunes + solo-hub (`presence`, `alarms`, `operators`, `commands`). Idempotente; controller → hub agrega lo que falta. |
 | `chunkStore.js` | Guarda y verifica chunks (sha256 del JSON canónico) y los materializa. `applyHead(head, cuerpos)` todo-o-nada; `configVersion` monotónico (`{applied:false, reason:'stale'}`). |
 | `journal.js` | Eventos append-only con `seq` persistido, ingesta idempotente en el hub (`hub_seq`), `pendingBatch`, `ack`, `purge` (90 días, solo confirmados). |
-| `sqliteSnapshot.js` | Implementa la interfaz `snap` del motor (`findCredential`, `cardholder`, `rightsFor`, `schedule`, `isHoliday`, `door`, `interlockGroup`, `pass`, `isRevoked`, `policy`) + `site()`, `version()`, `refresh()`. |
+| `sqliteSnapshot.js` | Implementa la interfaz `snap` del motor (`findCredential`, `cardholder`, `rightsFor`, `schedule`, `isHoliday`, `door`, `interlockGroup`, `pass`, `isRevoked`, `policy`, `credentialKey`) + `credentialKeyId()`, `site()`, `version()`, `refresh()`. |
 | `index.js` | `openEdgeDb(file, {role, deviceId, myDoorIds})` → `{db, chunks, journal, snapshot, recovered}`. |
 
 ## Uso
@@ -28,8 +28,9 @@ const ev = edge.journal.append({ doorId, side, type: 'access', decision, reason,
 - `doors`: `{ site, policy, doors:[{id, controllerId, ...}], schedules:[{id,...}], holidays:[{date, setId}] | {setId:[fechas]}, interlockGroups:[{id, doorIds, mode}], accessGroups:[{id, doors:'*' | [doorId | {doorId, scheduleId}], scheduleId}] }`
 - `ch-NN`: `{ cardholders:[{id, status, name, validFrom, validTo, accessAll, accessLevels:[groupId | {groupId, scheduleId, validFrom, validTo}], doors:[{doorId, scheduleId}], allowedDoorIds, shiftScheduleId, requiresGrant, credentials:[{type, valueHash, status, validFrom, validTo}]}], credentials?:[{..., cardholderId}] }`. Se reemplaza el bucket entero.
 - `grants-YYYYMMDD`: `{ grants:[{id, cardholderId, doors:[...] | '*', from, to, source, refId, scheduleId?}] }`.
-- `passes`: `{ passes:[{id (qrId), dni, doors, validFrom, validTo, ...}], revoked:[ids] }` (la tabla `revocations` sale de acá).
+- `passes`: `{ passes:[{id (qrId), dni | dniHash, doors, validFrom, validTo, ...}], revoked:[ids] }` (la tabla `revocations` sale de acá; `passes.dni` indexa `dni ?? dniHash`: con clave del sitio el motor busca por `hashCredential('dni', dni, key)`).
 - `operators` (solo hub): `{ operators:[{username, hash, passwordVersion, perms, posts}] }`.
+- `secrets` (hub y controlador): `{ secrets:{credentialKey, keyId, alg} }` → meta `credential_key`, `credential_key_id`, `credential_key_alg` (nunca a logs ni al journal). Es parte del todo-o-nada de `applyHead`: sin él un sitio con clave no reconoce ningún DNI. El hub lo sirve solo a controladores enrolados (LAN firmada). TODO fase 2: cifrado a la clave de cada equipo.
 
 Fechas: ms epoch, ISO o `{_seconds}` → se guardan en ms. `rights` se materializa solo para las puertas del equipo (`myDoorIds`; si no se pasa, las de `doors[].controllerId === deviceId`; hub = todas). `accessAll` (D7) queda como flag de la persona, sin filas: el motor lo lee de `cardholder(id).accessAll`. Un grupo con `doors:'*'` sí genera filas, acotadas a las puertas del equipo. Horario por defecto `24x7` (builtin si no viene en el chunk).
 

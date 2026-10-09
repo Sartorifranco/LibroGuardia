@@ -25,7 +25,10 @@ const newKeyPair = () => {
   return { publicKey, privateKey, raw, pem: publicKey.export({ type: 'spki', format: 'pem' }).toString() };
 };
 
-const signTs = (privateKey, deviceId, ts) => crypto.sign(null, Buffer.from(`${deviceId}.${ts}`), privateKey).toString('base64');
+// Formato del hub (scripts/edge/hub/cloudClient.js tokenSigningPayload).
+const signTs = (privateKey, deviceId, ts) => crypto.sign(null, Buffer.from(`mss-edge-token\n${deviceId}\n${ts}`), privateKey).toString('base64');
+// Formato legado (todavía aceptado por la nube).
+const signTsLegacy = (privateKey, deviceId, ts) => crypto.sign(null, Buffer.from(`${deviceId}.${ts}`), privateKey).toString('base64');
 
 describe('Edge: equipos, enrolamiento y tokens', () => {
   let mem;
@@ -163,13 +166,18 @@ describe('Edge: equipos, enrolamiento y tokens', () => {
     assert.equal(claims.id, undefined);
     assert.equal(claims.exp - claims.iat, 3600);
 
-    const replay = await tokenRequest(enrolled.deviceId, keys, enrolled.refreshToken);
+    const second0 = await tokenRequest(enrolled.deviceId, keys, first.body.refreshToken);
+    assert.equal(second0.status, 200);
+    // Primer replay del anterior: gracia (respuesta posiblemente perdida); segundo: reuso real.
+    const graceReplay = await tokenRequest(enrolled.deviceId, keys, first.body.refreshToken);
+    assert.equal(graceReplay.status, 200);
+    const replay = await tokenRequest(enrolled.deviceId, keys, first.body.refreshToken);
     assert.equal(replay.status, 401);
     assert.equal(replay.body.code, 'REFRESH_REUSED');
     assert.ok(mem.getDoc('devices', enrolled.deviceId).refreshReuseAt);
-
-    const second = await tokenRequest(enrolled.deviceId, keys, first.body.refreshToken);
-    assert.equal(second.status, 200);
+    const older = await tokenRequest(enrolled.deviceId, keys, enrolled.refreshToken);
+    assert.equal(older.status, 401);
+    const second = graceReplay;
 
     const wrongKey = await tokenRequest(enrolled.deviceId, newKeyPair(), second.body.refreshToken);
     assert.equal(wrongKey.status, 401);
@@ -178,6 +186,51 @@ describe('Edge: equipos, enrolamiento y tokens', () => {
     const skewed = await tokenRequest(enrolled.deviceId, keys, second.body.refreshToken, Date.now() - 5 * 60 * 1000);
     assert.equal(skewed.status, 401);
     assert.equal(skewed.body.code, 'CLOCK_SKEW');
+  });
+
+  it('gracia de rotación: respuesta perdida → el anterior sirve UNA vez dentro de 5 min', async () => {
+    const created = await createDevice({ kind: 'hub', name: 'Hub gracia' });
+    const keys = newKeyPair();
+    const enrolled = (await enroll(created.enrollment.code, keys, 'hub', { 'x-forwarded-for': '10.0.0.7' })).body;
+    const t1 = await tokenRequest(enrolled.deviceId, keys, enrolled.refreshToken);
+    assert.equal(t1.status, 200);
+    // El hub "perdió" t1: vuelve a presentar el refresh del enrolamiento.
+    const t2 = await tokenRequest(enrolled.deviceId, keys, enrolled.refreshToken);
+    assert.equal(t2.status, 200, t2.text);
+    assert.notEqual(t2.body.refreshToken, t1.body.refreshToken);
+    // El refresh perdido (t1) ya no vale; el de t2 sí.
+    const lost = await tokenRequest(enrolled.deviceId, keys, t1.body.refreshToken);
+    assert.equal(lost.status, 401);
+    assert.equal(lost.body.code, 'BAD_REFRESH');
+    // La gracia es de una sola vez.
+    const again = await tokenRequest(enrolled.deviceId, keys, enrolled.refreshToken);
+    assert.equal(again.status, 401);
+    assert.equal(again.body.code, 'REFRESH_REUSED');
+    const t3 = await tokenRequest(enrolled.deviceId, keys, t2.body.refreshToken);
+    assert.equal(t3.status, 200);
+  });
+
+  it('gracia vencida (> 5 min) → REFRESH_REUSED', async () => {
+    const created = await createDevice({ kind: 'hub', name: 'Hub gracia vencida' });
+    const keys = newKeyPair();
+    const enrolled = (await enroll(created.enrollment.code, keys, 'hub', { 'x-forwarded-for': '10.0.0.8' })).body;
+    assert.equal((await tokenRequest(enrolled.deviceId, keys, enrolled.refreshToken)).status, 200);
+    const doc = mem.getDoc('devices', enrolled.deviceId);
+    mem.setDoc('devices', enrolled.deviceId, { ...doc, refreshRotatedAt: Date.now() - 6 * 60 * 1000 });
+    const late = await tokenRequest(enrolled.deviceId, keys, enrolled.refreshToken);
+    assert.equal(late.status, 401);
+    assert.equal(late.body.code, 'REFRESH_REUSED');
+  });
+
+  it('firma legada `${deviceId}.${ts}` todavía aceptada', async () => {
+    const created = await createDevice({ kind: 'controller', name: 'Pi legado' });
+    const keys = newKeyPair();
+    const enrolled = (await enroll(created.enrollment.code, keys, 'controller', { 'x-forwarded-for': '10.0.0.9' })).body;
+    const ts = Date.now();
+    const res = await srv.request('POST', '/api/edge/v1/token', {
+      body: { deviceId: enrolled.deviceId, ts, signature: signTsLegacy(keys.privateKey, enrolled.deviceId, ts), refreshToken: enrolled.refreshToken }
+    });
+    assert.equal(res.status, 200, res.text);
   });
 
   it('controlador: token sin custom token de Firebase', async () => {

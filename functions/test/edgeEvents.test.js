@@ -220,12 +220,29 @@ describe('Edge: eventos, heartbeat, comandos, head y live', () => {
     assert.equal(alarm.type, 'duress');
     assert.equal(alarm.state, 'active');
     assert.equal(alarm.critical, true);
-    assert.ok(mem.hasDoc('sites/principal/alarms', 'hub-1_ctl-a_21'));
+    assert.ok(mem.hasDoc('sites/principal/alarms', 'hub-1_held_open_p1'));
     assert.equal(notifications.length, 1);
     assert.equal(notifications[0].type, 'duress_access');
     assert.equal(notifications[0].payload.name, 'Ana');
     assert.equal(notifications[0].payload.doorId, 'p1');
     assert.ok(!mem.hasDoc('entries', 'edge_hub-1_ctl-a_20'), 'la alarma no proyecta entry');
+  });
+
+  it('alarma con la forma del controlador (type alarm + reason + state raised/cleared) → mismo doc', async () => {
+    notifications.length = 0;
+    const raised = ev(25, { type: 'alarm', reason: 'door_forced', decision: null, cardholderId: null, payload: { state: 'raised', detail: 'dps_abierto' } });
+    const res = await postEvents({ hubId: 'hub-1', events: [raised], hubSeqFrom: 25, hubSeqTo: 25 });
+    assert.equal(res.status, 200, res.text);
+    const id = 'hub-1_door_forced_p1';
+    assert.equal(mem.getDoc('sites/principal/alarms', id).type, 'door_forced');
+    assert.equal(mem.getDoc('sites/principal/alarms', id).state, 'active');
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].type, 'edge_alarm');
+    assert.equal(notifications[0].payload.alarmType, 'door_forced');
+    const cleared = ev(26, { type: 'alarm', reason: 'door_forced', decision: null, cardholderId: null, payload: { state: 'cleared' } });
+    await postEvents({ hubId: 'hub-1', events: [cleared], hubSeqFrom: 26, hubSeqTo: 26 });
+    assert.equal(mem.getDoc('sites/principal/alarms', id).state, 'cleared');
+    assert.equal(notifications.length, 1, 'el cleared no manda mail');
   });
 
   it('eventos: solo hub, hubId coherente, ≤200 eventos y secuencia válida', async () => {
