@@ -8,7 +8,8 @@ const {
   saveFleetGpsConfig,
   saveFleetGpsGeofence,
   fetchNearbyFleetAlerts,
-  fetchFleetLiveSnapshot
+  fetchFleetLiveSnapshot,
+  invalidateFleetLookupCache
 } = require('../fleetGps');
 const {
   auth,
@@ -50,6 +51,7 @@ router.post('/api/admin/fleet/mobiles/upload', auth, requirePermission('fleet.up
       batch.set(ref, { name: item.name.trim() });
     });
     await batch.commit();
+    invalidateFleetLookupCache();
 
     res.status(200).json({ message: 'Lista de móviles actualizada exitosamente.' });
   } catch (err) {
@@ -217,6 +219,7 @@ router.post('/api/admin/fleet/vehicles/upload', auth, requirePermission('master.
       });
     });
     await batch.commit();
+    invalidateFleetLookupCache();
     res.status(200).json({ message: 'Vehículos autorizados cargados exitosamente.' });
   } catch (err) {
     sendServerError(res, err, 'Error al cargar vehículos autorizados');
