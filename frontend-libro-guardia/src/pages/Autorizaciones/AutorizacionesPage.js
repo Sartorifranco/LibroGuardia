@@ -156,7 +156,7 @@ function AutorizacionesPage() {
       return;
     }
     try {
-      const data = await apiFetch(`/requests/${row.id}/reject`, {
+      await apiFetch(`/requests/${row.id}/reject`, {
         method: 'POST',
         token: authToken,
         body: { nota: rejectNote.trim() }
