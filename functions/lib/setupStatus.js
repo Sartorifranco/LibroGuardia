@@ -64,10 +64,14 @@ const computeSetupStatus = (facts = {}, now = Date.now()) => {
   const companyName = String(facts.companyName || '').trim();
   const areas = (facts.areas || []).filter((area) => area && area.id && area.id !== 'exterior');
   const doors = (facts.doors || []).filter((door) => door && door.active !== false);
-  const doorsWithPlaces = doors.filter((door) => {
+  const doorConnectsPlaces = (door) => {
     const inn = door.sides && door.sides.in;
-    return inn && inn.zoneFrom && inn.zoneTo && inn.zoneFrom !== inn.zoneTo;
-  });
+    const from = String((inn && inn.zoneFrom) || '').trim();
+    const to = String((inn && inn.zoneTo) || '').trim();
+    return Boolean(from && to && from !== to);
+  };
+  const doorsMissingPlaces = doors.filter((door) => !doorConnectsPlaces(door));
+  const lugaresReady = doors.length > 0 && doorsMissingPlaces.length === 0;
   const devices = facts.devices || [];
   const installedOnline = devices.filter((device) => deviceOnline(device, now));
   const schedules = (facts.schedules || []).filter((item) => item && item.id !== '24x7');
@@ -94,7 +98,10 @@ const computeSetupStatus = (facts = {}, now = Date.now()) => {
       what: 'Al menos una puerta que conecta dos lugares.',
       why: 'Sin puertas cargadas nadie puede entrar ni salir por el sistema.',
       section: areas.length ? 'puertas' : 'lugares',
-      status: doorsWithPlaces.length >= 1 ? 'done' : 'pending'
+      status: lugaresReady ? 'done' : 'pending',
+      ...(doorsMissingPlaces.length
+        ? { detail: 'Falta indicar qué lugares conecta en alguna puerta.' }
+        : {})
     }),
     step({
       id: 'equipos',

@@ -1,4 +1,4 @@
-import { applyAirlockChoice, readersForDraft, sidesFromPlaces, swapPlaces, validateSimpleDoor } from './doorForm';
+import { applyAirlockChoice, placesNeedChoice, readersForDraft, sidesFromPlaces, swapPlaces, validateSimpleDoor } from './doorForm';
 
 describe('formulario simple de puerta', () => {
   const base = {
@@ -18,6 +18,13 @@ describe('formulario simple de puerta', () => {
       { id: 'INGRESO_P1', direction: 'ingreso', side: 'in' }
     ]);
     expect(readersForDraft({ doorCode: 'P1', readersMode: 'both' }).map((reader) => reader.side)).toEqual(['in', 'out']);
+  });
+
+  test('un lado vacío o repetido pide elegir lugares', () => {
+    expect(placesNeedChoice('', 'planta')).toBe(true);
+    expect(placesNeedChoice('planta', '')).toBe(true);
+    expect(placesNeedChoice('planta', 'planta')).toBe(true);
+    expect(placesNeedChoice('exterior', 'planta')).toBe(false);
   });
 
   test('acepta una puerta con dos lugares distintos', () => {

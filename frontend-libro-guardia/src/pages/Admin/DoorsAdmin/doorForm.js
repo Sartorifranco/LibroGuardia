@@ -26,6 +26,13 @@ export function placesFromDoor(door = {}) {
   };
 }
 
+/** Falta un lado, o los dos son el mismo lugar. */
+export function placesNeedChoice(placeA, placeB) {
+  const from = String(placeA || '').trim();
+  const to = String(placeB || '').trim();
+  return !from || !to || from === to;
+}
+
 export function swapPlaces(placeA, placeB) {
   return {
     placeA: placeB || '',

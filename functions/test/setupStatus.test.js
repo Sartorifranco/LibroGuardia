@@ -68,6 +68,38 @@ test('un equipo apagado no cuenta como en línea y aparece en el tablero', () =>
   assert.equal(status.board.devicesProblem[0].name, 'Portería');
 });
 
+test('una puerta con el mismo lugar de los dos lados deja el paso pendiente', () => {
+  const status = computeSetupStatus({
+    ...ready,
+    doors: [
+      { id: 'p1', active: true, sides: { in: { zoneFrom: 'exterior', zoneTo: 'planta' } } },
+      { id: 'vieja', active: true, sides: { in: { zoneFrom: 'planta', zoneTo: 'planta' } } }
+    ]
+  });
+  const step = status.steps.find((item) => item.id === 'lugares');
+  assert.equal(step.status, 'pending');
+  assert.match(step.detail, /Falta indicar qué lugares conecta/);
+});
+
+test('una puerta sin lados no cuenta como hecha', () => {
+  const status = computeSetupStatus({
+    ...ready,
+    doors: [{ id: 'p1', active: true, name: 'Sin lados' }]
+  });
+  assert.equal(status.steps.find((item) => item.id === 'lugares').status, 'pending');
+});
+
+test('una puerta pausada sin lugares no frena el paso si hay otra bien cargada', () => {
+  const status = computeSetupStatus({
+    ...ready,
+    doors: [
+      { id: 'p1', active: true, sides: { in: { zoneFrom: 'exterior', zoneTo: 'planta' } } },
+      { id: 'p2', active: false }
+    ]
+  });
+  assert.equal(status.steps.find((item) => item.id === 'lugares').status, 'done');
+});
+
 test('Siempre alcanza como horario, pero faltan los feriados del año', () => {
   const status = computeSetupStatus({ ...ready, schedules: [], holidayDates: [] });
   const step = status.steps.find((item) => item.id === 'horarios');
