@@ -63,6 +63,26 @@ describe('máquina de estados de puerta', () => {
     assert.deepEqual(t.alarms(), []);
   });
 
+  it('sin heldOpenSec: alarma a los 30 s y se cierra sola al cerrar la puerta', () => {
+    assert.equal(doorParams({ unlockSec: 3 }, { inputs: { dps: true } }).heldOpenMs, 30_000);
+    assert.equal(doorParams({ heldOpenSec: 12 }, {}).heldOpenMs, 12_000);
+    const t = setup({ door: { unlockSec: 3 } });
+    t.r.dispatch({ type: 'unlock', ms: 3000 });
+    t.r.input('dps', 'open');
+    t.clock.advance(60);
+    assert.equal(t.st(), STATES.ABIERTA_AUT);
+    t.clock.advance(29_000);
+    assert.equal(t.st(), STATES.ABIERTA_AUT);
+    t.clock.advance(1_000);
+    assert.equal(t.st(), STATES.RETENIDA);
+    assert.deepEqual(t.alarms(), ['held_open:raised']);
+    t.r.input('dps', 'closed');
+    t.clock.advance(60);
+    assert.equal(t.st(), STATES.SEGURA);
+    assert.deepEqual(t.alarms(), ['held_open:raised', 'held_open:cleared']);
+    assert.deepEqual(t.outputs(), ['lock']);
+  });
+
   it('retenida: abierta más de heldOpenSec → RETENIDA + held_open; se limpia al cerrar', () => {
     const t = setup();
     t.r.dispatch({ type: 'unlock', ms: 3000 });

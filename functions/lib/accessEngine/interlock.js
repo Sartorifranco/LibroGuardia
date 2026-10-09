@@ -13,6 +13,8 @@
 
 const FORCE_PERMISSION = 'puertas.estanco.forzar';
 const MIN_FORCE_REASON_LENGTH = 5;
+/** La otra hoja no está cerrada: el escaneo espera, no es un error del sistema. */
+const OPEN_DOOR_STATES = new Set(['DESBLOQUEADA', 'ABIERTA_AUT', 'RETENIDA', 'FORZADA']);
 
 /** Copia de doorController.js: tras abrir la interior, el estanco vuelve a idle a los 3 s. */
 const INNER_OPEN_RESET_MS = 3000;
@@ -178,12 +180,17 @@ const evaluateInterlock = ({
       : { groupId: group.id, phase: 'inner_open', innerOpenedAtMs: at,
         outerOpenedAtMs: data.outerOpenedAtMs ?? null, entryDoorId: data.entryDoorId ?? null };
     if (check.allowed) return { allowed: true, reason: null, phase, effect };
+    // La otra puerta está en su fase abierta: se pide reescanear, no es falla del equipo.
+    const otherOpenPhase = (role === 'inner' && phase === 'outer_open')
+      || (role === 'outer' && phase === 'inner_open');
+    let reason = 'estanco_ocupado';
+    if (!manual && role === 'inner' && (phase === 'idle' || phase === 'inner_open')) {
+      reason = 'debe_ingresar_por_exterior';
+    } else if (!manual && otherOpenPhase) reason = 'estanco_esperar';
     blocked = {
       phase,
       message: check.message,
-      reason: (!manual && role === 'inner' && (phase === 'idle' || phase === 'inner_open'))
-        ? 'debe_ingresar_por_exterior'
-        : 'estanco_ocupado',
+      reason,
       effect
     };
   } else {
@@ -191,10 +198,13 @@ const evaluateInterlock = ({
     const notSecure = others.filter((d) => !isDoorSecure(doorStates[d], doorLookup(d)?.sensorsRequired));
     if (!notSecure.length) return { allowed: true, reason: null, phase: 'sensor', effect: null };
     const names = notSecure.map((d) => doorLookup(d)?.name || d).join(', ');
+    const otherOpen = notSecure.some((id) => OPEN_DOOR_STATES.has(doorStates[id] && doorStates[id].state));
     blocked = {
       phase: 'sensor',
-      message: `No se puede abrir: la otra puerta del estanco (${names}) no está cerrada y trabada.`,
-      reason: 'estanco_ocupado',
+      message: otherOpen && !manual
+        ? `Esperá a que se cierre la otra puerta del estanco (${names}) y volvé a escanear.`
+        : `No se puede abrir: la otra puerta del estanco (${names}) no está cerrada y trabada.`,
+      reason: otherOpen && !manual ? 'estanco_esperar' : 'estanco_ocupado',
       effect: null
     };
   }
@@ -235,5 +245,6 @@ module.exports = {
   evaluateManualAirlockPhase,
   canForce,
   isDoorSecure,
-  evaluateInterlock
+  evaluateInterlock,
+  OPEN_DOOR_STATES
 };

@@ -4,6 +4,7 @@ const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { SKIP, siteBodies, createTestController, tmpDir, rmDir } = require('./_fixture');
 const { FORCE_PERMISSION } = require('../../../functions/lib/accessEngine/interlock');
+const { hashCredential } = require('../../../functions/lib/accessEngine');
 
 const pulses = (out) => out.calls.filter((c) => c.op === 'pulse' && !c.failed).map((c) => c.ms);
 
@@ -89,6 +90,72 @@ describe('controlador: decisión local → pulso → journal', { skip: SKIP }, (
   });
 });
 
+describe('controlador: anti-colado (puerta abierta)', { skip: SKIP }, () => {
+  let t;
+  afterEach(async () => { if (t) await t.cleanup(); t = null; });
+
+  it('cinco personas distintas con la puerta abierta: 5 concedidos, 1 pulso, 0 errores', async () => {
+    t = await createTestController();
+    const bodies = siteBodies();
+    const extra = [
+      ['dora', '40111001', 'Dora'],
+      ['eva', '40111002', 'Eva'],
+      ['fer', '40111003', 'Fer'],
+      ['gabi', '40111004', 'Gabi']
+    ];
+    for (const [id, dni, name] of extra) {
+      bodies['ch-00'].cardholders.push({
+        id, status: 'active', name, accessLevels: ['grp_total'],
+        credentials: [{ type: 'dni', valueHash: hashCredential('dni', dni), status: 'active' }]
+      });
+    }
+    t.hub.publish(2, bodies);
+    const applied = await t.controller.configSync.sync();
+    assert.equal(applied.applied, true);
+
+    const first = await t.scan('p1', 'ana');
+    assert.equal(first.decision, 'grant');
+    assert.equal(first.reason, 'nivel_acceso');
+    assert.equal(t.controller.doors.get('p1').runner.state.state, 'DESBLOQUEADA');
+    assert.equal(pulses(t.outputs.p1).length, 1);
+
+    t.clock.advance(1000);
+    const dup = await t.scan('p1', 'ana');
+    assert.equal(dup.decision, 'ignored');
+    assert.equal(dup.duplicate, true);
+    assert.equal(t.events('access').length, 1);
+
+    const second = await t.scan('p1', '40111001');
+    assert.equal(second.decision, 'grant');
+    assert.equal(second.reason, 'paso_registrado_puerta_abierta');
+    assert.equal(second.message, 'Paso registrado.');
+    assert.equal(pulses(t.outputs.p1).length, 1, 'sigue destrabada: se extiende, no hay otro pulso');
+    t.clock.advance(2500);
+    assert.equal(t.controller.doors.get('p1').runner.state.state, 'DESBLOQUEADA', 'la ventana se extendió');
+
+    t.controller.simInput('p1', 'dps', 'open');
+    t.clock.advance(60);
+    assert.equal(t.controller.doors.get('p1').runner.state.state, 'ABIERTA_AUT');
+    for (const dni of ['40111002', '40111003', '40111004']) {
+      const r = await t.scan('p1', dni);
+      assert.equal(r.decision, 'grant');
+      assert.equal(r.reason, 'paso_registrado_puerta_abierta');
+      assert.equal(r.status, undefined);
+    }
+    assert.equal(pulses(t.outputs.p1).length, 1);
+    const granted = t.events('access').filter((e) => e.decision === 'grant');
+    assert.equal(granted.length, 5);
+    assert.equal(t.events('access').filter((e) => e.reason === 'error_interno').length, 0);
+
+    const bad = await t.scan('p1', 'beto');
+    assert.equal(bad.decision, 'deny');
+    assert.equal(bad.reason, 'puerta_no_autorizada');
+    const denied = t.events('access').filter((e) => e.decision === 'deny');
+    assert.equal(denied.length, 1);
+    assert.ok(denied[0].payload.warnings.includes('intento_con_puerta_abierta'));
+  });
+});
+
 describe('controlador: estanco (interlock)', { skip: SKIP }, () => {
   let t;
   afterEach(async () => { if (t) await t.cleanup(); t = null; });
@@ -103,7 +170,8 @@ describe('controlador: estanco (interlock)', { skip: SKIP }, () => {
 
     const blocked = await t.scan('p2', 'ana');
     assert.equal(blocked.decision, 'deny');
-    assert.equal(blocked.reason, 'estanco_ocupado');
+    assert.equal(blocked.reason, 'estanco_esperar');
+    assert.match(blocked.message, /Esperá a que se cierre la otra puerta/);
     assert.deepEqual(pulses(t.outputs.p2), []);
 
     const manual = await t.controller.openDoor('p2', { requestedBy: { id: 'g1', permissions: [] }, reason: '' });
@@ -149,7 +217,8 @@ describe('controlador: estanco (interlock)', { skip: SKIP }, () => {
     assert.equal(outer.decision, 'grant');
     assert.equal(t.controller.interlockState.est1.phase, 'outer_open');
     const early = await t.scan('p2', 'ana');
-    assert.equal(early.reason, 'estanco_ocupado');
+    assert.equal(early.reason, 'estanco_esperar');
+    assert.equal(early.decision, 'deny');
     t.clock.advance(7100); // outerCloseDelay 5 s + interDoorDelay 2 s
     const inner = await t.scan('p2', 'ana');
     assert.equal(inner.decision, 'grant');

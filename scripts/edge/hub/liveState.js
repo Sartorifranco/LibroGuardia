@@ -25,6 +25,7 @@
 const crypto = require('crypto');
 const { readMeta, writeMeta } = require('../lib/db/migrations');
 const { canonicalJson } = require('../lib/db/chunkStore');
+const { evaluateSoftApb, passageKey } = require('./apbMonitor');
 
 // Mantener en sincronía con functions/lib/edgeIngest.js ALARM_TYPES.
 const ALARM_TYPES = new Set([
@@ -71,9 +72,90 @@ class LiveState {
     this.stats = { posts: 0, skippedUnchanged: 0, skippedThrottle: 0 };
   }
 
+  /** Política del sitio. Sin `apbMode` explícito, el antipassback blando queda activo. */
+  apbMode() {
+    try {
+      const p = this.edge.snapshot && typeof this.edge.snapshot.policy === 'function'
+        ? this.edge.snapshot.policy() : null;
+      const mode = p && p.apbMode;
+      if (mode === 'off' || mode === 'soft' || mode === 'hard') return mode;
+      return 'soft';
+    } catch (_) {
+      return 'soft';
+    }
+  }
+
+  /**
+   * Antipassback blando sobre un paso concedido, ANTES de mover la presencia.
+   * Escribe los warnings en el evento y, si corresponde, levanta `posible_colado`.
+   * @returns {object|null} alerta para el journal (se agrega fuera de la transacción)
+   */
+  reviewApb(e) {
+    const door = e.doorId && this.edge.snapshot && typeof this.edge.snapshot.door === 'function'
+      ? this.edge.snapshot.door(e.doorId) : null;
+    const key = passageKey(e);
+    let current = null;
+    if (key) {
+      const row = this.db.get('SELECT area_id FROM presence WHERE cardholder_id = ?', key);
+      current = row ? row.area_id : null;
+    }
+    const result = evaluateSoftApb({
+      mode: this.apbMode(),
+      event: e,
+      door,
+      currentAreaId: current,
+      isExterior: (id) => this.isExterior(id),
+      personName: this.personName(key),
+      doorName: (door && door.name) || e.doorId || null
+    });
+    if (result.warnings.length) {
+      const payload = { ...(e.payload || {}) };
+      const prev = Array.isArray(payload.warnings) ? payload.warnings : [];
+      payload.warnings = prev.slice();
+      for (const w of result.warnings) if (!payload.warnings.includes(w)) payload.warnings.push(w);
+      e.payload = payload;
+      if (e.id) this.db.run('UPDATE events SET payload_json = ? WHERE id = ?', JSON.stringify(payload), e.id);
+    }
+    if (!result.alert) return null;
+    this.raiseAlarm({
+      type: 'alarm',
+      reason: 'posible_colado',
+      doorId: result.alert.doorId,
+      deviceId: e.deviceId,
+      ts: result.alert.ts || e.ts
+    });
+    return result.alert;
+  }
+
+  /** Evento de alerta para la nube y el guardia (nombre, puerta, hora, severidad media). */
+  appendColado(alert) {
+    if (!this.edge.journal || typeof this.edge.journal.append !== 'function') return;
+    try {
+      this.edge.journal.append({
+        type: 'alarm',
+        reason: 'posible_colado',
+        doorId: alert.doorId || null,
+        cardholderId: alert.cardholderId || null,
+        ts: alert.ts || this.now(),
+        payload: {
+          state: 'raised',
+          severity: 'media',
+          name: alert.name || null,
+          doorId: alert.doorId || null,
+          doorName: alert.doorName || null,
+          ts: alert.ts || null,
+          cardholderId: alert.cardholderId || null
+        }
+      });
+    } catch (err) {
+      this.log.warn(`[hub] posible_colado: ${err.message}`);
+    }
+  }
+
   /** Aplica los eventos recién ingresados (solo los nuevos). Devuelve true si alguno es alarma. */
   applyEvents(events) {
     let alarm = false;
+    const colados = [];
     this.db.tx(() => {
       for (const e of events) {
         if (isAlarmEvent(e)) {
@@ -83,6 +165,11 @@ class LiveState {
           this.clearAlarm({ ...e, payload: { ...e.payload, alarmType: alarmTypeOf(e) } });
         }
         if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant') {
+          const colado = this.reviewApb(e);
+          if (colado) {
+            alarm = true;
+            colados.push(colado);
+          }
           const fx = e.payload && e.payload.stateEffects;
           if (fx && (fx.presence || fx.pass)) this.applyStateEffects(e, fx);
           else this.updatePresence(e);
@@ -91,6 +178,7 @@ class LiveState {
         else if (e.type === 'alarm_clear') this.clearAlarm(e);
       }
     });
+    for (const c of colados) this.appendColado(c);
     return alarm;
   }
 

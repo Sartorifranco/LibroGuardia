@@ -369,6 +369,9 @@ const buildPersonEntry = ({ person, auths = [], employee = null, key = null, tz 
   if (person.accessAll === true) cardholder.accessAll = true;
   if (person.accessAllScheduleId) cardholder.accessAllScheduleId = String(person.accessAllScheduleId);
   if (Array.isArray(person.accessLevels) && person.accessLevels.length) cardholder.accessLevels = person.accessLevels;
+  // Turno vacío (sch_sin_turno) + citación obligatoria: el motor diría sin_turno
+  // y taparía que hoy no hay citación.
+  if (requiresGrant && shiftScheduleId === NO_SHIFT_SCHEDULE.id) shiftScheduleId = null;
   if (shiftScheduleId) cardholder.shiftScheduleId = shiftScheduleId;
   if (requiresGrant) cardholder.requiresGrant = true;
 
@@ -512,7 +515,7 @@ const buildDoorsChunk = ({ siteId, site = {}, doorsConfig = {}, schedules = [] }
   const policy = {
     tz,
     citacionWindowStrict: Boolean(site.policy && site.policy.citacionWindowStrict),
-    apbMode: (site.policy && site.policy.apbMode) || 'off',
+    apbMode: (site.policy && site.policy.apbMode) || 'soft',
     apbResetMin: Number(site.policy && site.policy.apbResetMin) || 0
   };
   return {
