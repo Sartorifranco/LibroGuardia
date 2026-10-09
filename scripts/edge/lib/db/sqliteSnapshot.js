@@ -6,7 +6,7 @@
  *
  *   findCredential(type, valueHash) cardholder(id) rightsFor(cardholderId, doorId)
  *   schedule(id) isHoliday(ymd, setId) door(id) interlockGroup(doorId) pass(qrIdOrDni)
- *   isRevoked(id) policy() credentialKey()
+ *   isRevoked(id) policy() credentialKey() area(id)
  *
  * Todo sincrónico, statements preparados y cacheados. Los objetos de config chicos
  * (puertas, horarios, estancos, política) se cachean en memoria y se invalidan cuando
@@ -43,7 +43,8 @@ class SqliteSnapshot {
     if (key !== this.cacheKey) {
       this.cacheKey = key;
       this.cache = {
-        doors: new Map(), schedules: new Map(), interlockByDoor: null, policy: undefined, site: undefined, credentialKey: undefined
+        doors: new Map(), schedules: new Map(), interlockByDoor: null, policy: undefined, site: undefined, credentialKey: undefined,
+        areas: undefined
       };
     }
     return this;
@@ -214,6 +215,15 @@ class SqliteSnapshot {
     const cache = this.c();
     if (cache.policy === undefined) cache.policy = parse(readMeta(this.db, 'policy'), {}) || {};
     return cache.policy;
+  }
+
+  /** Área del sitio (chunk doors `areas`), p. ej. {id:'exterior', exterior:true}; null si no existe. */
+  area(id) {
+    const cache = this.c();
+    if (cache.areas === undefined) {
+      cache.areas = new Map((parse(readMeta(this.db, 'areas'), []) || []).map((a) => [String(a.id), a]));
+    }
+    return cache.areas.get(String(id)) || null;
   }
 
   /** Datos del sitio (tz, etc.) del chunk doors. */

@@ -6,8 +6,14 @@
  * `live/summary` para la vista remota.
  *
  * Eventos que entiende (contrato con T5; lo desconocido se ignora sin error):
- *  - type 'access' (o 'passage') con decision 'grant' → movimiento; presencia en `door.sides[side].zoneTo`
- *    (zoneTo null = salió del sitio). Puertas con `sides` en forma array no tienen áreas → sin presencia.
+ *  - type 'access' (o 'passage') con decision 'grant' → movimiento. Presencia: se aplican los
+ *    `payload.stateEffects` que calculó el motor en el controlador:
+ *      presence {[cardholderId | 'pass:<id>']: {areaId, ts}} → tabla presence (área exterior o null
+ *        = salió del sitio → se borra la fila);
+ *      pass {id, status:'ingreso_registrado'|'egreso_registrado', usesDelta?} → meta `hub_pass_state`
+ *        (el egreso hacia el exterior cierra el pase y borra su presencia).
+ *    Sin stateEffects (eventos viejos) se deriva de `door.sides[side].zoneTo`. Puertas con `sides`
+ *    en forma array no tienen áreas → sin presencia.
  *  - type 'door_state' con `payload.state` (o `state`) → door_state. SEGURA restaura held_open/door_forced.
  *  - alarmas: type en ALARM_TYPES o `payload.alarm === true` → alarms (id `${type}:${doorId|deviceId}`).
  *  - type 'alarm_clear' con `payload.alarmType` → alarma 'cleared'.
@@ -26,6 +32,8 @@ const ALARM_TYPES = new Set([
 const RESTORED_BY_SECURE = new Set(['door_forced', 'held_open']);
 const MOVEMENTS = 50;
 const PEOPLE_PER_AREA = 200;
+
+const e2id = (id) => (id === undefined ? null : id);
 
 function isAlarmEvent(e) {
   return ALARM_TYPES.has(e.type) || Boolean(e.payload && e.payload.alarm === true);
@@ -57,7 +65,11 @@ class LiveState {
           alarm = true;
           this.raiseAlarm(e);
         }
-        if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant') this.updatePresence(e);
+        if ((e.type === 'access' || e.type === 'passage') && e.decision === 'grant') {
+          const fx = e.payload && e.payload.stateEffects;
+          if (fx && (fx.presence || fx.pass)) this.applyStateEffects(e, fx);
+          else this.updatePresence(e);
+        }
         else if (e.type === 'door_state') this.updateDoorState(e);
         else if (e.type === 'alarm_clear') this.clearAlarm(e);
       }
@@ -105,6 +117,59 @@ class LiveState {
     }
   }
 
+  /** ¿El área es "fuera del sitio"? (`exterior:true` en el chunk doors, o el id 'exterior'). */
+  isExterior(areaId) {
+    if (!areaId) return true;
+    if (areaId === 'exterior') return true;
+    const s = this.edge.snapshot;
+    const area = typeof s.area === 'function' ? s.area(areaId) : null;
+    return Boolean(area && area.exterior === true);
+  }
+
+  /** Presencia de una clave (cardholderId o 'pass:<id>'); ignora eventos viejos fuera de orden. */
+  setPresence(key, areaId, ts, eventId) {
+    const cur = this.db.get('SELECT ts FROM presence WHERE cardholder_id = ?', key);
+    if (cur && Number(cur.ts) > ts) return;
+    if (this.isExterior(areaId)) {
+      this.db.run('DELETE FROM presence WHERE cardholder_id = ?', key);
+      return;
+    }
+    this.db.run(
+      `INSERT INTO presence(cardholder_id, area_id, ts, event_id) VALUES (?, ?, ?, ?)
+       ON CONFLICT(cardholder_id) DO UPDATE SET area_id = excluded.area_id, ts = excluded.ts, event_id = excluded.event_id`,
+      key, areaId, ts, e2id(eventId)
+    );
+  }
+
+  passState() {
+    try { return JSON.parse(readMeta(this.db, 'hub_pass_state') || '{}') || {}; } catch (_) { return {}; }
+  }
+
+  /** Efectos del motor calculados en el controlador (presencia por zoneTo y estado de pases). */
+  applyStateEffects(e, fx) {
+    const ts = Number(e.ts) || this.now();
+    for (const [key, val] of Object.entries(fx.presence || {})) {
+      if (!key || !val) continue;
+      this.setPresence(key, val.areaId || null, Number(val.ts) || ts, e.id);
+    }
+    const p = fx.pass;
+    if (p && p.id) {
+      const all = this.passState();
+      const prev = all[p.id] || { uses: 0 };
+      if (!(prev.ts && prev.ts > ts)) {
+        all[p.id] = {
+          status: p.status || prev.status || null,
+          uses: (Number(prev.uses) || 0) + (Number(p.usesDelta) || 0),
+          ts,
+          eventId: e.id
+        };
+        writeMeta(this.db, 'hub_pass_state', JSON.stringify(all));
+      }
+      if (p.status === 'egreso_registrado') this.db.run('DELETE FROM presence WHERE cardholder_id = ?', `pass:${p.id}`);
+    }
+  }
+
+  /** Respaldo sin stateEffects: área destino del lado cruzado. */
   updatePresence(e) {
     if (!e.cardholderId || !e.doorId) return;
     const door = this.edge.snapshot.door(e.doorId);
@@ -112,22 +177,15 @@ class LiveState {
     if (!sides || Array.isArray(sides)) return;
     const side = sides[e.side];
     if (!side || !('zoneTo' in side)) return;
-    const ts = Number(e.ts) || this.now();
-    const cur = this.db.get('SELECT ts FROM presence WHERE cardholder_id = ?', e.cardholderId);
-    if (cur && Number(cur.ts) > ts) return;
-    if (side.zoneTo) {
-      this.db.run(
-        `INSERT INTO presence(cardholder_id, area_id, ts, event_id) VALUES (?, ?, ?, ?)
-         ON CONFLICT(cardholder_id) DO UPDATE SET area_id = excluded.area_id, ts = excluded.ts, event_id = excluded.event_id`,
-        e.cardholderId, side.zoneTo, ts, e.id
-      );
-    } else {
-      this.db.run('DELETE FROM presence WHERE cardholder_id = ?', e.cardholderId);
-    }
+    this.setPresence(e.cardholderId, side.zoneTo || null, Number(e.ts) || this.now(), e.id);
   }
 
   personName(id) {
     try {
+      if (id && String(id).startsWith('pass:')) {
+        const p = this.edge.snapshot.pass(String(id).slice(5));
+        return (p && p.name) || null;
+      }
       const ch = id ? this.edge.snapshot.cardholder(id) : null;
       return (ch && ch.name) || null;
     } catch (_) {

@@ -355,6 +355,8 @@ class ChunkStore {
     }
     writeMeta(db, 'policy', json(body.policy ?? body.policies ?? {}));
     writeMeta(db, 'site', json(body.site ?? {}));
+    // Áreas (presencia/APB; `exterior:true` = fuera del sitio). Pocas: van en meta.
+    writeMeta(db, 'areas', json(asArray(body.areas).filter((a) => a && a.id)));
     // Cambian puertas/grupos → rematerializar rights directos y por grupo de todas las personas.
     this.rebuildPersonRights();
   }
