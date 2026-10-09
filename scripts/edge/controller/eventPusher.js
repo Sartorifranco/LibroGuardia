@@ -8,6 +8,7 @@
  *    Un ack parcial deja el resto para el próximo envío. Reintentos idempotentes: el id es deviceId:seq.
  *  - Falla → espera 1 s, 2 s, 4 s … hasta 60 s. Con lote vacío se manda igual cada heartbeatMs (heartbeat + estado).
  *  - kick() fuerza un envío ya (evento nuevo), salvo que se esté en backoff.
+ *    Si el envío anterior sigue en vuelo, el evento entra en el lote siguiente en cuanto ese termina.
  */
 
 const { nullLogger } = require('../drivers/logger');
@@ -35,6 +36,7 @@ class EventPusher {
     this.failures = 0;
     this.timer = null;
     this.inFlight = null;
+    this.again = false;
     this.stopped = true;
     this.status = { lastOkAt: null, lastError: null, lastAckSeq: null, sent: 0, failures: 0, nextAttemptAt: null };
   }
@@ -85,9 +87,12 @@ class EventPusher {
     this.inFlight = (async () => {
       const r = await this.pushOnce();
       this.inFlight = null;
+      const again = this.again;
+      this.again = false;
+      if (this.stopped) return r;
       if (!r.ok) this.schedule(this.backoffMs());
-      else if (r.more) this.schedule(0);
-      else this.schedule(this.heartbeatMs);
+      else if (r.more || again) this.schedule(0);
+      else if (!this.timer) this.schedule(this.heartbeatMs);
       return r;
     })();
     return this.inFlight;
@@ -100,7 +105,11 @@ class EventPusher {
 
   /** Hay un evento nuevo: enviar pronto (respetando el backoff si el hub está caído). */
   kick() {
-    if (this.stopped || this.failures > 0 || this.inFlight) return;
+    if (this.stopped || this.failures > 0) return;
+    if (this.inFlight) {
+      this.again = true;
+      return;
+    }
     this.schedule(50);
   }
 
