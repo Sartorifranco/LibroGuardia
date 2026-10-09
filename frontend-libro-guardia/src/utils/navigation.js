@@ -8,7 +8,8 @@ import {
   ShieldCheck,
   CalendarCheck,
   DoorOpen,
-  BarChart3
+  BarChart3,
+  Bell
 } from 'lucide-react';
 import { canAccessAdmin, canAccessEmpleado, canAccessGuardia, hasPermission } from './permissions';
 
@@ -36,6 +37,7 @@ export const GUARDIA_TAB_SEGMENTS = {
   autorizados: 'autorizados',
   vehiculosAutorizados: 'vehiculos-autorizados',
   botonera: 'botonera',
+  alarmas: 'alarmas',
   // Ventana dedicada (segundo monitor)
   'botonera-ventana': 'botonera-ventana',
   // Alias legados → misma botonera unificada
@@ -181,7 +183,29 @@ export const getDefaultAdminSection = (user) => {
   return 'users';
 };
 
-export const buildSidebarItems = (user) => {
+/**
+ * En modo planta solo se muestra lo que el hub declara en capabilities.
+ * Lo que no está (admin, reportes, flota, citaciones) no aparece en el menú.
+ * null = siempre visible en planta. Clave ausente = oculto.
+ */
+export const LAN_FEATURE_CAPABILITY = {
+  inicio: null,
+  botonera: 'doors',
+  'botonera-ventana': 'doors',
+  historial: 'entries',
+  allRecords: 'entries',
+  alarmas: 'alarms',
+  kiosk: 'scan'
+};
+
+export function isLanFeatureAllowed(featureId, capabilities = []) {
+  if (!Object.prototype.hasOwnProperty.call(LAN_FEATURE_CAPABILITY, featureId)) return false;
+  const need = LAN_FEATURE_CAPABILITY[featureId];
+  if (need == null) return true;
+  return capabilities.includes(need);
+}
+
+export const buildSidebarItems = (user, runtime = null) => {
   if (!user) return [];
 
   const profile = user.dashboardProfile || user.role;
@@ -293,7 +317,15 @@ export const buildSidebarItems = (user) => {
     });
   }
 
-  return items;
+  if (!runtime || runtime.mode !== 'lan') return items;
+  const caps = Array.isArray(runtime.capabilities) ? runtime.capabilities : [];
+  const filtered = items.filter((item) => isLanFeatureAllowed(item.id, caps));
+  if (caps.includes('alarms') && !filtered.some((item) => item.id === 'alarmas')) {
+    const alarmItem = { id: 'alarmas', label: 'Alarmas', icon: Bell };
+    const at = filtered.findIndex((item) => item.id === 'botonera');
+    filtered.splice(at >= 0 ? at + 1 : filtered.length, 0, alarmItem);
+  }
+  return filtered;
 };
 
 export const getProfileKicker = (user) => {

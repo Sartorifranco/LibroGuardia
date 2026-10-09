@@ -15,6 +15,7 @@ import { useOfflineQueue } from '../context/OfflineQueueContext';
 import { useClockPrefill } from '../context/ClockPrefillContext';
 import { useTheme } from '../hooks/useTheme';
 import { buildSidebarItems, guardiaPath, adminPath, getDefaultAdminSection } from '../utils/navigation';
+import { useRuntime } from '../context/RuntimeContext';
 import { openBotoneraWindow } from '../utils/openBotoneraWindow';
 import { saveAuthManualPrefill } from '../utils/authPrefill';
 import { isOnboardingDone } from '../components/OnboardingTour';
@@ -23,6 +24,7 @@ const AppChromeContext = createContext(null);
 
 export function AppChromeProvider({ children }) {
   const { authToken, currentUser, logout, changePassword } = useAuth();
+  const { mode: runtimeMode, capabilities: runtimeCapabilities } = useRuntime();
   const { error, successMessage, showSuccess, showError, setError, setSuccessMessage } = useToast();
   const { reloadEntries } = useEntries();
   const { pendingCount } = useOfflineQueue();
@@ -76,8 +78,10 @@ export function AppChromeProvider({ children }) {
   }, [reloadEntries, showSuccess]);
 
   const sidebarItems = useMemo(
-    () => (currentUser ? buildSidebarItems(currentUser) : []),
-    [currentUser]
+    () => (currentUser
+      ? buildSidebarItems(currentUser, { mode: runtimeMode, capabilities: runtimeCapabilities })
+      : []),
+    [currentUser, runtimeMode, runtimeCapabilities]
   );
 
   const enterAdminPanel = useCallback(() => {
