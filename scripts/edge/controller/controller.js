@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const { decide } = require('../../../functions/lib/accessEngine');
 const { reasonMessage } = require('../../../functions/lib/accessEngine/reasons.es');
+const { DEFAULT_POLICY } = require('../../../functions/lib/accessEngine/snapshotSchema');
 const { FORCE_PERMISSION } = require('../../../functions/lib/accessEngine/interlock');
 const { openEdgeDb } = require('../lib/db');
 const lanSign = require('../lib/lanSign');
@@ -69,7 +70,7 @@ class Controller {
     this.doors = new Map(); // id → {cfg, runner, output, input, readers}
     this.interlockState = {}; // groupId → estado 'timed'
     this.lastPulseAt = new Map(); // doorId → ms (cooldown)
-    this.lastScan = new Map(); // `${doorId}|${credHash}` → ms (doble lectura)
+    this.lastPassage = new Map(); // `${cardholderId}|${doorId}|${side}` → {at, eventId, decision}
     this.approvals = new Map();
     this.emergencySources = new Set();
     this.started = false;
@@ -325,6 +326,73 @@ class Controller {
     }
   }
 
+  // ───────────────────────────── lectura repetida ─────────────────────────────
+
+  /**
+   * Ventana (ms) en la que otra lectura de la misma persona, puerta y lado
+   * no es un paso nuevo. La puerta manda; si no trae valor, la política del sitio;
+   * si tampoco, 15 s.
+   */
+  repeatWindowMs(doorId) {
+    const snap = this.snap();
+    const door = snap && typeof snap.door === 'function' ? snap.door(doorId) : null;
+    const policy = snap && typeof snap.policy === 'function' ? snap.policy() : null;
+    const raw = door && door.repeatWindowSec != null
+      ? door.repeatWindowSec
+      : (policy && policy.repeatWindowSec != null ? policy.repeatWindowSec : DEFAULT_POLICY.repeatWindowSec);
+    const sec = Number(raw);
+    const chosen = Number.isFinite(sec) && sec >= 0 ? sec : DEFAULT_POLICY.repeatWindowSec;
+    return Math.round(chosen * 1000);
+  }
+
+  /**
+   * Último paso real (no lectura_repetida) de esta persona en esta puerta y lado.
+   * Memoria del proceso, y si reinició, el journal local.
+   */
+  anchorPassage(cardholderId, doorId, side) {
+    const key = `${cardholderId}|${doorId}|${side}`;
+    const mem = this.lastPassage.get(key);
+    if (mem) return mem;
+    const row = this.edge.db.get(
+      `SELECT id, ts, decision FROM events
+       WHERE type = 'access' AND cardholder_id = ? AND door_id = ? AND side = ?
+         AND ifnull(reason, '') != 'lectura_repetida'
+         AND decision IN ('grant', 'deny')
+       ORDER BY ts DESC, seq DESC LIMIT 1`,
+      cardholderId, doorId, side
+    );
+    if (!row) return null;
+    const found = { at: Number(row.ts), eventId: row.id, decision: row.decision };
+    this.lastPassage.set(key, found);
+    return found;
+  }
+
+  /**
+   * Misma persona, misma puerta y lado, mismo resultado (concedido o denegado),
+   * dentro de la ventana del último paso real. null si esta lectura es un paso nuevo.
+   */
+  matchRepeat(decision, doorId, side) {
+    const id = decision && decision.cardholderId;
+    if (!id || (decision.decision !== 'grant' && decision.decision !== 'deny')) return null;
+    const prev = this.anchorPassage(id, doorId, side);
+    if (!prev || prev.decision !== decision.decision || !prev.eventId) return null;
+    const nowMs = this.now();
+    if (!Number.isFinite(prev.at) || nowMs < prev.at) return null;
+    if (nowMs - prev.at >= this.repeatWindowMs(doorId)) return null;
+    return prev;
+  }
+
+  rememberPassage(evt) {
+    if (!evt || !evt.cardholderId || !evt.doorId || !evt.side) return;
+    if (evt.reason === 'lectura_repetida') return;
+    if (evt.decision !== 'grant' && evt.decision !== 'deny') return;
+    this.lastPassage.set(`${evt.cardholderId}|${evt.doorId}|${evt.side}`, {
+      at: Number(evt.ts),
+      eventId: evt.id,
+      decision: evt.decision
+    });
+  }
+
   // ───────────────────────────── credenciales ─────────────────────────────
 
   /**
@@ -358,19 +426,36 @@ class Controller {
       decision = { decision: 'deny', reason: 'error_interno', message: reasonMessage('error_interno'), actions: [], stateEffects: {}, warnings: [], side, cardholderId: null, credentialHash: null };
     }
 
-    // Doble lectura del mismo documento en la misma puerta dentro del cooldown: se ignora.
-    const dupKey = `${cred.doorId}|${decision.credentialHash || cred.type}`;
-    const lastScan = this.lastScan.get(dupKey);
-    const nowMono = this.clock.now();
-    if (decision.credentialHash && lastScan !== undefined && nowMono - lastScan < this.config.cooldownMs) {
-      this.logger.debug('Lectura repetida ignorada', { doorId: cred.doorId });
-      return { decision: 'ignored', reason: 'lectura_repetida', duplicate: true };
-    }
-    if (decision.credentialHash) this.lastScan.set(dupKey, nowMono);
+    const passageSide = decision.side || side;
+    const repeat = this.matchRepeat(decision, cred.doorId, passageSide);
+    const doorOpen = (st) => st === 'DESBLOQUEADA' || st === 'ABIERTA_AUT' || st === 'RETENIDA';
 
     let relay = { relayOk: false, relayConfirmed: false };
     let approvalId = null;
-    if (decision.decision === 'grant') {
+    if (repeat && decision.decision === 'grant') {
+      // Mismo paso: se archiva, no mueve presencia. Pulso solo si la puerta ya se re-trabó.
+      decision = {
+        ...decision,
+        reason: 'lectura_repetida',
+        message: reasonMessage('lectura_repetida'),
+        repeatOf: repeat.eventId,
+        stateEffects: {}
+      };
+      const st = d.runner.state.state;
+      if (doorOpen(st)) {
+        relay = { relayOk: true, relayConfirmed: true, alreadyOpen: true, pulseAttempted: false };
+      } else {
+        relay = await this.executeGrant(decision, { source: 'grant' });
+      }
+    } else if (repeat && decision.decision === 'deny') {
+      decision = {
+        ...decision,
+        originalReason: decision.reason,
+        reason: 'lectura_repetida',
+        message: reasonMessage('lectura_repetida'),
+        repeatOf: repeat.eventId
+      };
+    } else if (decision.decision === 'grant') {
       const st = d.runner.state.state;
       // Puerta ya destrabada o abierta: no hay otro pulso. En DESBLOQUEADA se extiende la ventana.
       if (st === 'DESBLOQUEADA' || st === 'ABIERTA_AUT' || st === 'RETENIDA') {
@@ -412,6 +497,8 @@ class Controller {
         ...(decision.code ? { code: decision.code } : {}),
         ...(decision.detail ? { detail: decision.detail } : {}),
         ...(decision.passId ? { passId: decision.passId } : {}),
+        ...(decision.repeatOf ? { repeatOf: decision.repeatOf } : {}),
+        ...(decision.originalReason ? { originalReason: decision.originalReason } : {}),
         stateEffects: decision.stateEffects && Object.keys(decision.stateEffects).length ? decision.stateEffects : null,
         relayOk: relay.relayOk,
         relayConfirmed: relay.relayConfirmed,
@@ -426,6 +513,7 @@ class Controller {
       }
     });
     if (approvalId) this.approvals.get(approvalId).eventId = evt.id;
+    this.rememberPassage(evt);
     this.logger.info(`Acceso ${decision.decision} (${decision.reason})`, { doorId: cred.doorId, side: decision.side || side, relayConfirmed: relay.relayConfirmed, eventId: evt.id });
     return {
       decision: decision.decision,

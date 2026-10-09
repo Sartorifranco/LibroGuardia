@@ -57,6 +57,7 @@ function evaluateSoftApb({
 }) {
   if (mode === 'off') return EMPTY;
   if (!event || (event.type !== 'access' && event.type !== 'passage') || event.decision !== 'grant') return EMPTY;
+  if (event.reason === 'lectura_repetida') return EMPTY;
 
   const key = passageKey(event);
   if (!key) return EMPTY;

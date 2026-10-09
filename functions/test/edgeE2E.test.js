@@ -327,6 +327,7 @@ describe('Etapa 2 · Hito 1: nube ⇄ hub ⇄ controlador de punta a punta', { s
       assert.equal(g1.decision, 'grant');
       assert.equal(d1.decision, 'deny');
       assert.equal(g2.decision, 'grant');
+      assert.equal(g2.reason, 'lectura_repetida', 'el mismo DNI a los pocos segundos es el mismo paso');
       await waitFor(() => hub.edge.journal.get(g2.id), { what: 'eventos en el hub sin internet' });
       const offline = await hub.uploader.flush({ force: true });
       assert.ok(offline.error, 'sin nube no sube');
@@ -336,7 +337,7 @@ describe('Etapa 2 · Hito 1: nube ⇄ hub ⇄ controlador de punta a punta', { s
       const back = await hub.uploader.flush({ force: true });
       assert.equal(back.error, undefined, JSON.stringify(back));
       assert.equal(hub.edge.journal.stats().pending, 0);
-      assert.equal(cloudEntries().length, entriesBefore + 2, 'dos ingresos concedidos offline');
+      assert.equal(cloudEntries().length, entriesBefore + 1, 'un ingreso: la segunda lectura no crea otro doc');
       const ids = journalEvents().map((e) => e.id);
       assert.equal(new Set(ids).size, ids.length);
       for (const e of [g1, d1, g2]) assert.ok(ids.includes(e.id), `falta ${e.id}`);
@@ -348,9 +349,14 @@ describe('Etapa 2 · Hito 1: nube ⇄ hub ⇄ controlador de punta a punta', { s
       const entriesBefore = cloudEntries().length;
       await hub.stop();
       hub = null;
+      // El paso anterior quedó hace un instante: se corre el ancla para que este DNI sea un paso nuevo.
+      for (const [key, prev] of controller.lastPassage) {
+        controller.lastPassage.set(key, { ...prev, at: prev.at - 60000 });
+      }
       const g = await scan(DNI_OK);
       const d = await scan(DNI_UNKNOWN);
       assert.equal(g.decision, 'grant');
+      assert.notEqual(g.reason, 'lectura_repetida');
       assert.equal(d.decision, 'deny');
       assert.ok(controller.edge.journal.stats().pending >= 2, 'quedan en el controlador');
       await startTheHub(); // misma base: refresh token rotado persistido

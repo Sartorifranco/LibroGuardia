@@ -178,11 +178,14 @@ const crypto = require('node:crypto');
 const CREDENTIAL_TYPES = ['dni', 'card', 'qr', 'biostar', 'pin'];
 const DOOR_STATES = ['SEGURA', 'DESBLOQUEADA', 'ABIERTA_AUT', 'RETENIDA', 'FORZADA', 'FALLA'];
 const DEFAULT_TZ = 'America/Argentina/Buenos_Aires';
+/** Misma persona, misma puerta y lado: segunda lectura dentro de esta ventana no es otro paso. */
+const DEFAULT_REPEAT_WINDOW_SEC = 15;
 const DEFAULT_POLICY = Object.freeze({
   tz: DEFAULT_TZ,
   citacionWindowStrict: false,
   apbMode: 'off',
-  apbResetMin: 0
+  apbResetMin: 0,
+  repeatWindowSec: DEFAULT_REPEAT_WINDOW_SEC
 });
 const SCHEDULE_24X7 = Object.freeze({ id: '24x7', builtin: true, always: true });
 
@@ -281,6 +284,7 @@ const validators = {
     }
     if (d.unlockSec != null && !(isNum(d.unlockSec) && d.unlockSec > 0)) err('unlockSec inválido');
     if (d.heldOpenSec != null && !(isNum(d.heldOpenSec) && d.heldOpenSec > 0)) err('heldOpenSec inválido');
+    if (d.repeatWindowSec != null && !(isNum(d.repeatWindowSec) && d.repeatWindowSec >= 0)) err('repeatWindowSec inválido');
   },
   interlockGroups(g, err) {
     if (!isStr(g.id)) err('id requerido');
@@ -345,6 +349,7 @@ const validators = {
     if (p.tz != null && !isStr(p.tz)) err('tz inválido');
     if (p.apbMode != null && !['off', 'soft', 'hard'].includes(p.apbMode)) err('apbMode inválido');
     if (p.apbResetMin != null && !(isNum(p.apbResetMin) && p.apbResetMin >= 0)) err('apbResetMin inválido');
+    if (p.repeatWindowSec != null && !(isNum(p.repeatWindowSec) && p.repeatWindowSec >= 0)) err('repeatWindowSec inválido');
   },
   site(s, err) { if (s.tz != null && !isStr(s.tz)) err('tz inválido'); },
   operators(o, err) {
@@ -441,6 +446,7 @@ module.exports = {
   DOOR_STATES,
   DEFAULT_TZ,
   DEFAULT_POLICY,
+  DEFAULT_REPEAT_WINDOW_SEC,
   SCHEDULE_24X7,
   ENTITY_KINDS,
   chunkLayout,

@@ -98,7 +98,11 @@ function toEntry(hub, row) {
     denialReason: authorized ? null : (row.reason || null),
     entrySource: 'edge',
     warnings,
-    side: row.side || null
+    side: row.side || null,
+    ...(row.reason === 'lectura_repetida' ? {
+      countsAsPassage: false,
+      repeatOf: payload.repeatOf || null
+    } : {})
   };
 }
 

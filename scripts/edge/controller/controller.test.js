@@ -84,14 +84,18 @@ describe('controlador: decisión local → pulso → journal', { skip: SKIP }, (
     assert.equal((await t.scan('p1', 'carlos', 'out')).reason, 'persona_inactiva');
   });
 
-  it('doble lectura del mismo DNI dentro de 3 s se ignora', async () => {
+  it('el mismo DNI dentro de la ventana queda registrado como lectura repetida', async () => {
     t = await createTestController();
-    await t.scan('p1', 'ana');
+    const first = await t.scan('p1', 'ana');
     const dup = await t.scan('p1', 'ana');
-    assert.equal(dup.decision, 'ignored');
-    assert.equal(t.events('access').length, 1);
-    t.clock.advance(3000);
-    assert.equal((await t.scan('p1', 'ana')).decision, 'grant');
+    assert.equal(dup.decision, 'grant');
+    assert.equal(dup.reason, 'lectura_repetida');
+    assert.equal(t.events('access').length, 2);
+    assert.equal(t.events('access')[1].payload.repeatOf, first.eventId);
+    t.clock.advance(16000);
+    const again = await t.scan('p1', 'ana');
+    assert.equal(again.decision, 'grant');
+    assert.notEqual(again.reason, 'lectura_repetida');
   });
 
   it('salida que falla: grant con relayOk=false y sin efectos de estanco', async () => {
@@ -154,9 +158,10 @@ describe('controlador: anti-colado (puerta abierta)', { skip: SKIP }, () => {
 
     t.clock.advance(1000);
     const dup = await t.scan('p1', 'ana');
-    assert.equal(dup.decision, 'ignored');
-    assert.equal(dup.duplicate, true);
-    assert.equal(t.events('access').length, 1);
+    assert.equal(dup.decision, 'grant');
+    assert.equal(dup.reason, 'lectura_repetida');
+    assert.equal(t.events('access').length, 2);
+    assert.equal(t.events('access')[1].payload.repeatOf, first.eventId);
 
     const second = await t.scan('p1', '40111001');
     assert.equal(second.decision, 'grant');
@@ -177,7 +182,8 @@ describe('controlador: anti-colado (puerta abierta)', { skip: SKIP }, () => {
     }
     assert.equal(pulses(t.outputs.p1).length, 1);
     const granted = t.events('access').filter((e) => e.decision === 'grant');
-    assert.equal(granted.length, 5);
+    assert.equal(granted.length, 6, '5 personas + la lectura repetida de Ana');
+    assert.equal(granted.filter((e) => e.reason !== 'lectura_repetida').length, 5);
     assert.equal(t.events('access').filter((e) => e.reason === 'error_interno').length, 0);
 
     const bad = await t.scan('p1', 'beto');
@@ -499,5 +505,118 @@ describe('controlador: eventos al hub, reinicio y cortes', { skip: SKIP }, () =>
     t.hub.down = false;
     assert.equal((await t.controller.pusher.pushOnce()).ok, true);
     assert.equal(t.edge.journal.stats().pending, 0);
+  });
+});
+
+describe('controlador: lectura repetida de la misma persona', { skip: SKIP }, () => {
+  let t;
+  afterEach(async () => { if (t) await t.cleanup(); t = null; });
+
+  const publish = async (mutate) => {
+    const bodies = siteBodies();
+    mutate(bodies);
+    t.hub.publish(2, bodies);
+    const applied = await t.controller.configSync.sync();
+    assert.equal(applied.applied, true);
+  };
+
+  const scanCard = () => t.controller.handleCredential({
+    type: 'card', value: 'A1B2C3', doorId: 'p1', readerId: 'p1-in', side: 'in'
+  });
+
+  it('credencial y DNI en 6 s: 2 eventos, 1 pulso, el segundo es lectura_repetida', async () => {
+    t = await createTestController();
+    await publish((bodies) => {
+      bodies.doors.doors.find((d) => d.id === 'p1').unlockSec = 30;
+      const ana = bodies['ch-00'].cardholders.find((c) => c.id === 'ana');
+      ana.credentials.push({ type: 'card', valueHash: hashCredential('card', 'A1B2C3'), status: 'active' });
+    });
+    const card = await scanCard();
+    assert.equal(card.decision, 'grant');
+    assert.equal(card.reason, 'nivel_acceso');
+    t.clock.advance(6000);
+    assert.equal(t.controller.doors.get('p1').runner.state.state, 'DESBLOQUEADA');
+    const dni = await t.scan('p1', 'ana');
+    assert.equal(dni.decision, 'grant');
+    assert.equal(dni.reason, 'lectura_repetida');
+    const access = t.events('access');
+    assert.equal(access.length, 2);
+    assert.equal(access[1].payload.repeatOf, card.eventId);
+    assert.equal(access[1].cardholderId, 'ana');
+    assert.equal(access[1].credType, 'dni');
+    assert.equal(access[0].credType, 'card');
+    assert.equal(pulses(t.outputs.p1).length, 1);
+    assert.equal(access.filter((e) => e.reason !== 'lectura_repetida').length, 1);
+  });
+
+  it('si la puerta ya se re-trabó, hay un segundo pulso y sigue siendo un solo paso', async () => {
+    t = await createTestController();
+    await publish((bodies) => {
+      const ana = bodies['ch-00'].cardholders.find((c) => c.id === 'ana');
+      ana.credentials.push({ type: 'card', valueHash: hashCredential('card', 'A1B2C3'), status: 'active' });
+    });
+    const card = await scanCard();
+    assert.equal(card.reason, 'nivel_acceso');
+    t.clock.advance(4000);
+    assert.equal(t.controller.doors.get('p1').runner.state.state, 'SEGURA');
+    const dni = await t.scan('p1', 'ana');
+    assert.equal(dni.reason, 'lectura_repetida');
+    assert.equal(dni.eventId !== card.eventId, true);
+    assert.equal(t.events('access')[1].payload.repeatOf, card.eventId);
+    assert.deepEqual(pulses(t.outputs.p1), [3000, 3000]);
+    assert.equal(t.events('access').filter((e) => e.reason !== 'lectura_repetida').length, 1);
+  });
+
+  it('dos personas distintas son dos pasos', async () => {
+    t = await createTestController();
+    await publish((bodies) => {
+      const beto = bodies['ch-00'].cardholders.find((c) => c.id === 'beto');
+      beto.accessLevels = ['grp_total'];
+    });
+    const ana = await t.scan('p1', 'ana');
+    t.clock.advance(6000);
+    const beto = await t.scan('p1', 'beto');
+    assert.equal(ana.reason, 'nivel_acceso');
+    assert.notEqual(beto.reason, 'lectura_repetida');
+    assert.equal(beto.decision, 'grant');
+    assert.equal(t.events('access').filter((e) => e.reason !== 'lectura_repetida').length, 2);
+  });
+
+  it('a los 20 s el segundo escaneo es un paso nuevo', async () => {
+    t = await createTestController();
+    await t.scan('p1', 'ana');
+    t.clock.advance(20000);
+    const again = await t.scan('p1', 'ana');
+    assert.equal(again.decision, 'grant');
+    assert.notEqual(again.reason, 'lectura_repetida');
+    assert.equal(t.events('access').filter((e) => e.reason !== 'lectura_repetida').length, 2);
+  });
+
+  it('la ventana de la puerta manda sobre el default de 15 s', async () => {
+    t = await createTestController();
+    await publish((bodies) => {
+      bodies.doors.doors.find((d) => d.id === 'p1').repeatWindowSec = 5;
+    });
+    await t.scan('p1', 'ana');
+    t.clock.advance(6000);
+    const again = await t.scan('p1', 'ana');
+    assert.notEqual(again.reason, 'lectura_repetida');
+  });
+
+  it('un denegado repetido queda como lectura_repetida y no abre la puerta', async () => {
+    t = await createTestController();
+    const first = await t.scan('p1', 'beto');
+    assert.equal(first.decision, 'deny');
+    assert.equal(first.reason, 'puerta_no_autorizada');
+    t.clock.advance(6000);
+    const second = await t.scan('p1', 'beto');
+    assert.equal(second.decision, 'deny');
+    assert.equal(second.reason, 'lectura_repetida');
+    assert.equal(t.events('access')[1].payload.repeatOf, first.eventId);
+    assert.equal(t.events('access')[1].payload.originalReason, 'puerta_no_autorizada');
+    assert.deepEqual(pulses(t.outputs.p1), []);
+    t.clock.advance(20000);
+    const third = await t.scan('p1', 'beto');
+    assert.equal(third.reason, 'puerta_no_autorizada');
   });
 });

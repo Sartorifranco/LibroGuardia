@@ -27,6 +27,13 @@ describe('reports summary', () => {
           movementType: 'ingreso',
           timestamp: ts('2026-07-10T12:00:00-03:00')
         },
+        {
+          type: 'personal',
+          movementType: 'ingreso',
+          accessReason: 'lectura_repetida',
+          countsAsPassage: false,
+          timestamp: ts('2026-07-10T12:00:06-03:00')
+        },
         // dentro: personal egreso 10
         {
           type: 'personal',
@@ -102,6 +109,7 @@ describe('reports summary', () => {
       entryDocs: [],
       accessEventDocs: [
         { type: 'denied', idNumber: '111', name: 'Ana', doorId: 'd1', doorName: 'Molinete A', createdAt: ts('2026-07-05T10:00:00-03:00') },
+        { type: 'denied', denialReason: 'lectura_repetida', idNumber: '111', name: 'Ana', doorId: 'd1', doorName: 'Molinete A', createdAt: ts('2026-07-05T10:00:06-03:00') },
         { type: 'denied', idNumber: '111', name: 'Ana', doorId: 'd1', doorName: 'Molinete A', createdAt: ts('2026-07-05T10:05:00-03:00') },
         { type: 'denied', idNumber: '111', name: 'Ana', doorId: 'd2', doorName: 'Portón', createdAt: ts('2026-07-06T10:00:00-03:00') },
         { type: 'denied', idNumber: '222', name: 'Bruno', doorId: 'd1', doorName: 'Molinete A', createdAt: ts('2026-07-07T10:00:00-03:00') },

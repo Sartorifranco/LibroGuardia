@@ -23,4 +23,31 @@ describe('feed de pasos del día', () => {
     expect(screen.getByText('DNI no registrado *****456')).toBeInTheDocument();
     expect(screen.queryByText('Persona')).not.toBeInTheDocument();
   });
+
+  test('agrupa la lectura repetida bajo el mismo paso', () => {
+    mockEntries.entries = [
+      {
+        id: 'e1',
+        name: 'Ana',
+        accessReason: 'puerta_directa',
+        doorName: 'Exterior',
+        movementType: 'ingreso',
+        timestamp: '2026-10-09T15:00:00.000Z'
+      },
+      {
+        id: 'e2',
+        name: 'Ana',
+        accessReason: 'lectura_repetida',
+        repeatOf: 'e1',
+        doorName: 'Exterior',
+        movementType: 'ingreso',
+        timestamp: '2026-10-09T15:00:06.000Z'
+      }
+    ];
+    render(<DayPassages />);
+    expect(screen.getByText('Ana')).toBeInTheDocument();
+    expect(screen.getByText('Ingreso')).toBeInTheDocument();
+    expect(screen.getByText('Lectura repetida (mismo paso).')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+  });
 });

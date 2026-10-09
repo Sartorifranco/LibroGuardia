@@ -36,6 +36,7 @@ const checkRepeatedDenials = async ({
   const matches = snap.docs.filter((doc) => {
     const data = doc.data() || {};
     if (data.type !== 'denied') return false;
+    if (data.denialReason === 'lectura_repetida' || data.reason === 'lectura_repetida') return false;
     const created = data.createdAt?.toDate ? data.createdAt.toDate().getTime() : 0;
     if (created && created < sinceMs) return false;
     if (dni && String(data.idNumber || '').trim() === dni) return true;

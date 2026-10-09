@@ -165,6 +165,17 @@ describe('Edge: eventos, heartbeat, comandos, head y live', () => {
     assert.equal(mem.getDoc('sites/principal/status', 'hub').ackHubSeq, 3);
   });
 
+  it('lectura_repetida no crea otro doc en entries', async () => {
+    const events = [
+      ev(30, { reason: 'puerta_directa', cardholderId: 'ana' }),
+      ev(31, { reason: 'lectura_repetida', cardholderId: 'ana', payload: { repeatOf: 'ctl-a:30', name: 'Ana' } })
+    ];
+    const res = await postEvents({ hubId: 'hub-1', events, hubSeqFrom: 30, hubSeqTo: 31 });
+    assert.equal(res.status, 200, res.text);
+    assert.ok(mem.hasDoc('entries', 'edge_hub-1_ctl-a_30'));
+    assert.ok(!mem.hasDoc('entries', 'edge_hub-1_ctl-a_31'), 'la lectura repetida no se proyecta');
+  });
+
   it('proyección a entries solo para autorizados, con campos compat del libro', async () => {
     assert.ok(mem.hasDoc('entries', 'edge_hub-1_ctl-a_1'));
     assert.ok(!mem.hasDoc('entries', 'edge_hub-1_ctl-a_2'), 'el denegado no se proyecta');
