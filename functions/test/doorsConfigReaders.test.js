@@ -80,4 +80,22 @@ describe('doorsConfig readers direction', () => {
     assert.equal(resolveReaderFixedMovement(door, 'out'), 'egreso');
     assert.equal(resolveReaderFixedMovement(door, 'nuevo'), null);
   });
+
+  it('side in/out queda junto a la dirección', () => {
+    const config = normalizeDoorsConfig({
+      doors: [{
+        id: 'p1',
+        name: 'P1',
+        readers: [
+          { id: 'a', side: 'in' },
+          { id: 'b', direction: 'egreso' }
+        ]
+      }]
+    });
+    const door = config.doors[0];
+    assert.equal(door.readers[0].side, 'in');
+    assert.equal(door.readers[0].direction, 'ingreso');
+    assert.equal(door.readers[1].side, 'out');
+    assert.equal(door.readers[1].direction, 'egreso');
+  });
 });

@@ -26,6 +26,47 @@ export function placesFromDoor(door = {}) {
   };
 }
 
+export function swapPlaces(placeA, placeB) {
+  return {
+    placeA: placeB || '',
+    placeB: placeA || ''
+  };
+}
+
+/** 'outside' = solo el lector de afuera. 'both' = afuera y adentro (recomendado). */
+export function readersModeOf(door = {}) {
+  if (door.readersMode === 'outside' || door.readersMode === 'both') return door.readersMode;
+  const readers = Array.isArray(door.readers) ? door.readers : [];
+  const hasOut = readers.some((reader) => reader?.side === 'out' || reader?.direction === 'egreso');
+  const hasIn = readers.some((reader) => reader?.side === 'in' || reader?.direction === 'ingreso');
+  if (hasOut) return 'both';
+  if (hasIn) return 'outside';
+  return 'both';
+}
+
+/** Arma los lectores con side in/out según el modo elegido. */
+export function readersForDraft(draft = {}) {
+  const code = String(draft.doorCode || 'P1').toUpperCase() || 'P1';
+  const current = Array.isArray(draft.readers) ? draft.readers : [];
+  const ingreso = current.find((reader) => reader?.side === 'in' || reader?.direction === 'ingreso');
+  const egreso = current.find((reader) => reader?.side === 'out' || reader?.direction === 'egreso');
+  const mode = readersModeOf(draft);
+  const inn = {
+    id: String(ingreso?.id || `INGRESO_${code}`).trim() || `INGRESO_${code}`,
+    direction: 'ingreso',
+    side: 'in'
+  };
+  if (mode === 'outside') return [inn];
+  return [
+    inn,
+    {
+      id: String(egreso?.id || `EGRESO_${code}`).trim() || `EGRESO_${code}`,
+      direction: 'egreso',
+      side: 'out'
+    }
+  ];
+}
+
 export function airlockPartnerId(doorId, groups = []) {
   const group = (groups || []).find((item) => (item.doorIds || []).includes(doorId) && item.enabled !== false);
   if (!group) return '';
@@ -44,8 +85,8 @@ export function validateSimpleDoor(draft = {}) {
   if (!DOOR_KINDS.some((item) => item.id === draft.kind)) {
     errors.kind = 'Elegí si es una puerta, un portón o un molinete.';
   }
-  if (!draft.placeA) errors.placeA = 'Elegí el lugar de un lado.';
-  if (!draft.placeB) errors.placeB = 'Elegí el lugar del otro lado.';
+  if (!draft.placeA) errors.placeA = 'Elegí desde dónde se llega a esta puerta.';
+  if (!draft.placeB) errors.placeB = 'Elegí a qué lugar se entra al pasarla.';
   if (draft.placeA && draft.placeB && draft.placeA === draft.placeB) {
     errors.placeB = 'Los dos lados tienen que ser lugares distintos.';
   }

@@ -1,27 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { PlusCircle } from 'lucide-react';
 import { AdminLoading } from '../../../components/admin/AdminUi';
-import { EmptyState, PageHeader } from '../../../components/admin-ui';
+import { EmptyState, Modal, PageContainer, PageHeader } from '../../../components/admin-ui';
 import { useAuth } from '../../../context/AuthContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
 import { hasPermission } from '../../../utils/permissions';
-import { airlockWarning, doorMoveWarnings } from './deviceDoorRules';
+import InstallWizard from './InstallWizard';
+import { leftLabel, statusAdvice } from './installChecks';
 
 const KIND_LABEL = {
   hub: 'Central del sitio',
   controller: 'Controlador de puertas'
 };
-
-function leftLabel(expiresAt, now) {
-  const left = new Date(expiresAt).getTime() - now;
-  if (!Number.isFinite(left) || left <= 0) return 'Venció';
-  const total = Math.ceil(left / 1000);
-  const min = Math.floor(total / 60);
-  const sec = total % 60;
-  return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}
 
 function doorsOf(device, doors) {
   return doors.filter((door) => (
@@ -39,9 +31,10 @@ function EquiposAdminSection() {
   const [airlocks, setAirlocks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [wizard, setWizard] = useState(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [install, setInstall] = useState(null);
   const [now, setNow] = useState(Date.now());
+  const [selected, setSelected] = useState(null);
   const [log, setLog] = useState(null);
 
   const load = useCallback(async () => {
@@ -71,85 +64,6 @@ function EquiposAdminSection() {
     () => devices.filter((device) => device.status !== 'replaced'),
     [devices]
   );
-
-  const openWizard = () => {
-    setInstall(null);
-    setWizard({ step: 1, kind: 'controller', name: '', doorIds: [], error: '' });
-  };
-
-  const createDevice = async (confirmMoves) => {
-    const body = {
-      kind: wizard.kind,
-      name: wizard.name.trim(),
-      doorIds: wizard.kind === 'controller' ? wizard.doorIds : [],
-      confirmMoves: Boolean(confirmMoves)
-    };
-    const data = await apiFetch('/admin/devices', { method: 'POST', token: authToken, body });
-    setInstall({
-      deviceId: data.device.id,
-      deviceName: data.device.name,
-      code: data.enrollment.code,
-      expiresAt: data.enrollment.expiresAt
-    });
-    setWizard(null);
-    showSuccess('Equipo creado. Anotá el código: vence en 10 minutos.');
-    await load();
-  };
-
-  const goNext = async () => {
-    if (!wizard) return;
-    if (wizard.step === 1) {
-      if (!wizard.name.trim()) {
-        setWizard({ ...wizard, error: 'Poné un nombre para reconocerlo.' });
-        return;
-      }
-      if (wizard.kind === 'hub') {
-        try {
-          await createDevice(false);
-        } catch (err) {
-          setWizard({ ...wizard, error: err.message || 'No se pudo crear el equipo' });
-        }
-        return;
-      }
-      setWizard({ ...wizard, step: 2, error: '' });
-      return;
-    }
-    const warning = airlockWarning(wizard.doorIds, airlocks, doors);
-    if (warning) {
-      setWizard({ ...wizard, error: '' });
-      return;
-    }
-    const moves = doorMoveWarnings(wizard.doorIds, doors, devices);
-    if (moves.length) {
-      const ok = await confirm({
-        title: 'Esta puerta cambia de equipo',
-        message: moves.map((move) => move.message).join(' '),
-        confirmLabel: 'Pasar las puertas',
-        cancelLabel: 'Cancelar'
-      });
-      if (!ok) return;
-    }
-    try {
-      await createDevice(moves.length > 0);
-    } catch (err) {
-      if (err.status === 409 && err.data?.code === 'DOOR_MOVE_CONFIRM') {
-        const ok = await confirm({
-          title: 'Esta puerta cambia de equipo',
-          message: err.data.message || err.message,
-          confirmLabel: 'Pasar las puertas',
-          cancelLabel: 'Cancelar'
-        });
-        if (!ok) return;
-        try {
-          await createDevice(true);
-        } catch (retryErr) {
-          setWizard({ ...wizard, error: retryErr.message || 'No se pudo crear el equipo' });
-        }
-        return;
-      }
-      setWizard({ ...wizard, error: err.message || 'No se pudo crear el equipo' });
-    }
-  };
 
   const reissue = async () => {
     if (!install?.deviceId) return;
@@ -184,7 +98,8 @@ function EquiposAdminSection() {
         token: authToken,
         body: {}
       });
-      setWizard(null);
+      setSelected(null);
+      setLog(null);
       setInstall({
         deviceId: data.device.id,
         deviceName: data.device.name,
@@ -209,6 +124,8 @@ function EquiposAdminSection() {
     try {
       await apiFetch(`/admin/devices/${device.id}/revoke`, { method: 'POST', token: authToken, body: {} });
       showSuccess('Equipo dado de baja.');
+      setSelected(null);
+      setLog(null);
       await load();
     } catch (err) {
       showError(err.message || 'No se pudo dar de baja el equipo');
@@ -252,218 +169,182 @@ function EquiposAdminSection() {
     return <p className="theme-section-desc">No tenés permiso para administrar equipos.</p>;
   }
 
-  const moveHints = wizard?.step === 2 ? doorMoveWarnings(wizard.doorIds, doors, devices) : [];
-  const splitHint = wizard?.step === 2 ? airlockWarning(wizard.doorIds, airlocks, doors) : '';
+  const selectedDevice = selected
+    ? (visible.find((device) => device.id === selected.id) || selected)
+    : null;
+  const selectedDoors = selectedDevice ? doorsOf(selectedDevice, doors) : [];
+  const advice = selectedDevice ? statusAdvice(selectedDevice.health || {}) : '';
 
   return (
-    <div className="equipos-admin">
-      <PageHeader
-        title="Equipos"
-        purpose="Un equipo es la cajita que abre las puertas."
-        howTo={[
-          'Agregá el equipo y ponéle un nombre que reconozcas.',
-          'El instalador lo conecta con el código que aparece.',
-          'Cuando está en línea, asignale las puertas que abre.'
-        ]}
-        action={(
-          <button type="button" className="btn btn-primary" onClick={openWizard}>
-            <PlusCircle size={16} aria-hidden />
-            Agregar equipo
-          </button>
-        )}
-      />
-      <div>
-        {loading ? <AdminLoading label="Cargando equipos…" /> : null}
-        {!loading && error ? (
-          <p className="alarm-panel__error" role="alert">
-            {error}
-            {' '}
-            <button type="button" className="btn btn-secondary" onClick={load}>Reintentar</button>
-          </p>
-        ) : null}
-        {!loading && !error && visible.length === 0 ? (
-          <EmptyState
-            title="Todavía no instalaste ningún equipo."
-            text="Un equipo es la cajita que abre las puertas. Cuando el instalador lo conecta, aparece acá."
-            actionLabel="Instalar el primero"
-            onAction={openWizard}
-          />
-        ) : null}
-        <div className="equipos-admin__list">
-          {visible.map((device) => {
-            const health = device.health || { code: 'pending', label: 'Pendiente de instalar', detail: null };
-            const ownDoors = doorsOf(device, doors);
-            return (
-              <article key={device.id} className="equipos-admin__card">
-                <header>
-                  <h4>{device.name}</h4>
-                  <p>{KIND_LABEL[device.kind] || 'Equipo'}</p>
-                </header>
-                <p className={`equipos-health equipos-health--${health.code}`}>{health.label}</p>
-                {health.detail ? <p>{health.detail}</p> : null}
-                {health.configLabel ? <p className="equipos-admin__config">{health.configLabel}</p> : null}
-                {device.kind === 'controller' ? (
-                  <p className="equipos-admin__doors">
-                    {ownDoors.length
-                      ? `Puertas: ${ownDoors.map((door) => door.name).join(', ')}`
-                      : 'Sin puertas asignadas'}
-                  </p>
-                ) : null}
-                <div className="equipos-admin__actions">
-                  <button type="button" className="btn btn-secondary" onClick={() => openLog(device)}>
-                    Ver bitácora
-                  </button>
-                  {device.status !== 'revoked' && device.status !== 'replaced' ? (
-                    <>
-                      <button type="button" className="btn btn-secondary" onClick={() => replaceDevice(device)}>
-                        Reemplazar
-                      </button>
-                      <button type="button" className="btn btn-secondary" onClick={() => revokeDevice(device)}>
-                        Dar de baja
-                      </button>
-                    </>
+    <PageContainer width="medium">
+      <div className="equipos-admin">
+        <PageHeader
+          title="Equipos"
+          purpose="Un equipo es la cajita que abre las puertas, o la PC donde el guardia mira la pantalla."
+          howTo={[
+            'Tocá Instalar un equipo y seguí los pasos.',
+            'El instalador escribe el código en la Raspberry o en la PC.',
+            'La prueba se tilda sola cuando el equipo responde.'
+          ]}
+          action={(
+            <button type="button" className="btn btn-primary" onClick={() => { setInstall(null); setWizardOpen(true); }}>
+              <PlusCircle size={16} aria-hidden />
+              Instalar un equipo
+            </button>
+          )}
+        />
+        <div>
+          {loading ? <AdminLoading label="Cargando equipos…" /> : null}
+          {!loading && error ? (
+            <p className="alarm-panel__error" role="alert">
+              {error}
+              {' '}
+              <button type="button" className="btn btn-secondary" onClick={load}>Reintentar</button>
+            </p>
+          ) : null}
+          {!loading && !error && visible.length === 0 ? (
+            <EmptyState
+              title="Todavía no instalaste ningún equipo."
+              text="Un equipo es la cajita que abre las puertas. El asistente te dice qué enchufar, aunque nunca hayas instalado uno."
+              actionLabel="Instalar el primero"
+              onAction={() => setWizardOpen(true)}
+            />
+          ) : null}
+          <div className="aui-card-grid">
+            {visible.map((device) => {
+              const health = device.health || { code: 'pending', label: 'Pendiente de instalar', detail: null };
+              const ownDoors = doorsOf(device, doors);
+              return (
+                <article key={device.id} className="equipos-admin__card">
+                  <header>
+                    <h4>{device.name}</h4>
+                    <p>{KIND_LABEL[device.kind] || 'Equipo'}</p>
+                  </header>
+                  <p className={`equipos-health equipos-health--${health.code}`}>{health.label}</p>
+                  {health.detail ? <p>{health.detail}</p> : null}
+                  {health.configLabel ? <p className="equipos-admin__config">{health.configLabel}</p> : null}
+                  {device.kind === 'controller' ? (
+                    <p className="equipos-admin__doors">
+                      {ownDoors.length
+                        ? `Puertas: ${ownDoors.map((door) => door.name).join(', ')}`
+                        : 'Sin puertas asignadas'}
+                    </p>
                   ) : null}
-                </div>
-              </article>
-            );
-          })}
+                  <div className="equipos-admin__actions">
+                    <button type="button" className="btn btn-secondary" onClick={() => { setLog(null); setSelected(device); }}>
+                      {`Ver ${device.name}`}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-      {wizard ? (
-        <form
-          className="equipos-admin__wizard"
-          onSubmit={(event) => { event.preventDefault(); goNext(); }}
-        >
-          <h4>
-            {wizard.step === 1 && '1. Qué equipo es'}
-            {wizard.step === 2 && '2. Qué puertas maneja'}
-          </h4>
-          {wizard.step === 1 ? (
-            <>
-              <fieldset>
-                <legend>Tipo</legend>
-                <label className="equipos-admin__choice">
-                  <input
-                    type="radio"
-                    name="kind"
-                    checked={wizard.kind === 'hub'}
-                    onChange={() => setWizard({ ...wizard, kind: 'hub', error: '' })}
-                  />
-                  Central del sitio
-                </label>
-                <label className="equipos-admin__choice">
-                  <input
-                    type="radio"
-                    name="kind"
-                    checked={wizard.kind === 'controller'}
-                    onChange={() => setWizard({ ...wizard, kind: 'controller', error: '' })}
-                  />
-                  Controlador de puertas
-                </label>
-              </fieldset>
-              <label>
-                Nombre
-                <input
-                  aria-label="Nombre del equipo"
-                  value={wizard.name}
-                  maxLength={80}
-                  onChange={(e) => setWizard({ ...wizard, name: e.target.value, error: '' })}
-                />
-              </label>
-            </>
-          ) : null}
-          {wizard.step === 2 ? (
-            <>
-              {doors.length === 0 ? (
-                <p>Primero cargá las puertas. Después volvé para asignarlas.</p>
-              ) : (
-                <fieldset>
-                  <legend>Puertas</legend>
-                  {doors.map((door) => (
-                    <label key={door.id} className="equipos-admin__choice">
-                      <input
-                        type="checkbox"
-                        checked={wizard.doorIds.includes(door.id)}
-                        onChange={(e) => {
-                          const doorIds = e.target.checked
-                            ? [...wizard.doorIds, door.id]
-                            : wizard.doorIds.filter((id) => id !== door.id);
-                          setWizard({ ...wizard, doorIds, error: '' });
-                        }}
-                      />
-                      {door.name}
-                      {door.groupName ? ` · estanco ${door.groupName}` : ''}
-                    </label>
-                  ))}
-                </fieldset>
-              )}
-              {splitHint ? <p className="alarm-panel__error" role="alert">{splitHint}</p> : null}
-              {moveHints.map((move) => (
-                <p key={move.doorId} className="equipos-admin__move" role="status">{move.message}</p>
-              ))}
-            </>
-          ) : null}
-          {wizard.error ? <p className="alarm-panel__error" role="alert">{wizard.error}</p> : null}
-          <div className="equipos-admin__actions">
-            <button type="button" className="btn btn-secondary" onClick={() => setWizard(null)}>
+        <InstallWizard
+          open={wizardOpen}
+          onClose={() => setWizardOpen(false)}
+          doors={doors}
+          airlocks={airlocks}
+          devices={devices}
+          authToken={authToken}
+          confirm={confirm}
+          showError={showError}
+          showSuccess={showSuccess}
+          onCreated={load}
+        />
+
+        <Modal
+          open={Boolean(selectedDevice)}
+          size="lg"
+          title={selectedDevice?.name || 'Equipo'}
+          description={selectedDevice ? (KIND_LABEL[selectedDevice.kind] || 'Equipo') : ''}
+          onClose={() => { setSelected(null); setLog(null); }}
+          footer={(
+            <button type="button" className="btn btn-secondary" data-aui-cancel="true" onClick={() => { setSelected(null); setLog(null); }}>
               Cancelar
             </button>
-            {wizard.step === 2 ? (
-              <button type="button" className="btn btn-secondary" onClick={() => setWizard({ ...wizard, step: 1, error: '' })}>
-                Atrás
-              </button>
-            ) : null}
-            <button type="submit" className="btn btn-primary">
-              {wizard.step === 2 || wizard.kind === 'hub' ? 'Crear código de instalación' : 'Siguiente'}
-            </button>
-          </div>
-        </form>
-      ) : null}
-
-      {install ? (
-        <section className="equipos-admin__code" aria-label="Código de instalación">
-          <h4>{install.deviceName}</h4>
-          <p className="equipos-code">{install.code}</p>
-          <p>En el equipo ejecutá el instalador y escribí este código. Vence en 10 minutos.</p>
-          <p className="equipos-admin__timer" aria-live="polite">
-            {leftLabel(install.expiresAt, now) === 'Venció'
-              ? 'El código venció. Generá otro.'
-              : `Tiempo restante: ${leftLabel(install.expiresAt, now)}`}
-          </p>
-          <div className="equipos-admin__actions">
-            <button type="button" className="btn btn-secondary" onClick={reissue}>
-              Generar otro código
-            </button>
-            <button type="button" className="btn btn-primary" onClick={() => setInstall(null)}>
-              Listo
-            </button>
-          </div>
-        </section>
-      ) : null}
-
-      {log ? (
-        <section className="equipos-admin__log" aria-label="Bitácora del equipo">
-          <h4>Bitácora de {log.device.name}</h4>
-          {log.loading ? <AdminLoading label="Cargando bitácora…" /> : null}
-          {log.error ? <p className="alarm-panel__error" role="alert">{log.error}</p> : null}
-          {!log.loading && !log.error && log.events.length === 0 ? (
-            <p>Todavía no hay movimientos de este equipo.</p>
+          )}
+        >
+          {selectedDevice ? (
+            <>
+              <p className={`equipos-health equipos-health--${selectedDevice.health?.code || 'pending'}`}>
+                {selectedDevice.health?.label || 'Sin estado'}
+              </p>
+              {advice ? <p>{advice}</p> : null}
+              {selectedDevice.kind === 'controller' ? (
+                <p>
+                  {selectedDoors.length
+                    ? `Puertas: ${selectedDoors.map((door) => door.name).join(', ')}`
+                    : 'Sin puertas asignadas'}
+                </p>
+              ) : null}
+              <div className="equipos-admin__actions">
+                <button type="button" className="btn btn-secondary" onClick={() => openLog(selectedDevice)}>
+                  Ver bitácora
+                </button>
+                {selectedDevice.status !== 'revoked' && selectedDevice.status !== 'replaced' ? (
+                  <>
+                    <button type="button" className="btn btn-secondary" onClick={() => replaceDevice(selectedDevice)}>
+                      Reemplazar
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => revokeDevice(selectedDevice)}>
+                      Dar de baja
+                    </button>
+                  </>
+                ) : null}
+              </div>
+              {log ? (
+                <section aria-label="Bitácora del equipo">
+                  <h3 className="aui-section-title">Bitácora de {log.device.name}</h3>
+                  {log.loading ? <AdminLoading label="Cargando bitácora…" /> : null}
+                  {log.error ? <p className="alarm-panel__error" role="alert">{log.error}</p> : null}
+                  {!log.loading && !log.error && log.events.length === 0 ? (
+                    <p>Todavía no hay movimientos de este equipo.</p>
+                  ) : null}
+                  <ul>
+                    {log.events.map((event) => (
+                      <li key={event.id}>{event.message}</li>
+                    ))}
+                  </ul>
+                  {log.cursor ? (
+                    <button type="button" className="btn btn-secondary" onClick={moreLog}>Ver más</button>
+                  ) : null}
+                </section>
+              ) : null}
+            </>
           ) : null}
-          <ul>
-            {log.events.map((event) => (
-              <li key={event.id}>{event.message}</li>
-            ))}
-          </ul>
-          <div className="equipos-admin__actions">
-            {log.cursor ? (
-              <button type="button" className="btn btn-secondary" onClick={moreLog}>Ver más</button>
-            ) : null}
-            <button type="button" className="btn btn-secondary" onClick={() => setLog(null)}>Cerrar</button>
-          </div>
-        </section>
-      ) : null}
-    </div>
+        </Modal>
+
+        <Modal
+          open={Boolean(install)}
+          size="md"
+          title={install?.deviceName || 'Código de instalación'}
+          description="En la Raspberry/PC abrí el instalador y escribí este código."
+          onClose={() => setInstall(null)}
+          footer={(
+            <>
+              <button type="button" className="btn btn-secondary" data-aui-cancel="true" onClick={() => setInstall(null)}>
+                Cancelar
+              </button>
+              <button type="button" className="btn btn-primary" onClick={() => setInstall(null)}>Listo</button>
+            </>
+          )}
+        >
+          {install ? (
+            <>
+              <p className="equipos-code">{install.code}</p>
+              <p className="equipos-admin__timer" aria-live="polite">
+                {leftLabel(install.expiresAt, now) === 'Venció'
+                  ? 'El código venció. Generá otro.'
+                  : `Tiempo restante: ${leftLabel(install.expiresAt, now)}`}
+              </p>
+              <button type="button" className="btn btn-secondary" onClick={reissue}>Generar otro</button>
+            </>
+          ) : null}
+        </Modal>
+      </div>
+    </PageContainer>
   );
 }
 

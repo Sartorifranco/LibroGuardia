@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, Save, Trash2 } from 'lucide-react';
+import { Save, Trash2 } from 'lucide-react';
 import PendingButton from './PendingButton';
 import DoorPeoplePanel from './DoorPeoplePanel';
-import { AdvancedSection, EmptyState, HelpTip, PageHeader } from './admin-ui';
+import { AdvancedSection, EmptyState, HelpTip, Modal, PageContainer, PageHeader } from './admin-ui';
 import { apiFetch } from '../services/api';
 import { useConfirm } from '../context/ConfirmContext';
 import {
@@ -15,9 +15,14 @@ import {
   applyAirlockChoice,
   kindLabel,
   placesFromDoor,
+  readersForDraft,
+  readersModeOf,
   sidesFromPlaces,
+  swapPlaces,
   validateSimpleDoor
 } from '../pages/Admin/DoorsAdmin/doorForm';
+
+const SIDES_HELP = 'Esto le dice al sistema si la persona ENTRÓ o SALIÓ, y quién está dentro de cada lugar (sirve para saber quién está en la planta en una evacuación).';
 
 const createLocalId = (prefix = 'item') =>
   (typeof crypto !== 'undefined' && crypto.randomUUID
@@ -59,16 +64,11 @@ const nextDoorCode = (doors = []) => {
   return `P${n}`;
 };
 
-const ensureTwoReaders = (door, doorCode) => {
-  const code = String(doorCode || 'P1').toUpperCase() || 'P1';
-  const readers = Array.isArray(door.readers) ? door.readers : [];
-  const ingreso = readers.find((reader) => reader.direction === 'ingreso');
-  const egreso = readers.find((reader) => reader.direction === 'egreso');
-  return [
-    { id: ingreso?.id || `INGRESO_${code}`, direction: 'ingreso' },
-    { id: egreso?.id || `EGRESO_${code}`, direction: 'egreso' }
-  ];
-};
+const ensureTwoReaders = (door, doorCode) => readersForDraft({
+  ...door,
+  doorCode: doorCode || door.doorCode,
+  readersMode: readersModeOf(door)
+});
 
 const normalizeDoorLocal = (door = {}, fallbackCode = 'P1') => {
   const doorCode = String(door.doorCode || fallbackCode).toUpperCase();
@@ -83,6 +83,8 @@ const normalizeDoorLocal = (door = {}, fallbackCode = 'P1') => {
     kind: DOOR_KINDS.some((item) => item.id === door.kind) ? door.kind : 'door',
     placeA: door.placeA ?? places.placeA,
     placeB: door.placeB ?? places.placeB,
+    readersMode: readersModeOf(door),
+    controllerId: door.controllerId || null,
     sensorsRequired: door.sensorsRequired === true,
     heldOpenSec: Number(door.heldOpenSec) > 0 ? Number(door.heldOpenSec) : 60,
     requireGuardApproval: door.requireGuardApproval === true,
@@ -160,6 +162,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
   const [fieldErrors, setFieldErrors] = useState({});
   const [query, setQuery] = useState('');
   const [physicalById, setPhysicalById] = useState({});
+  const [deviceNames, setDeviceNames] = useState({});
 
   const loadConfig = useCallback(async () => {
     const data = await apiFetch('/admin/doors-config', { token: authToken, allowForbidden: true });
@@ -207,37 +210,35 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     if (!draft) refreshPhysicalStatus();
   }, [draft, refreshPhysicalStatus]);
 
+  const loadDeviceNames = useCallback(async () => {
+    if (!authToken) return;
+    try {
+      const data = await apiFetch('/admin/devices', { token: authToken, allowForbidden: true });
+      const map = {};
+      (data.devices || []).forEach((device) => { map[device.id] = device.name || device.id; });
+      setDeviceNames(map);
+    } catch {
+      // Sin permiso de equipos, la tarjeta muestra la placa o "Sin equipo".
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!draft) loadDeviceNames();
+  }, [draft, loadDeviceNames]);
+
   const patchDraft = (patch) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
     setDirty(true);
   };
 
-  const openDoor = async (door) => {
-    if (dirty && draft) {
-      const ok = await confirm({
-        title: 'Cambios sin guardar',
-        message: 'Hay cambios sin guardar en esta puerta. ¿Los descartás?',
-        confirmLabel: 'Descartar',
-        tone: 'danger'
-      });
-      if (!ok) return;
-    }
+  const openDoor = (door) => {
     const partner = airlockPartnerId(door.id, airlockGroups);
     setDraft(normalizeDoorLocal({ ...door, airlockEnabled: Boolean(partner), airlockPartnerId: partner }));
     setFieldErrors({});
     setDirty(false);
   };
 
-  const backToList = async () => {
-    if (dirty) {
-      const ok = await confirm({
-        title: 'Cambios sin guardar',
-        message: 'Hay cambios sin guardar. ¿Volvés al listado sin guardar?',
-        confirmLabel: 'Volver sin guardar',
-        tone: 'danger'
-      });
-      if (!ok) return;
-    }
+  const closeDoor = () => {
     setDraft(null);
     setDirty(false);
     setFieldErrors({});
@@ -245,9 +246,19 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
 
   const persistDoors = async (nextDoors, nextDefaultId = defaultDoorId, nextGlobal = globalAccess, nextGroups = airlockGroups) => {
     const usedIds = new Set();
-    const payloadDoors = nextDoors.map(({ _localId, doorCode, localStation, placeA, placeB, airlockEnabled, airlockPartnerId: partnerIgnored, ...door }) => {
+    const payloadDoors = nextDoors.map(({
+      _localId,
+      doorCode,
+      localStation,
+      placeA,
+      placeB,
+      airlockEnabled,
+      airlockPartnerId: partnerIgnored,
+      readersMode,
+      ...door
+    }) => {
       const code = String(doorCode || 'P1').toUpperCase();
-      const readers = ensureTwoReaders({ ...door, doorCode: code }, code);
+      const readers = readersForDraft({ ...door, doorCode: code, readersMode, readers: door.readers });
       const pulseSeconds = Math.max(1, Math.min(60, Number(door.pulseSeconds) || 3));
       let id = slugify(door.id || `puerta-${code}`) || createLocalId('puerta');
       if (usedIds.has(id)) id = slugify(`puerta-${code}-${usedIds.size}`) || createLocalId('puerta');
@@ -338,11 +349,11 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
         : [...doors, normalized];
       const paired = applyAirlockChoice(withDraft, airlockGroups, normalized);
       try {
-        const list = await persistDoors(paired.doors, defaultDoorId || normalized.id, globalAccess, paired.airlockGroups);
-        const saved = list.find((door) => door.name === normalized.name) || list.find((door) => door.id === slugify(normalized.id));
-        if (saved) setDraft(saved);
+        await persistDoors(paired.doors, defaultDoorId || normalized.id, globalAccess, paired.airlockGroups);
+        setDraft(null);
         setDirty(false);
-        onSuccess?.(`Puerta “${normalized.name}” guardada`);
+        setFieldErrors({});
+        onSuccess?.(`Puerta "${normalized.name}" guardada`);
       } catch (err) {
         if (err?.data?.code === 'cloud_relay_blocks_offline_lectores' || /En planta|A distancia|Modo offline/i.test(err.message || '')) {
           await alert({ title: OFFLINE_NEEDS_LOCAL_RELAY_TITLE, message: err.message });
@@ -357,7 +368,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     if (!draft) return;
     const ok = await confirm({
       title: 'Eliminar puerta',
-      message: `¿Eliminar la puerta “${draft.name}”? Las personas dejan de poder usarla.`,
+      message: `¿Eliminar la puerta "${draft.name}"? Las personas dejan de poder usarla.`,
       confirmLabel: 'Eliminar',
       tone: 'danger'
     });
@@ -372,16 +383,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     });
   };
 
-  const addNewDoor = async () => {
-    if (dirty && draft) {
-      const ok = await confirm({
-        title: 'Cambios sin guardar',
-        message: 'Hay cambios sin guardar. ¿Los descartás y creás otra puerta?',
-        confirmLabel: 'Descartar',
-        tone: 'danger'
-      });
-      if (!ok) return;
-    }
+  const addNewDoor = () => {
     const blank = createBlankDoor(doors);
     const planta = areas.find((area) => area.id === 'planta');
     if (planta) blank.placeB = 'planta';
@@ -414,17 +416,37 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
 
   const otherDoors = doors.filter((door) => door._localId !== draft?._localId);
   const readers = draft ? ensureTwoReaders(draft, draft.doorCode) : [];
+  const isNew = draft ? !doors.some((door) => door._localId === draft._localId) : true;
 
-  if (!draft) {
-    return (
+  const managedBy = (door) => {
+    if (door.controllerId && deviceNames[door.controllerId]) return deviceNames[door.controllerId];
+    if (door.controllerId) return 'Equipo asignado';
+    if (door.device?.host) return `Placa en ${door.device.host}`;
+    return 'Sin equipo';
+  };
+
+  const setReaderId = (side, value) => {
+    const next = ensureTwoReaders(draft, draft.doorCode).map((reader) => (
+      reader.side === side ? { ...reader, id: value.trim() } : reader
+    ));
+    patchDraft({ readers: next, readerIds: next.map((reader) => reader.id) });
+  };
+
+  const setReadersMode = (readersMode) => {
+    const next = readersForDraft({ ...draft, readersMode });
+    patchDraft({ readersMode, readers: next, readerIds: next.map((reader) => reader.id) });
+  };
+
+  return (
+    <PageContainer width="medium">
       <div className="doors-admin-simple">
         <PageHeader
           title="Puertas"
-          purpose="Cada puerta conecta dos lugares y se destraba unos segundos para dejar pasar."
+          purpose="Cada puerta conecta el lugar de afuera con el de adentro. Así el sistema sabe si la persona entró o salió."
           howTo={[
             'Creá la puerta y ponéle el nombre que ve el guardia.',
-            'Elegí qué lugar hay de cada lado.',
-            'Si forma un estanco, elegí la otra puerta: nunca se abren las dos a la vez.'
+            'Elegí desde dónde se llega y a qué lugar se entra.',
+            'Indicá si el lector está solo afuera o también adentro.'
           ]}
           action={(
             <button type="button" className="btn btn-primary" onClick={addNewDoor}>
@@ -435,7 +457,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
         {doors.length === 0 ? (
           <EmptyState
             title="Todavía no cargaste puertas."
-            text="Una puerta conecta dos lugares, por ejemplo Exterior y Planta. Sin puertas el sistema no puede dejar pasar a nadie."
+            text="Una puerta separa dos lugares, por ejemplo el estacionamiento y la planta. Sin puertas el sistema no puede dejar pasar a nadie."
             actionLabel="Crear la primera"
             onAction={addNewDoor}
           />
@@ -453,21 +475,28 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
             {filtered.length === 0 ? (
               <EmptyState title="Ninguna puerta coincide." text="Probá con otra palabra." />
             ) : (
-              <div className="aui-cards">
+              <div className="aui-card-grid">
                 {filtered.map((door) => {
-                  const places = door.placeA && door.placeB
-                    ? `${placeName(areas, door.placeA)} ⇄ ${placeName(areas, door.placeB)}`
-                    : 'Falta indicar los lugares';
                   const phys = physicalById[door.id];
+                  const status = door.airlockEnabled ? 'Estanco' : (door.active !== false ? 'En uso' : 'Pausada');
                   return (
                     <article key={door._localId} className="aui-card">
                       <h4 className="aui-card__title">{door.name || 'Sin nombre'}</h4>
-                      <p className="aui-card__meta">{kindLabel(door.kind)} · {places}</p>
-                      <p className="aui-card__meta">Queda destrabada {door.pulseSeconds || 3} segundos</p>
+                      <p className="aui-card__meta">{kindLabel(door.kind)}</p>
+                      <div className="door-flow" aria-label={`Afuera ${placeName(areas, door.placeA) || 'sin elegir'}, adentro ${placeName(areas, door.placeB) || 'sin elegir'}`}>
+                        <div className="door-flow__place">
+                          <span className="door-flow__tag">Afuera</span>
+                          <strong>{door.placeA ? placeName(areas, door.placeA) : '—'}</strong>
+                        </div>
+                        <div className="door-flow__arrow" aria-hidden>→</div>
+                        <div className="door-flow__place">
+                          <span className="door-flow__tag">Adentro</span>
+                          <strong>{door.placeB ? placeName(areas, door.placeB) : '—'}</strong>
+                        </div>
+                      </div>
+                      <p className="aui-card__meta">La maneja: {managedBy(door)}</p>
                       <p>
-                        <span className={`aui-status${door.airlockEnabled ? ' is-warn' : ' is-ok'}`}>
-                          {door.airlockEnabled ? 'Estanco' : (door.active !== false ? 'En uso' : 'Pausada')}
-                        </span>
+                        <span className={`aui-status${door.airlockEnabled ? ' is-warn' : ' is-ok'}`}>{status}</span>
                         {phys?.physicalLabel ? (
                           <span className="aui-status" style={{ marginLeft: '0.35rem' }}>{phys.physicalLabel}</span>
                         ) : null}
@@ -483,242 +512,278 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
           </>
         )}
       </div>
-    );
-  }
 
-  const isNew = !doors.some((door) => door._localId === draft._localId);
-
-  return (
-    <div className="doors-admin-simple">
-      <button type="button" className="btn btn-secondary" onClick={backToList}>
-        <ChevronLeft size={16} aria-hidden /> Volver al listado
-      </button>
-      <PageHeader
-        title={isNew ? 'Nueva puerta' : (draft.name || 'Puerta')}
-        purpose="Contá cómo se usa. Los datos de la placa van más abajo, para el instalador."
-        howTo={[
-          'Poné el nombre y el tipo.',
-          'Elegí el lugar de cada lado.',
-          'Guardá. Si falta la placa, la puerta queda cargada igual.'
-        ]}
-        action={(
-          <PendingButton
-            type="button"
-            actionId={`save-door-${draft._localId}`}
-            pendingAction={pendingAction}
-            className="btn btn-primary"
-            onClick={saveCurrentDoor}
-          >
-            <Save size={16} aria-hidden /> Guardar
-          </PendingButton>
-        )}
-      />
-
-      <Field label="Nombre" error={fieldErrors.name} help="Es el nombre que ve el guardia en su pantalla.">
-        <input className="input-field" value={draft.name || ''} onChange={(event) => patchDraft({ name: event.target.value })} placeholder="Portón de clientes" />
-      </Field>
-
-      <Field label="Tipo" error={fieldErrors.kind} help="Puerta es una hoja. Portón es vehicular. Molinete deja pasar de a una persona.">
-        <select className="input-field" value={draft.kind || 'door'} onChange={(event) => patchDraft({ kind: event.target.value })}>
-          {DOOR_KINDS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-        </select>
-      </Field>
-
-      <div className="aui-places">
-        <Field label="De este lado" error={fieldErrors.placeA} help="El lugar que queda de un lado de la puerta.">
-          <select className="input-field" value={draft.placeA || ''} onChange={(event) => patchDraft({ placeA: event.target.value })}>
-            <option value="">Elegir lugar</option>
-            {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
-          </select>
-        </Field>
-        <div className="aui-places__arrow" aria-hidden>⇄</div>
-        <Field label="Del otro lado" error={fieldErrors.placeB} help="El lugar que queda del otro lado. Tiene que ser distinto.">
-          <select className="input-field" value={draft.placeB || ''} onChange={(event) => patchDraft({ placeB: event.target.value })}>
-            <option value="">Elegir lugar</option>
-            {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
-          </select>
-        </Field>
-      </div>
-
-      <Field
-        label="Tiempo que queda destrabada (segundos)"
-        error={fieldErrors.pulseSeconds}
-        help="Cuántos segundos queda libre la cerradura para que la persona pase. 3 alcanza para una puerta."
-      >
-        <input
-          className="input-field"
-          type="number"
-          min="1"
-          max="60"
-          value={draft.pulseSeconds || 3}
-          onChange={(event) => patchDraft({ pulseSeconds: Number(event.target.value) })}
-        />
-      </Field>
-
-      <label className="aui-check">
-        <input type="checkbox" checked={draft.sensorsRequired === true} onChange={(event) => patchDraft({ sensorsRequired: event.target.checked })} />
-        <span>
-          ¿Tiene sensor de puerta abierta?
-          <HelpTip text="El sensor avisa si la hoja quedó abierta después de pasar." />
-        </span>
-      </label>
-      {draft.sensorsRequired ? (
-        <Field
-          label="Avisar si queda abierta más de (segundos)"
-          error={fieldErrors.heldOpenSec}
-          help="Si sigue abierta más de este tiempo, se avisa. 60 segundos es un buen punto de partida."
-        >
-          <input
-            className="input-field"
-            type="number"
-            min="10"
-            max="600"
-            value={draft.heldOpenSec || 60}
-            onChange={(event) => patchDraft({ heldOpenSec: Number(event.target.value) })}
-          />
-        </Field>
-      ) : null}
-
-      <label className="aui-check">
-        <input
-          type="checkbox"
-          checked={draft.airlockEnabled === true}
-          onChange={(event) => patchDraft({ airlockEnabled: event.target.checked, airlockPartnerId: event.target.checked ? draft.airlockPartnerId : '' })}
-        />
-        <span>
-          ¿Forma un estanco con otra puerta?
-          <HelpTip text="En un estanco nunca se abren las dos a la vez. Primero se cierra una y después se abre la otra." />
-        </span>
-      </label>
-      {draft.airlockEnabled ? (
-        <Field label="La otra puerta del estanco" error={fieldErrors.airlockPartnerId}>
-          <select className="input-field" value={draft.airlockPartnerId || ''} onChange={(event) => patchDraft({ airlockPartnerId: event.target.value })}>
-            <option value="">Elegir puerta</option>
-            {otherDoors.map((door) => <option key={door.id} value={door.id}>{door.name || door.id}</option>)}
-          </select>
-        </Field>
-      ) : null}
-      {draft.airlockEnabled ? (
-        <p className="aui-card__meta">Nunca se abren las dos a la vez.</p>
-      ) : null}
-
-      <label className="aui-check">
-        <input type="checkbox" checked={draft.requireGuardApproval === true} onChange={(event) => patchDraft({ requireGuardApproval: event.target.checked })} />
-        <span>
-          ¿El guardia tiene que aprobar cada ingreso?
-          <HelpTip text="Sirve en el portón de clientes: la persona llega y el guardia confirma antes de abrir." />
-        </span>
-      </label>
-
-      <label className="aui-check">
-        <input type="checkbox" checked={draft.manualOpenAllowed !== false} onChange={(event) => patchDraft({ manualOpenAllowed: event.target.checked })} />
-        <span>
-          ¿Se puede abrir desde la pantalla del guardia?
-          <HelpTip text="Si está activo, el guardia ve un botón para abrirla a mano." />
-        </span>
-      </label>
-
-      {!isNew ? (
-        <section>
-          <h4>Personas de esta puerta</h4>
-          <DoorPeoplePanel
-            authToken={authToken}
-            doorId={draft.id}
-            doorName={draft.name}
-            doorRelayMode={draft.relayMode}
-            onMessage={onSuccess}
-            onError={onError}
-          />
-        </section>
-      ) : (
-        <p className="aui-card__meta">Guardá la puerta para poder ver quién pasa por acá.</p>
-      )}
-
-      <AdvancedSection title="Datos para el instalador">
-        <p className="aui-card__meta">Esto lo completa quien instala la placa. La puerta se puede guardar sin estos datos.</p>
-        <Field label="Cómo abre">
-          <select className="input-field" value={draft.relayMode || 'local'} onChange={(event) => patchDraft({ relayMode: event.target.value })}>
-            <option value="local">En el lugar</option>
-            <option value="cloud">Desde internet</option>
-          </select>
-        </Field>
-        <Field label="Equipo que la maneja">
-          <select
-            className="input-field"
-            value={draft.device?.driver === 'generic_http' ? 'generic_http' : 'sr201'}
-            onChange={(event) => patchDraft({ device: { ...draft.device, driver: event.target.value } })}
-          >
-            <option value="sr201">Placa SR201</option>
-            <option value="generic_http">Dirección web</option>
-          </select>
-        </Field>
-        {draft.device?.driver === 'generic_http' ? (
+      <Modal
+        open={Boolean(draft)}
+        size="lg"
+        title={isNew ? 'Nueva puerta' : (draft?.name || 'Puerta')}
+        description="Marcá el lugar de afuera y el de adentro. El sistema usa eso para saber si la persona entró o salió."
+        dirty={dirty}
+        onClose={closeDoor}
+        footer={draft ? (
           <>
-            <Field label="Dirección web de apertura">
-              <input className="input-field" value={draft.device?.httpUrl || ''} onChange={(event) => patchDraft({ device: { ...draft.device, httpUrl: event.target.value } })} />
-            </Field>
-            <Field label="Token">
-              <input className="input-field" value={draft.device?.httpAuthToken || ''} onChange={(event) => patchDraft({ device: { ...draft.device, httpAuthToken: event.target.value } })} autoComplete="off" />
-            </Field>
+            <div className="aui-modal__footer-left">
+              <button type="button" className="btn btn-secondary" data-aui-cancel="true" onClick={closeDoor}>
+                Cancelar
+              </button>
+              {!isNew ? (
+                <PendingButton
+                  type="button"
+                  actionId={`delete-door-${draft._localId}`}
+                  pendingAction={pendingAction}
+                  className="btn btn-danger-small"
+                  onClick={deleteCurrentDoor}
+                >
+                  <Trash2 size={14} aria-hidden /> Eliminar puerta
+                </PendingButton>
+              ) : null}
+            </div>
+            <PendingButton
+              type="button"
+              actionId={`save-door-${draft._localId}`}
+              pendingAction={pendingAction}
+              className="btn btn-primary"
+              onClick={saveCurrentDoor}
+            >
+              <Save size={16} aria-hidden /> Guardar
+            </PendingButton>
           </>
-        ) : (
+        ) : null}
+      >
+        {draft ? (
           <>
-            <Field label="Dirección de la placa">
-              <input className="input-field" value={draft.device?.host || ''} onChange={(event) => patchDraft({ device: { ...draft.device, host: event.target.value } })} placeholder="192.168.0.38" />
-            </Field>
-            <Field label="Puerto">
-              <input className="input-field" type="number" value={draft.device?.port || 6722} onChange={(event) => patchDraft({ device: { ...draft.device, port: Number(event.target.value) } })} />
-            </Field>
-            <Field label="Canal">
-              <select className="input-field" value={draft.device?.channel || 1} onChange={(event) => patchDraft({ device: { ...draft.device, channel: Number(event.target.value) } })}>
-                <option value={1}>Canal 1</option>
-                <option value={2}>Canal 2</option>
+            <h3 className="aui-section-title">Qué lugares conecta</h3>
+            <div className="door-flow" aria-label="Esquema de la puerta, de afuera hacia adentro">
+              <div className="door-flow__place">
+                <span className="door-flow__tag">Lugar de afuera</span>
+                <strong>{draft.placeA ? placeName(areas, draft.placeA) : 'Elegí el lugar'}</strong>
+              </div>
+              <div className="door-flow__arrow" aria-hidden>🚪→</div>
+              <div className="door-flow__place">
+                <span className="door-flow__tag">Lugar de adentro</span>
+                <strong>{draft.placeB ? placeName(areas, draft.placeB) : 'Elegí el lugar'}</strong>
+              </div>
+            </div>
+            <Field label="¿Desde dónde se llega a esta puerta?" error={fieldErrors.placeA}>
+              <select
+                className="input-field aui-select-lg"
+                value={draft.placeA || ''}
+                onChange={(event) => patchDraft({ placeA: event.target.value })}
+              >
+                <option value="">Elegir lugar de afuera</option>
+                {areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
               </select>
             </Field>
-          </>
-        )}
-        <Field label="Lector de entrada">
-          <input className="input-field" value={readers[0]?.id || ''} onChange={(event) => {
-            const next = ensureTwoReaders(draft, draft.doorCode).map((reader) => (
-              reader.direction === 'ingreso' ? { ...reader, id: event.target.value.trim() } : reader
-            ));
-            patchDraft({ readers: next, readerIds: next.map((reader) => reader.id) });
-          }}
-          />
-        </Field>
-        <Field label="Lector de salida">
-          <input className="input-field" value={readers[1]?.id || ''} onChange={(event) => {
-            const next = ensureTwoReaders(draft, draft.doorCode).map((reader) => (
-              reader.direction === 'egreso' ? { ...reader, id: event.target.value.trim() } : reader
-            ));
-            patchDraft({ readers: next, readerIds: next.map((reader) => reader.id) });
-          }}
-          />
-        </Field>
-        <Field label="Enlace para abrir desde internet" help="Lo deja el instalador si alguna puerta se abre a distancia.">
-          <input className="input-field" value={globalAccess.bridgeUrl || ''} onChange={(event) => { setGlobalAccess((prev) => ({ ...prev, bridgeUrl: event.target.value.trim() })); setDirty(true); }} />
-        </Field>
-        <Field label="Clave de ese enlace">
-          <input className="input-field" type="password" value={globalAccess.bridgeSecret || ''} onChange={(event) => { setGlobalAccess((prev) => ({ ...prev, bridgeSecret: event.target.value })); setDirty(true); }} autoComplete="off" />
-        </Field>
-        <button type="button" className="btn btn-secondary" onClick={testPulse}>Probar apertura</button>
-      </AdvancedSection>
+            <Field label="¿A qué lugar se entra al pasarla?" error={fieldErrors.placeB}>
+              <select
+                className="input-field aui-select-lg"
+                value={draft.placeB || ''}
+                onChange={(event) => patchDraft({ placeB: event.target.value })}
+              >
+                <option value="">Elegir lugar de adentro</option>
+                {areas.map((area) => <option key={`b-${area.id}`} value={area.id}>{area.name}</option>)}
+              </select>
+            </Field>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => patchDraft(swapPlaces(draft.placeA, draft.placeB))}
+            >
+              ⇄ Invertir
+            </button>
+            <p className="aui-card__meta">Ej.: del Estacionamiento a la Planta.</p>
+            {draft.placeA && draft.placeB ? (
+              <p className="aui-card__meta">
+                Así queda: del {placeName(areas, draft.placeA)} al {placeName(areas, draft.placeB)}.
+              </p>
+            ) : null}
+            <p className="aui-card__meta">{SIDES_HELP}</p>
 
-      {!isNew ? (
-        <div style={{ marginTop: '1rem' }}>
-          <PendingButton
-            type="button"
-            actionId={`delete-door-${draft._localId}`}
-            pendingAction={pendingAction}
-            className="btn btn-danger-small"
-            onClick={deleteCurrentDoor}
-          >
-            <Trash2 size={14} aria-hidden /> Eliminar puerta
-          </PendingButton>
-        </div>
-      ) : null}
-    </div>
+            <h3 className="aui-section-title">¿Dónde hay lectores?</h3>
+            <div className="aui-picks" role="radiogroup" aria-label="¿Dónde hay lectores?">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={draft.readersMode === 'outside'}
+                className={`aui-pick${draft.readersMode === 'outside' ? ' is-selected' : ''}`}
+                onClick={() => setReadersMode('outside')}
+              >
+                <strong>Solo afuera</strong>
+                <span>Registra entradas.</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={draft.readersMode !== 'outside'}
+                className={`aui-pick${draft.readersMode !== 'outside' ? ' is-selected' : ''}`}
+                onClick={() => setReadersMode('both')}
+              >
+                <strong>Afuera y adentro</strong>
+                <span>Registra entradas y salidas. Recomendado.</span>
+              </button>
+            </div>
+
+            <h3 className="aui-section-title">Cómo se usa</h3>
+            <Field label="Nombre" error={fieldErrors.name} help="Es el nombre que ve el guardia en su pantalla.">
+              <input className="input-field" value={draft.name || ''} onChange={(event) => patchDraft({ name: event.target.value })} placeholder="Portón de clientes" />
+            </Field>
+            <Field label="Tipo" error={fieldErrors.kind} help="Puerta es una hoja. Portón es vehicular. Molinete deja pasar de a una persona.">
+              <select className="input-field" value={draft.kind || 'door'} onChange={(event) => patchDraft({ kind: event.target.value })}>
+                {DOOR_KINDS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+              </select>
+            </Field>
+            <Field
+              label="Tiempo que queda destrabada (segundos)"
+              error={fieldErrors.pulseSeconds}
+              help="Cuántos segundos queda libre la cerradura para que la persona pase. 3 alcanza para una puerta."
+            >
+              <input
+                className="input-field"
+                type="number"
+                min="1"
+                max="60"
+                value={draft.pulseSeconds || 3}
+                onChange={(event) => patchDraft({ pulseSeconds: Number(event.target.value) })}
+              />
+            </Field>
+            <label className="aui-check">
+              <input type="checkbox" checked={draft.sensorsRequired === true} onChange={(event) => patchDraft({ sensorsRequired: event.target.checked })} />
+              <span>
+                ¿Tiene sensor de puerta abierta?
+                <HelpTip text="El sensor avisa si la hoja quedó abierta después de pasar." />
+              </span>
+            </label>
+            {draft.sensorsRequired ? (
+              <Field
+                label="Avisar si queda abierta más de (segundos)"
+                error={fieldErrors.heldOpenSec}
+                help="Si sigue abierta más de este tiempo, se avisa. 60 segundos es un buen punto de partida."
+              >
+                <input
+                  className="input-field"
+                  type="number"
+                  min="10"
+                  max="600"
+                  value={draft.heldOpenSec || 60}
+                  onChange={(event) => patchDraft({ heldOpenSec: Number(event.target.value) })}
+                />
+              </Field>
+            ) : null}
+            <label className="aui-check">
+              <input
+                type="checkbox"
+                checked={draft.airlockEnabled === true}
+                onChange={(event) => patchDraft({ airlockEnabled: event.target.checked, airlockPartnerId: event.target.checked ? draft.airlockPartnerId : '' })}
+              />
+              <span>
+                ¿Forma un estanco con otra puerta?
+                <HelpTip text="En un estanco nunca se abren las dos a la vez. Primero se cierra una y después se abre la otra." />
+              </span>
+            </label>
+            {draft.airlockEnabled ? (
+              <Field label="La otra puerta del estanco" error={fieldErrors.airlockPartnerId}>
+                <select className="input-field" value={draft.airlockPartnerId || ''} onChange={(event) => patchDraft({ airlockPartnerId: event.target.value })}>
+                  <option value="">Elegir puerta</option>
+                  {otherDoors.map((door) => <option key={door.id} value={door.id}>{door.name || door.id}</option>)}
+                </select>
+              </Field>
+            ) : null}
+            {draft.airlockEnabled ? <p className="aui-card__meta">Nunca se abren las dos a la vez.</p> : null}
+            <label className="aui-check">
+              <input type="checkbox" checked={draft.requireGuardApproval === true} onChange={(event) => patchDraft({ requireGuardApproval: event.target.checked })} />
+              <span>
+                ¿El guardia tiene que aprobar cada ingreso?
+                <HelpTip text="Sirve en el portón de clientes: la persona llega y el guardia confirma antes de abrir." />
+              </span>
+            </label>
+            <label className="aui-check">
+              <input type="checkbox" checked={draft.manualOpenAllowed !== false} onChange={(event) => patchDraft({ manualOpenAllowed: event.target.checked })} />
+              <span>
+                ¿Se puede abrir desde la pantalla del guardia?
+                <HelpTip text="Si está activo, el guardia ve un botón para abrirla a mano." />
+              </span>
+            </label>
+            {!isNew ? (
+              <section>
+                <h3 className="aui-section-title">Personas de esta puerta</h3>
+                <DoorPeoplePanel
+                  authToken={authToken}
+                  doorId={draft.id}
+                  doorName={draft.name}
+                  doorRelayMode={draft.relayMode}
+                  onMessage={onSuccess}
+                  onError={onError}
+                />
+              </section>
+            ) : (
+              <p className="aui-card__meta">Guardá la puerta para poder ver quién pasa por acá.</p>
+            )}
+
+            <AdvancedSection title="Datos para el instalador">
+              <p className="aui-card__meta">Esto lo completa quien instala. La puerta se puede guardar sin estos datos.</p>
+              <Field label="Cómo abre">
+                <select className="input-field" value={draft.relayMode || 'local'} onChange={(event) => patchDraft({ relayMode: event.target.value })}>
+                  <option value="local">En el lugar</option>
+                  <option value="cloud">Desde internet</option>
+                </select>
+              </Field>
+              <Field label="Equipo que la maneja">
+                <select
+                  className="input-field"
+                  value={draft.device?.driver === 'generic_http' ? 'generic_http' : 'sr201'}
+                  onChange={(event) => patchDraft({ device: { ...draft.device, driver: event.target.value } })}
+                >
+                  <option value="sr201">Placa de relé</option>
+                  <option value="generic_http">Dirección web</option>
+                </select>
+              </Field>
+              {draft.device?.driver === 'generic_http' ? (
+                <>
+                  <Field label="Dirección web de apertura">
+                    <input className="input-field" value={draft.device?.httpUrl || ''} onChange={(event) => patchDraft({ device: { ...draft.device, httpUrl: event.target.value } })} />
+                  </Field>
+                  <Field label="Clave de esa dirección">
+                    <input className="input-field" value={draft.device?.httpAuthToken || ''} onChange={(event) => patchDraft({ device: { ...draft.device, httpAuthToken: event.target.value } })} autoComplete="off" />
+                  </Field>
+                </>
+              ) : (
+                <>
+                  <Field label="Dirección de la placa">
+                    <input className="input-field" value={draft.device?.host || ''} onChange={(event) => patchDraft({ device: { ...draft.device, host: event.target.value } })} placeholder="192.168.0.38" />
+                  </Field>
+                  <Field label="Puerto">
+                    <input className="input-field" type="number" value={draft.device?.port || 6722} onChange={(event) => patchDraft({ device: { ...draft.device, port: Number(event.target.value) } })} />
+                  </Field>
+                  <Field label="Canal">
+                    <select className="input-field" value={draft.device?.channel || 1} onChange={(event) => patchDraft({ device: { ...draft.device, channel: Number(event.target.value) } })}>
+                      <option value={1}>Canal 1</option>
+                      <option value={2}>Canal 2</option>
+                    </select>
+                  </Field>
+                </>
+              )}
+              <Field label="Lector de afuera">
+                <input className="input-field" value={readers.find((reader) => reader.side === 'in')?.id || ''} onChange={(event) => setReaderId('in', event.target.value)} />
+              </Field>
+              {draft.readersMode !== 'outside' ? (
+                <Field label="Lector de adentro">
+                  <input className="input-field" value={readers.find((reader) => reader.side === 'out')?.id || ''} onChange={(event) => setReaderId('out', event.target.value)} />
+                </Field>
+              ) : null}
+              <Field label="Enlace para abrir desde internet" help="Lo deja el instalador si alguna puerta se abre a distancia.">
+                <input className="input-field" value={globalAccess.bridgeUrl || ''} onChange={(event) => { setGlobalAccess((prev) => ({ ...prev, bridgeUrl: event.target.value.trim() })); setDirty(true); }} />
+              </Field>
+              <Field label="Clave de ese enlace">
+                <input className="input-field" type="password" value={globalAccess.bridgeSecret || ''} onChange={(event) => { setGlobalAccess((prev) => ({ ...prev, bridgeSecret: event.target.value })); setDirty(true); }} autoComplete="off" />
+              </Field>
+              <button type="button" className="btn btn-secondary" onClick={testPulse}>Probar apertura</button>
+            </AdvancedSection>
+          </>
+        ) : null}
+      </Modal>
+    </PageContainer>
   );
 }
 
 export default DoorsAdminPanel;
+

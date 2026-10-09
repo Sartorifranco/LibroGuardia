@@ -1,4 +1,4 @@
-import { applyAirlockChoice, sidesFromPlaces, validateSimpleDoor } from './doorForm';
+import { applyAirlockChoice, readersForDraft, sidesFromPlaces, swapPlaces, validateSimpleDoor } from './doorForm';
 
 describe('formulario simple de puerta', () => {
   const base = {
@@ -11,6 +11,14 @@ describe('formulario simple de puerta', () => {
     sensorsRequired: false,
     airlockEnabled: false
   };
+
+  test('invierte afuera y adentro y arma los lectores según el lado', () => {
+    expect(swapPlaces('estacionamiento', 'planta')).toEqual({ placeA: 'planta', placeB: 'estacionamiento' });
+    expect(readersForDraft({ doorCode: 'P1', readersMode: 'outside' })).toEqual([
+      { id: 'INGRESO_P1', direction: 'ingreso', side: 'in' }
+    ]);
+    expect(readersForDraft({ doorCode: 'P1', readersMode: 'both' }).map((reader) => reader.side)).toEqual(['in', 'out']);
+  });
 
   test('acepta una puerta con dos lugares distintos', () => {
     expect(validateSimpleDoor(base)).toEqual({});
