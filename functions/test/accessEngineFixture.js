@@ -22,8 +22,11 @@ const door = (id, extra = {}) => ({
   ...extra
 });
 
+/** Clave HMAC del sitio mientras se arma un bundle con clave (ver buildKeyedChunks). */
+let CURRENT_KEY = null;
+
 const cred = (type, raw, cardholderId, extra = {}) => ({
-  type, valueHash: hashCredential(type, raw), cardholderId, status: 'active', ...extra
+  type, valueHash: hashCredential(type, raw, CURRENT_KEY), cardholderId, status: 'active', ...extra
 });
 
 const ALL_DOORS = ['D1', 'D2', 'D5', 'D6', 'EA', 'EB', 'TA', 'TB'];
@@ -152,7 +155,7 @@ const buildChunks = (overrides = {}) => ({
     // Claves revocadas (el edge las materializa en la tabla revocations).
     revoked: [
       'ch:ch_rev',
-      `cred:dni:${hashCredential('dni', '20000018')}`,
+      `cred:dni:${hashCredential('dni', '20000018', CURRENT_KEY)}`,
       'p6',
       ...(overrides.revocations || [])
     ]
@@ -165,4 +168,22 @@ const withRevokedCred = (chunks) => {
   return chunks;
 };
 
-module.exports = { ar, buildChunks: (o) => withRevokedCred(buildChunks(o)), door, side, cred, ALL_DOORS };
+/**
+ * El mismo sitio pero con clave de credenciales (como lo compila siteCompiler cuando existe
+ * `sites/{s}/secrets/credentialKey`): valueHash = HMAC, pases con `dniHash` en vez de `dni`,
+ * revocaciones con el hash HMAC y chunk `secrets`.
+ */
+const buildKeyedChunks = (key, overrides) => {
+  const { credentialKeyId } = require('../lib/accessEngine');
+  CURRENT_KEY = key;
+  try {
+    const chunks = withRevokedCred(buildChunks(overrides));
+    chunks.passes.passes = chunks.passes.passes.map(({ dni, ...p }) => ({ ...p, dniHash: hashCredential('dni', dni, key) }));
+    chunks.secrets = { secrets: { credentialKey: key, keyId: credentialKeyId(key), alg: 'HMAC-SHA256' } };
+    return chunks;
+  } finally {
+    CURRENT_KEY = null;
+  }
+};
+
+module.exports = { ar, buildChunks: (o) => withRevokedCred(buildChunks(o)), buildKeyedChunks, door, side, cred, ALL_DOORS };

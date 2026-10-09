@@ -257,29 +257,36 @@ describe('controlador: clave HMAC de credenciales del sitio (chunk secrets)', { 
     assert.equal(t.controller.status().config.credentialKey.present, true);
   });
 
-  it('si el hub no entrega secrets: alarma credential_key_missing y no adivina', async () => {
+  it('si el hub no entrega secrets: alarma credential_key_missing y NO aplica (todo-o-nada)', async () => {
     t = await createTestController({ apply: false });
     const bodies = siteBodies({ credentialKey: KEY });
     t.hub.publish(1, bodies);
     delete t.hub.bodies.secrets;
-    await t.controller.configSync.sync();
-    assert.equal(t.edge.chunks.configVersion(), 1);
+    const r = await t.controller.configSync.sync();
+    assert.equal(r.applied, false);
+    assert.equal(r.reason, 'missing_chunks');
+    assert.equal(t.edge.chunks.configVersion(), 0);
     assert.equal(t.controller.configSync.credentialKey(), null);
     assert.ok(t.events('alarm').some((e) => e.reason === 'credential_key_missing'));
-    assert.equal((await t.scan('p1', 'ana')).reason, 'credencial_desconocida');
-    // el hub lo corrige: al próximo sync baja solo secrets y queda operativo
+    assert.equal((await t.scan('p1', 'ana')).decision, 'deny');
+    // el hub lo corrige: al próximo sync baja solo lo que falta y queda operativo
     t.hub.bodies.secrets = siteBodies({ credentialKey: KEY }).secrets;
+    const asked = [];
+    const orig = t.hub.getChunks.bind(t.hub);
+    t.hub.getChunks = (names) => { asked.push(names); return orig(names); };
     await t.controller.configSync.sync();
+    assert.ok(asked.length && asked[0].includes('secrets'));
     assert.equal(t.controller.configSync.credentialKey(), KEY);
     t.clock.advance(3100);
     assert.equal((await t.scan('p1', 'ana')).decision, 'grant');
   });
 
-  it('secrets alterado por el hub (hash distinto al firmado) se ignora', async () => {
+  it('secrets alterado por el hub (hash distinto al firmado) se rechaza', async () => {
     t = await createTestController({ apply: false });
     t.hub.publish(1, siteBodies({ credentialKey: KEY }));
     t.hub.bodies.secrets = { secrets: { credentialKey: Buffer.alloc(32, 9).toString('base64') } };
-    await t.controller.configSync.sync();
+    const r = await t.controller.configSync.sync();
+    assert.equal(r.reason, 'hash_mismatch');
     assert.equal(t.controller.configSync.credentialKey(), null);
   });
 });
