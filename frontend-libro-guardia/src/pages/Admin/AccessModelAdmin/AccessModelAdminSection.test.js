@@ -109,7 +109,7 @@ describe('AccessModelAdminSection', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'Feriados' }));
     expect(await screen.findByText(/Este año no tiene feriados/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Cargar feriados nacionales' }));
-    expect(await screen.findByDisplayValue('Año Nuevo')).toBeInTheDocument();
+    expect(await screen.findByText(/1 ene · Año Nuevo/)).toBeInTheDocument();
   });
 
   it('consulta si una persona puede pasar', async () => {

@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
-import { PageHeader, EmptyState, HelpTip, AdvancedSection } from '../../../components/admin-ui';
+import { PageHeader, EmptyState, HelpTip, AdvancedSection, Modal, PageContainer } from '../../../components/admin-ui';
+import { useToast } from '../../../context/ToastContext';
 import './consumo.css';
 
 const formatUsd = (value) => {
@@ -66,6 +67,8 @@ function ConsumoAdminSection() {
   const [budget, setBudget] = useState('5');
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState('');
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const { showSuccess, showError } = useToast();
 
   const load = useCallback(async () => {
     if (!authToken) return;
@@ -105,8 +108,11 @@ function ConsumoAdminSection() {
         body: { monthlyBudgetUsd: Number(String(budget).replace(',', '.')) }
       });
       setSavedMsg(`Tope guardado: ${formatUsd(saved.monthlyBudgetUsd)}`);
+      setBudgetOpen(false);
+      showSuccess('Guardado');
       await load();
     } catch (err) {
+      showError(err.message || 'No se pudo guardar el tope.');
       setError(err.message || 'No se pudo guardar el tope.');
     } finally {
       setSaving(false);
@@ -117,6 +123,7 @@ function ConsumoAdminSection() {
   const status = month.status || 'ok';
 
   return (
+    <PageContainer width="medium">
     <section className="consumo-page">
       <PageHeader
         title="Consumo"
@@ -208,21 +215,34 @@ function ConsumoAdminSection() {
         </div>
       ) : null}
 
-      <form className="aui-field" onSubmit={(event) => { event.preventDefault(); saveBudget(); }}>
-        <label htmlFor="consumo-tope">Tope del mes (dólares)</label>
-        <div className="aui-row">
+      <button type="button" className="btn btn-secondary" onClick={() => setBudgetOpen(true)}>Editar tope</button>
+      {savedMsg ? <p className="consumo-muted" role="status">{savedMsg}</p> : null}
+      <Modal
+        open={budgetOpen}
+        title="Tope del mes"
+        description="Si la estimación pasa este número, avisamos."
+        onClose={() => setBudgetOpen(false)}
+        size="sm"
+        dirty
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setBudgetOpen(false)}>Cancelar</button>
+            <button type="submit" form="consumo-tope-form" className="btn btn-primary" disabled={saving}>
+              {saving ? 'Guardando…' : 'Guardar tope'}
+            </button>
+          </>
+        )}
+      >
+        <form id="consumo-tope-form" className="aui-field" onSubmit={(event) => { event.preventDefault(); saveBudget(); }}>
+          <label htmlFor="consumo-tope">Tope del mes (dólares)</label>
           <input
             id="consumo-tope"
             inputMode="decimal"
             value={budget}
             onChange={(event) => setBudget(event.target.value)}
           />
-          <button type="submit" className="aui-btn aui-btn--primary" disabled={saving}>
-            {saving ? 'Guardando…' : 'Guardar tope'}
-          </button>
-        </div>
-        {savedMsg ? <p className="consumo-muted" role="status">{savedMsg}</p> : null}
-      </form>
+        </form>
+      </Modal>
 
       {!loading && report && report.monitoring && !report.monitoring.available ? (
         <div className="consumo-banner" role="status">
@@ -238,6 +258,7 @@ function ConsumoAdminSection() {
         <p>En Google Cloud, Facturación → Presupuestos y alertas: creá un presupuesto de US$ 10 con avisos al 50 %, 90 % y 100 %.</p>
       </AdvancedSection>
     </section>
+    </PageContainer>
   );
 }
 

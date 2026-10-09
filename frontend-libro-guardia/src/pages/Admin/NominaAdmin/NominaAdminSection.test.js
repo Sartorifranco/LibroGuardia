@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import NominaAdminSection from './NominaAdminSection';
 import { summarizeNominaChange } from './nominaDiff';
 
@@ -47,6 +47,7 @@ describe('Importar nómina', () => {
     render(<NominaAdminSection pendingAction={null} setPendingAction={jest.fn()} runAction={jest.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Importar nómina' })).toBeInTheDocument();
     expect(screen.getByText(/Para qué sirve:/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Importar planilla' }));
     expect(screen.getByText('Elegí el archivo')).toBeInTheDocument();
     expect(screen.getByText('Revisá lo que va a cambiar')).toBeInTheDocument();
     expect(screen.getByText('Confirmar')).toBeInTheDocument();

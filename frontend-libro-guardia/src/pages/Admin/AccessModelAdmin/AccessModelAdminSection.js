@@ -5,6 +5,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { AdminEmpty } from '../../../components/admin/AdminUi';
+import { Modal, PageContainer } from '../../../components/admin-ui';
 import './access-model.css';
 
 const TABS = [
@@ -35,6 +36,33 @@ const blankSchedule = () => ({
 const blankGroup = () => ({ name: '', scheduleId: '24x7', allDoors: false, doors: [] });
 
 const thisYear = () => new Date().getFullYear();
+
+const MONTHS = [
+  { id: 1, name: 'Enero', short: 'ene' },
+  { id: 2, name: 'Febrero', short: 'feb' },
+  { id: 3, name: 'Marzo', short: 'mar' },
+  { id: 4, name: 'Abril', short: 'abr' },
+  { id: 5, name: 'Mayo', short: 'may' },
+  { id: 6, name: 'Junio', short: 'jun' },
+  { id: 7, name: 'Julio', short: 'jul' },
+  { id: 8, name: 'Agosto', short: 'ago' },
+  { id: 9, name: 'Septiembre', short: 'sep' },
+  { id: 10, name: 'Octubre', short: 'oct' },
+  { id: 11, name: 'Noviembre', short: 'nov' },
+  { id: 12, name: 'Diciembre', short: 'dic' }
+];
+
+const holidayParts = (value) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return null;
+  return { month: Number(match[2]), day: Number(match[3]) };
+};
+
+const holidayLine = (item) => {
+  const parts = holidayParts(item?.date);
+  const when = parts ? `${parts.day} ${MONTHS[parts.month - 1]?.short || ''}` : (item?.date || 'Sin fecha');
+  return `${when} · ${item?.name || 'Sin nombre'}`;
+};
 
 const scheduleLabel = (schedule) => {
   if (!schedule || schedule.always || schedule.id === '24x7') return 'Siempre';
@@ -89,6 +117,7 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
   const [simResult, setSimResult] = useState(null);
   const [simBusy, setSimBusy] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [holidayDraft, setHolidayDraft] = useState(null);
 
   const visibleTabs = canManage ? TABS : TABS.filter((t) => t.id === 'grupos' || t.id === 'simular');
 
@@ -161,7 +190,7 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
         token: authToken,
         body: scheduleDraft
       });
-      showSuccess(scheduleEdit === 'new' ? 'Horario creado.' : 'Horario guardado.');
+      showSuccess('Guardado');
       setScheduleEdit(null);
       await loadSchedules();
     } catch (err) {
@@ -217,7 +246,7 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
         token: authToken,
         body
       });
-      showSuccess(groupEdit === 'new' ? 'Grupo creado.' : 'Grupo guardado.');
+      showSuccess('Guardado');
       setGroupEdit(null);
       await loadGroups();
     } catch (err) {
@@ -267,21 +296,55 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
     }
   };
 
-  const saveHolidays = async () => {
+  const saveHolidays = async (nextDates = dates) => {
     setHolidayBusy(true);
     try {
       const data = await apiFetch(`/admin/holidays/${year}`, {
         method: 'PUT',
         token: authToken,
-        body: { dates }
+        body: { dates: nextDates }
       });
-      setDates(data.dates || []);
-      showSuccess('Feriados guardados.');
+      setDates(data.dates || nextDates);
+      setHolidayDraft(null);
+      showSuccess('Guardado');
     } catch (err) {
       showError(err.message || 'No se pudieron guardar los feriados.');
     } finally {
       setHolidayBusy(false);
     }
+  };
+
+  const openHoliday = (item, index) => {
+    setHolidayDraft({
+      index,
+      date: item?.date || `${year}-01-01`,
+      name: item?.name || ''
+    });
+  };
+
+  const commitHoliday = () => {
+    if (!holidayDraft) return;
+    const row = { date: holidayDraft.date, name: holidayDraft.name.trim() };
+    if (!row.date || !row.name) {
+      showError('Completá la fecha y el nombre.');
+      return;
+    }
+    const next = holidayDraft.index == null
+      ? [...dates, row]
+      : dates.map((item, index) => (index === holidayDraft.index ? row : item));
+    saveHolidays(next);
+  };
+
+  const removeHoliday = async (index) => {
+    const item = dates[index];
+    const ok = await confirm({
+      title: 'Quitar feriado',
+      message: `¿Quitar “${item?.name || 'este feriado'}”?`,
+      confirmLabel: 'Quitar',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    saveHolidays(dates.filter((_, i) => i !== index));
   };
 
   const searchPeople = async (event) => {
@@ -346,6 +409,7 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
   };
 
   return (
+    <PageContainer width="medium">
     <div className="access-model">
       {!lockTab && (
       <div className="access-model__tabs" role="tablist" aria-label="Accesos">
@@ -373,12 +437,12 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
       ) : null}
 
       {!loading && !error && tab === 'horarios' ? (
-        <div className="access-model__layout">
-          <div className="access-list">
+        <div>
+          <div className="aui-card-grid">
             {schedules.map((item) => (
-              <div key={item.id} className="access-card" style={{ cursor: 'default' }}>
+              <div key={item.id} className="aui-card">
                 <strong>{item.name || 'Siempre'}</strong>
-                <span className="access-card__meta">
+                <span className="aui-card__meta">
                   {item.builtin || item.always
                     ? 'Las 24 horas, todos los días. No se puede modificar.'
                     : 'Horario editable'}
@@ -391,12 +455,25 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
                 ) : null}
               </div>
             ))}
-            {canManage ? (
-              <button type="button" className="btn btn-primary" onClick={() => startSchedule(null)}>Nuevo horario</button>
-            ) : null}
           </div>
-          {scheduleEdit ? (
-            <form onSubmit={saveSchedule}>
+          {canManage ? (
+            <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={() => startSchedule(null)}>Nuevo horario</button>
+          ) : null}
+          <Modal
+            open={Boolean(scheduleEdit)}
+            title={scheduleEdit === 'new' ? 'Nuevo horario' : 'Editar horario'}
+            description="Días y horas en los que vale el permiso."
+            onClose={() => setScheduleEdit(null)}
+            size="lg"
+            dirty={Boolean(scheduleDraft.name)}
+            footer={(
+              <>
+                <button type="button" className="btn btn-secondary" onClick={() => setScheduleEdit(null)}>Cancelar</button>
+                <button type="submit" form="schedule-form" className="btn btn-primary">Guardar horario</button>
+              </>
+            )}
+          >
+            <form id="schedule-form" onSubmit={saveSchedule}>
               <label className="people-access-field">
                 <span>Nombre</span>
                 <input className="input-field" value={scheduleDraft.name} onChange={(e) => setScheduleDraft((p) => ({ ...p, name: e.target.value }))} required />
@@ -452,12 +529,8 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
                   Permite
                 </label>
               </fieldset>
-              <div className="access-actions">
-                <button type="button" className="btn btn-secondary" onClick={() => setScheduleEdit(null)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Guardar horario</button>
-              </div>
             </form>
-          ) : null}
+          </Modal>
         </div>
       ) : null}
 
@@ -474,49 +547,117 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
             <button type="button" className="btn btn-secondary" disabled={holidayBusy} onClick={loadNational}>
               Cargar feriados nacionales
             </button>
-            <button type="button" className="btn btn-primary" disabled={holidayBusy} onClick={saveHolidays}>
-              Guardar feriados
+            <button type="button" className="btn btn-primary" disabled={holidayBusy} onClick={() => openHoliday(null, null)}>
+              Agregar feriado
             </button>
           </div>
           {dates.length === 0 ? (
             <AdminEmpty title="Este año no tiene feriados" description="Cargá los nacionales o agregá una fecha a mano." />
           ) : null}
-          {dates.map((item, index) => (
-            <div className="access-times" key={`${item.date}-${index}`} style={{ marginBottom: '0.45rem' }}>
-              <input className="input-field" aria-label={`Fecha ${index + 1}`} type="date" value={item.date} onChange={(e) => setDates((prev) => prev.map((row, i) => (i === index ? { ...row, date: e.target.value } : row)))} />
-              <input className="input-field" aria-label={`Nombre ${index + 1}`} value={item.name} onChange={(e) => setDates((prev) => prev.map((row, i) => (i === index ? { ...row, name: e.target.value } : row)))} />
-              <button type="button" className="btn btn-secondary" onClick={() => setDates((prev) => prev.filter((_, i) => i !== index))}>Quitar</button>
-            </div>
-          ))}
-          <button type="button" className="btn btn-secondary" onClick={() => setDates((prev) => [...prev, { date: `${year}-01-01`, name: '' }])}>
-            Agregar feriado
-          </button>
+          <div className="aui-month-grid">
+            {MONTHS.map((month) => {
+              const rows = dates
+                .map((item, index) => ({ item, index, parts: holidayParts(item.date) }))
+                .filter((row) => row.parts && row.parts.month === month.id);
+              return (
+                <article key={month.id} className="aui-card">
+                  <h3 className="aui-card__title">{month.name}</h3>
+                  {rows.length === 0 ? (
+                    <p className="aui-card__meta">Sin feriados</p>
+                  ) : (
+                    <ul className="aui-month-card__list">
+                      {rows.map((row) => (
+                        <li key={`${row.item.date}-${row.index}`}>
+                          <button type="button" className="aui-month-card__row" onClick={() => openHoliday(row.item, row.index)}>
+                            {holidayLine(row.item)}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+          <Modal
+            open={Boolean(holidayDraft)}
+            title={holidayDraft && holidayDraft.index == null ? 'Agregar feriado' : 'Editar feriado'}
+            description="La fecha y el nombre que se ven en el calendario."
+            onClose={() => setHolidayDraft(null)}
+            size="sm"
+            dirty={Boolean(holidayDraft && (holidayDraft.name || holidayDraft.index == null))}
+            footer={(
+              <>
+                <button type="button" className="btn btn-secondary" onClick={() => setHolidayDraft(null)}>Cancelar</button>
+                <button type="button" className="btn btn-primary" disabled={holidayBusy} onClick={commitHoliday}>
+                  Guardar
+                </button>
+              </>
+            )}
+          >
+            {holidayDraft ? (
+              <>
+                <label className="people-access-field">
+                  Fecha
+                  <input className="input-field" aria-label="Fecha del feriado" type="date" value={holidayDraft.date} onChange={(e) => setHolidayDraft((prev) => ({ ...prev, date: e.target.value }))} />
+                </label>
+                <label className="people-access-field">
+                  Nombre
+                  <input className="input-field" aria-label="Nombre del feriado" value={holidayDraft.name} onChange={(e) => setHolidayDraft((prev) => ({ ...prev, name: e.target.value }))} />
+                </label>
+                {holidayDraft.index != null ? (
+                  <button type="button" className="btn btn-secondary" onClick={() => removeHoliday(holidayDraft.index)}>Quitar</button>
+                ) : null}
+              </>
+            ) : null}
+          </Modal>
         </div>
       ) : null}
 
       {!loading && !error && tab === 'grupos' ? (
-        <div className="access-model__layout">
-          <div className="access-list">
-            {groups.length === 0 ? (
-              <AdminEmpty title="Todavía no hay grupos" description="Un grupo junta puertas y un horario. Después se lo asignás a cada persona." />
-            ) : groups.map((item) => (
-              <button key={item.id} type="button" className={`access-card${groupEdit === item.id ? ' is-on' : ''}`} onClick={() => canManage && startGroup(item)}>
-                <strong>{item.name}</strong>
-                <span className="access-card__meta">
-                  {scheduleName(item.scheduleId)}
-                  {' · '}
-                  {item.allDoors || item.doors === '*' ? 'Todas las puertas' : `${(item.doors || []).length} puertas`}
-                  {' · '}
-                  {item.memberCount || 0} {item.memberCount === 1 ? 'persona' : 'personas'}
-                </span>
-              </button>
-            ))}
-            {canManage ? (
-              <button type="button" className="btn btn-primary" onClick={() => startGroup(null)}>Nuevo grupo</button>
-            ) : null}
-          </div>
-          {groupEdit ? (
-            <form onSubmit={saveGroup}>
+        <div>
+          {groups.length === 0 ? (
+            <AdminEmpty title="Todavía no hay grupos" description="Un grupo junta puertas y un horario. Después se lo asignás a cada persona." />
+          ) : (
+            <div className="aui-card-grid">
+              {groups.map((item) => (
+                <article key={item.id} className="aui-card">
+                  <strong>{item.name}</strong>
+                  <span className="aui-card__meta">
+                    {scheduleName(item.scheduleId)}
+                    {' · '}
+                    {item.allDoors || item.doors === '*' ? 'Todas las puertas' : `${(item.doors || []).length} puertas`}
+                    {' · '}
+                    {item.memberCount || 0} {item.memberCount === 1 ? 'persona' : 'personas'}
+                  </span>
+                  {canManage ? (
+                    <div className="access-actions">
+                      <button type="button" className="btn btn-secondary" onClick={() => startGroup(item)}>Editar</button>
+                      <button type="button" className="btn btn-secondary" onClick={() => deleteGroup(item)}>Borrar</button>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          )}
+          {canManage ? (
+            <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={() => startGroup(null)}>Nuevo grupo</button>
+          ) : null}
+          <Modal
+            open={Boolean(groupEdit)}
+            title={groupEdit === 'new' ? 'Nuevo grupo' : 'Editar grupo'}
+            description="Puertas y horario que comparte este grupo."
+            onClose={() => setGroupEdit(null)}
+            size="lg"
+            dirty={Boolean(groupDraft.name)}
+            footer={(
+              <>
+                <button type="button" className="btn btn-secondary" onClick={() => setGroupEdit(null)}>Cancelar</button>
+                <button type="submit" form="group-form" className="btn btn-primary">Guardar grupo</button>
+              </>
+            )}
+          >
+            <form id="group-form" onSubmit={saveGroup}>
               <label className="people-access-field">
                 <span>Nombre</span>
                 <input className="input-field" value={groupDraft.name} onChange={(e) => setGroupDraft((p) => ({ ...p, name: e.target.value }))} required />
@@ -550,17 +691,8 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
                   ))}
                 </div>
               )) : null}
-              <div className="access-actions">
-                {groupEdit !== 'new' ? (
-                  <button type="button" className="btn btn-secondary" onClick={() => deleteGroup(groups.find((g) => g.id === groupEdit) || { id: groupEdit, name: groupDraft.name, memberCount: 0 })}>
-                    Borrar
-                  </button>
-                ) : null}
-                <button type="button" className="btn btn-secondary" onClick={() => setGroupEdit(null)}>Cancelar</button>
-                <button type="submit" className="btn btn-primary">Guardar grupo</button>
-              </div>
             </form>
-          ) : null}
+          </Modal>
         </div>
       ) : null}
 
@@ -604,6 +736,7 @@ function AccessModelAdminSection({ initialTab = 'grupos', lockTab = false } = {}
         </form>
       ) : null}
     </div>
+    </PageContainer>
   );
 }
 

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { DoorOpen, RefreshCw, Search, Save } from 'lucide-react';
+import { RefreshCw, Search, Save } from 'lucide-react';
 import DoorAccessEditor from '../../../components/DoorAccessEditor';
 import PersonPhotoField from '../../../components/PersonPhotoField';
 import { useAuth } from '../../../context/AuthContext';
@@ -7,7 +7,7 @@ import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
 import { hasPermission } from '../../../utils/permissions';
-import { PageHeader, EmptyState, AdvancedSection } from '../../../components/admin-ui';
+import { PageHeader, EmptyState, AdvancedSection, Modal, PageContainer } from '../../../components/admin-ui';
 import {
   ACCESS_FILTER_OPTIONS,
   formatLastAccessLabel,
@@ -75,10 +75,14 @@ function PeopleAccessAdminSection() {
   const [fichaTab, setFichaTab] = useState('datos');
   const [passages, setPassages] = useState([]);
   const [passagesError, setPassagesError] = useState('');
+  const [draftTouched, setDraftTouched] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newPerson, setNewPerson] = useState({ name: '', idNumber: '', legajo: '' });
 
   const canManage = hasPermission(currentUser, 'access.doors.manage')
     || hasPermission(currentUser, 'access.control')
     || hasPermission(currentUser, 'master.nomina.write');
+  const canCreatePerson = hasPermission(currentUser, 'master.nomina.write');
 
   const peopleCacheKey = authToken ? `mss.peopleList.v1.${String(authToken).slice(-12)}` : null;
 
@@ -222,16 +226,51 @@ function PeopleAccessAdminSection() {
     syncDraftFromPerson(selected);
   }, [selected, syncDraftFromPerson]);
 
-  const selectPerson = (person) => {
+  const selectPerson = (person, tab = 'datos') => {
     setSelectedId(person.id);
     syncDraftFromPerson(person);
-    setFichaTab('datos');
+    setDraftTouched(false);
+    setFichaTab(tab);
     setPassages([]);
     setPassagesError('');
   };
 
   const updateDraftField = (field, value) => {
+    setDraftTouched(true);
     setDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const createPerson = async (event) => {
+    event?.preventDefault?.();
+    const name = newPerson.name.trim();
+    if (!name) {
+      showError('El nombre no puede quedar vacío');
+      return;
+    }
+    setSaving(true);
+    try {
+      await apiFetch('/admin/nomina', {
+        method: 'POST',
+        token: authToken,
+        body: {
+          name,
+          idNumber: newPerson.idNumber.trim(),
+          legajo: newPerson.legajo.trim(),
+          authorizationPolicy: 'permanent_shift',
+          active: true,
+          turnoRaw: 'Lu,Ma,Mi,Ju,Vi,Sa,Do 08:00 a 17:00',
+          requiresCitacion: false
+        }
+      });
+      showSuccess('Guardado');
+      setCreateOpen(false);
+      setNewPerson({ name: '', idNumber: '', legajo: '' });
+      await loadPeople({ force: true });
+    } catch (err) {
+      showError(err.message || 'No se pudo crear la persona');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSave = async () => {
@@ -260,7 +299,7 @@ function PeopleAccessAdminSection() {
           allowedDoorIds: Array.isArray(draft.allowedDoorIds) ? draft.allowedDoorIds : []
         }
       });
-      showSuccess(data.message || 'Persona actualizada');
+      showSuccess('Guardado');
       const updated = data.person;
       setPeople((prev) => {
         const next = prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p));
@@ -323,6 +362,7 @@ function PeopleAccessAdminSection() {
   }
 
   return (
+    <PageContainer width="medium">
     <div className="people-access-admin admin-simple">
       <div className="admin-sub-section">
         <PageHeader
@@ -333,6 +373,9 @@ function PeopleAccessAdminSection() {
             'Abrí la ficha y revisá Datos, Credenciales, Accesos o el historial.',
             'Guardá si cambiaste algo.'
           ]}
+          action={canCreatePerson ? (
+            <button type="button" className="btn btn-primary" onClick={() => setCreateOpen(true)}>Nueva persona</button>
+          ) : null}
         />
 
         <div className="admin-simple-search">
@@ -417,18 +460,16 @@ function PeopleAccessAdminSection() {
                             <tr
                               key={p.id}
                               className={`border-t people-access-row${selectedId === p.id ? ' is-selected' : ''}${p.active === false ? ' is-inactive' : ''}`}
-                              onClick={() => selectPerson(p)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  selectPerson(p);
-                                }
-                              }}
-                              tabIndex={0}
-                              role="button"
                             >
                               <td className="px-3 py-2 font-medium">
-                                {p.name || '—'}
+                                <button type="button" className="btn btn-secondary" onClick={() => selectPerson(p, 'datos')}>
+                                  {p.name || '—'}
+                                </button>
+                                <div className="access-actions" style={{ marginTop: '0.35rem' }}>
+                                  <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(p, 'datos')}>Editar datos</button>
+                                  <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(p, 'credenciales')}>Agregar credencial</button>
+                                  <button type="button" className="btn btn-secondary-small" onClick={() => selectPerson(p, 'accesos')}>Asignar grupo</button>
+                                </div>
                                 {p.active === false ? (
                                   <span className="people-access-inactive-tag"> Inactiva</span>
                                 ) : null}
@@ -464,13 +505,26 @@ function PeopleAccessAdminSection() {
               </p>
             </div>
 
-            <div className="people-access-ficha">
-              {!selected ? (
-                <div className="people-access-ficha-empty">
-                  <DoorOpen size={28} />
-                  <p>Elegí una persona para editar identidad, credenciales y <strong>puertas permitidas</strong>.</p>
-                </div>
+            <Modal
+              open={Boolean(selected)}
+              title={selected?.name || 'Ficha de persona'}
+              description="Datos, cómo entra y por dónde puede pasar."
+              onClose={() => setSelectedId(null)}
+              size="lg"
+              dirty={draftTouched}
+              footer={selected && fichaTab !== 'historial' ? (
+                <>
+                  <button type="button" className="btn btn-secondary" onClick={() => setSelectedId(null)}>Cancelar</button>
+                  <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>
+                    <Save size={16} />
+                    {saving ? 'Guardando…' : 'Guardar persona'}
+                  </button>
+                </>
               ) : (
+                <button type="button" className="btn btn-secondary" onClick={() => setSelectedId(null)}>Cerrar</button>
+              )}
+            >
+              {selected ? (
                 <>
                   <div className="people-access-ficha-header">
                     <h4>{selected.name || 'Ficha de persona'}</h4>
@@ -658,20 +712,9 @@ function PeopleAccessAdminSection() {
                     </div>
                   ) : null}
 
-                  {fichaTab !== 'historial' ? (
-                  <button
-                    type="button"
-                    className="btn btn-primary mt-3"
-                    disabled={saving}
-                    onClick={handleSave}
-                  >
-                    <Save size={16} />
-                    {saving ? 'Guardando…' : 'Guardar persona'}
-                  </button>
-                  ) : null}
                 </>
-              )}
-            </div>
+              ) : null}
+            </Modal>
           </div>
 
         <AdvancedSection title="Opciones avanzadas">
@@ -695,8 +738,40 @@ function PeopleAccessAdminSection() {
             {backfilling ? 'Recalculando…' : 'Recalcular últimos accesos'}
           </button>
         </AdvancedSection>
+        <Modal
+          open={createOpen}
+          title="Nueva persona"
+          description="Nombre y documento. Después podés cargar la credencial y el grupo."
+          onClose={() => setCreateOpen(false)}
+          size="sm"
+          dirty={Boolean(newPerson.name || newPerson.idNumber || newPerson.legajo)}
+          footer={(
+            <>
+              <button type="button" className="btn btn-secondary" onClick={() => setCreateOpen(false)}>Cancelar</button>
+              <button type="submit" form="new-person-form" className="btn btn-primary" disabled={saving}>
+                {saving ? 'Guardando…' : 'Guardar'}
+              </button>
+            </>
+          )}
+        >
+          <form id="new-person-form" onSubmit={createPerson}>
+            <label className="people-access-field">
+              Nombre
+              <input className="input-field" aria-label="Nombre de la persona" value={newPerson.name} onChange={(e) => setNewPerson((prev) => ({ ...prev, name: e.target.value }))} required />
+            </label>
+            <label className="people-access-field">
+              DNI
+              <input className="input-field" aria-label="DNI de la persona nueva" value={newPerson.idNumber} onChange={(e) => setNewPerson((prev) => ({ ...prev, idNumber: e.target.value }))} inputMode="numeric" />
+            </label>
+            <label className="people-access-field">
+              Legajo
+              <input className="input-field" aria-label="Legajo" value={newPerson.legajo} onChange={(e) => setNewPerson((prev) => ({ ...prev, legajo: e.target.value }))} />
+            </label>
+          </form>
+        </Modal>
       </div>
     </div>
+    </PageContainer>
   );
 }
 

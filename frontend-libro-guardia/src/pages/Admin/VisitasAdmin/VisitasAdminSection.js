@@ -5,6 +5,7 @@ import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
+import { Modal, PageContainer } from '../../../components/admin-ui';
 
 function VisitasAdminSection() {
   const { authToken, currentUser } = useAuth();
@@ -12,6 +13,8 @@ function VisitasAdminSection() {
   const [visitas, setVisitas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
+  const [rejectId, setRejectId] = useState(null);
+  const [note, setNote] = useState('');
 
   const canApprove = hasPermission(currentUser, 'visitas.approve');
 
@@ -46,14 +49,20 @@ function VisitasAdminSection() {
   };
 
   const reject = async (id) => {
+    if (note.trim().length < 3) {
+      showError('Escribí por qué la rechazás.');
+      return;
+    }
     setBusyId(id);
     try {
       await apiFetch(`/admin/visitas/${id}/reject`, {
         method: 'POST',
         token: authToken,
-        body: { motivo: '' }
+        body: { motivo: note.trim() }
       });
-      showSuccess('Solicitud rechazada');
+      showSuccess('Guardado');
+      setRejectId(null);
+      setNote('');
       setVisitas((prev) => prev.filter((v) => v.id !== id));
     } catch (err) {
       showError(err.message || 'No se pudo rechazar');
@@ -66,7 +75,10 @@ function VisitasAdminSection() {
     return <p className="theme-section-desc">Sin permiso visitas.approve.</p>;
   }
 
+  const rejecting = visitas.find((item) => item.id === rejectId) || null;
+
   return (
+    <PageContainer width="medium">
     <div className="visitas-admin">
       <aside className="destinos-admin__howto" aria-label="Cómo funciona">
         <h4>Solicitudes de visita</h4>
@@ -129,7 +141,7 @@ function VisitasAdminSection() {
                     type="button"
                     className="btn btn-secondary btn-sm"
                     disabled={busyId === v.id}
-                    onClick={() => reject(v.id)}
+                    onClick={() => { setRejectId(v.id); setNote(''); }}
                   >
                     <X size={14} />
                     Rechazar
@@ -140,7 +152,29 @@ function VisitasAdminSection() {
           </ul>
         )}
       </AdminBlock>
+      <Modal
+        open={Boolean(rejecting)}
+        title="Rechazar visita"
+        description="La visita no va a poder entrar."
+        onClose={() => setRejectId(null)}
+        size="sm"
+        dirty={Boolean(note.trim())}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setRejectId(null)}>Cancelar</button>
+            <button type="button" className="btn btn-primary" disabled={note.trim().length < 3 || busyId === rejectId} onClick={() => reject(rejectId)}>
+              Rechazar
+            </button>
+          </>
+        )}
+      >
+        <label>
+          Por qué la rechazás
+          <textarea className="input-field" aria-label="Por qué la rechazás" value={note} onChange={(event) => setNote(event.target.value)} rows={3} />
+        </label>
+      </Modal>
     </div>
+    </PageContainer>
   );
 }
 

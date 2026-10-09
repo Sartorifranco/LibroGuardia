@@ -5,6 +5,8 @@ import PendingButton from '../../../components/PendingButton';
 import PageHeader from '../../../components/admin-ui/PageHeader';
 import EmptyState from '../../../components/admin-ui/EmptyState';
 import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
+import Modal from '../../../components/admin-ui/Modal';
+import PageContainer from '../../../components/admin-ui/PageContainer';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -29,6 +31,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
   const [newVehicleInsuranceExpiry, setNewVehicleInsuranceExpiry] = useState('');
   const [newVehicleVtvExpiry, setNewVehicleVtvExpiry] = useState('');
   const [query, setQuery] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
     const fetchVehicleMasterData = async () => {
@@ -69,7 +72,8 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
         setNewVehicleDriver('');
         setNewVehicleInsuranceExpiry('');
         setNewVehicleVtvExpiry('');
-        showSuccess('Vehículo precargado correctamente.');
+        setFormOpen(false);
+        showSuccess('Guardado');
         setVehicleMasterData((prev) => {
           const filtered = prev.filter((item) => item.plateNormalized !== data.vehicle.plateNormalized);
           return [...filtered, data.vehicle];
@@ -165,6 +169,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
   });
 
   return (
+    <PageContainer width="medium">
     <div className="admin-simple">
       <PageHeader
         title="Vehículos"
@@ -175,12 +180,27 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
           'Si son muchos, cargalos juntos desde Opciones avanzadas.'
         ]}
         action={(
-          <PendingButton type="submit" form="vehicle-form" actionId="saveVehicle" pendingAction={pendingAction} className="btn btn-primary" pendingLabel="Guardando...">
+          <button type="button" className="btn btn-primary" onClick={() => setFormOpen(true)}>
             <PlusCircle size={18} /> Agregar vehículo
-          </PendingButton>
+          </button>
         )}
       />
-      <form id="vehicle-form" onSubmit={handleSavePreloadedVehicle} className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+      <Modal
+        open={formOpen}
+        title="Agregar vehículo"
+        description="Patente y, si la tenés, marca, empresa y conductor."
+        onClose={() => setFormOpen(false)}
+        dirty={Boolean(newVehiclePlate || newVehicleBrand || newVehicleCompany || newVehicleDriver)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setFormOpen(false)}>Cancelar</button>
+            <PendingButton type="submit" form="vehicle-form" actionId="saveVehicle" pendingAction={pendingAction} className="btn btn-primary" pendingLabel="Guardando...">
+              Guardar
+            </PendingButton>
+          </>
+        )}
+      >
+      <form id="vehicle-form" onSubmit={handleSavePreloadedVehicle} className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label>
           Patente
           <input type="text" aria-label="Patente" value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} className="input-field" required />
@@ -206,6 +226,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
           <input type="date" aria-label="Vencimiento de la VTV" value={newVehicleVtvExpiry} onChange={(e) => setNewVehicleVtvExpiry(e.target.value)} className="input-field mt-1" />
         </label>
       </form>
+      </Modal>
 
       <div className="admin-simple-search">
         <input className="input-field" type="search" aria-label="Buscar vehículo" placeholder="Buscar por patente, marca o empresa" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -218,7 +239,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
             ? 'Un vehículo autorizado puede entrar cuando el guardia anota la patente.'
             : 'Probá con otra patente.'}
           actionLabel={vehicleMasterData.length === 0 ? 'Cargar el primero' : undefined}
-          onAction={vehicleMasterData.length === 0 ? () => document.querySelector('[aria-label="Patente"]')?.focus() : undefined}
+          onAction={vehicleMasterData.length === 0 ? () => setFormOpen(true) : undefined}
         />
       ) : (
         <>
@@ -284,6 +305,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
         </PendingButton>
       </AdvancedSection>
     </div>
+    </PageContainer>
   );
 }
 

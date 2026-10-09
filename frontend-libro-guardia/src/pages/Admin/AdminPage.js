@@ -7,7 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import { apiFetch } from '../../services/api';
 import { ADMIN_SECTION_META } from './adminConstants';
 import { useAdminAction } from './hooks/useAdminAction';
-import { PageHeader } from '../../components/admin-ui';
+import { PageHeader, PageContainer } from '../../components/admin-ui';
 import UsersAdminSection from './UsersAdmin/UsersAdminSection';
 import CitacionesAdminSection from './CitacionesAdmin/CitacionesAdminSection';
 import AccessGpsAdminSection from './AccessGpsAdmin/AccessGpsAdminSection';
@@ -290,10 +290,10 @@ function AdminPage({ adminSection, adminQuery = {}, onSectionChange, onExit, onA
             hasPermission(currentUser, 'access.groups.manage')
             || hasPermission(currentUser, 'personas.puertas.asignar')
           ) && accessCopy && (
-            <>
+            <PageContainer width="medium">
               <PageHeader title={accessCopy.title} purpose={accessCopy.purpose} howTo={accessCopy.howTo} />
               <AccessModelAdminSection initialTab={ACCESS_TAB[adminSection]} lockTab />
-            </>
+            </PageContainer>
           )}
 
           {adminSection === 'access' && hasPermission(currentUser, 'access.control') && (
@@ -325,14 +325,14 @@ function AdminPage({ adminSection, adminQuery = {}, onSectionChange, onExit, onA
           )}
 
           {adminSection === 'appearance' && hasPermission(currentUser, 'settings.permissions') && (
-            <>
+            <PageContainer width="narrow">
               <PageHeader
                 title="Datos de la empresa"
                 purpose="El nombre, el logo y los colores que se ven en el sistema."
                 howTo={['Escribí el nombre de la empresa.', 'Subí el logo si tenés uno.', 'Elegí los colores y guardá.']}
               />
               <AppearanceAdminSection />
-            </>
+            </PageContainer>
           )}
 
           {adminSection === 'registro' && (

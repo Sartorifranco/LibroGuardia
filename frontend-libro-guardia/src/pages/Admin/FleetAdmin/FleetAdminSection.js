@@ -6,6 +6,8 @@ import { AdminLoading, AdminTable } from '../../../components/admin/AdminUi';
 import PageHeader from '../../../components/admin-ui/PageHeader';
 import EmptyState from '../../../components/admin-ui/EmptyState';
 import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
+import Modal from '../../../components/admin-ui/Modal';
+import PageContainer from '../../../components/admin-ui/PageContainer';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -24,6 +26,8 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
   const [movilesList, setMovilesList] = useState([]);
   const [driversList, setDriversList] = useState([]);
   const [loadingLists, setLoadingLists] = useState(false);
+  const [mobilesOpen, setMobilesOpen] = useState(false);
+  const [driversOpen, setDriversOpen] = useState(false);
 
   const loadLists = useCallback(async () => {
     if (!authToken || !hasPermission(currentUser, 'fleet.upload')) return;
@@ -59,9 +63,6 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
   const handleUploadFleetData = async (type) => {
     const fileToUpload = type === 'mobiles' ? selectedMobilesFile : selectedDriversFile;
     const endpoint = type === 'mobiles' ? '/admin/fleet/mobiles/upload' : '/admin/fleet/drivers/upload';
-    const successMessage = type === 'mobiles'
-      ? 'Lista de móviles actualizada exitosamente.'
-      : 'Lista de choferes actualizada exitosamente.';
 
     if (!fileToUpload) {
       setError('Por favor, seleccione un archivo para subir.');
@@ -87,7 +88,9 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
           body: { data: parsedData }
         });
 
-        showSuccess(successMessage);
+        showSuccess('Guardado');
+        if (type === 'mobiles') setMobilesOpen(false);
+        else setDriversOpen(false);
         await loadLists();
         setSelectedMobilesFile(null);
         setSelectedDriversFile(null);
@@ -108,6 +111,7 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
   if (!hasPermission(currentUser, 'fleet.upload')) return null;
 
   return (
+    <PageContainer width="medium">
     <div className="admin-simple">
       <PageHeader
         title="Flota interna"
@@ -118,43 +122,75 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
           'Revisá que los nombres hayan quedado en la lista.'
         ]}
         action={(
-          <PendingButton
-            type="button"
-            actionId="upload-mobiles"
-            pendingAction={pendingAction}
-            className="btn btn-primary"
-            disabled={!selectedMobilesFile}
-            pendingLabel="Subiendo..."
-            onClick={() => handleUploadFleetData('mobiles')}
-          >
+          <button type="button" className="btn btn-primary" onClick={() => setMobilesOpen(true)}>
             <Upload size={20} /> Cargar móviles
-          </PendingButton>
+          </button>
         )}
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="access-actions" style={{ marginBottom: '0.75rem' }}>
+        <button type="button" className="btn btn-secondary" onClick={() => setDriversOpen(true)}>
+          <Upload size={20} /> Cargar choferes
+        </button>
+      </div>
+
+      <Modal
+        open={mobilesOpen}
+        title="Cargar móviles"
+        description="Una planilla con un nombre por fila."
+        onClose={() => setMobilesOpen(false)}
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setMobilesOpen(false)}>Cancelar</button>
+            <PendingButton
+              type="button"
+              actionId="upload-mobiles"
+              pendingAction={pendingAction}
+              className="btn btn-primary"
+              disabled={!selectedMobilesFile}
+              pendingLabel="Subiendo..."
+              onClick={() => handleUploadFleetData('mobiles')}
+            >
+              Cargar
+            </PendingButton>
+          </>
+        )}
+      >
         <label htmlFor="uploadMobiles">
           Planilla de móviles
           <input type="file" id="uploadMobiles" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'mobiles')} className="input-field" />
         </label>
-        <div>
-          <label htmlFor="uploadDrivers">
-            Planilla de choferes
-            <input type="file" id="uploadDrivers" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'drivers')} className="input-field" />
-          </label>
-          <PendingButton
-            type="button"
-            actionId="upload-drivers"
-            pendingAction={pendingAction}
-            className="btn btn-secondary mt-2"
-            disabled={!selectedDriversFile}
-            pendingLabel="Subiendo..."
-            onClick={() => handleUploadFleetData('drivers')}
-          >
-            <Upload size={20} /> Cargar choferes
-          </PendingButton>
-        </div>
-      </div>
+      </Modal>
+
+      <Modal
+        open={driversOpen}
+        title="Cargar choferes"
+        description="Una planilla con un nombre por fila."
+        onClose={() => setDriversOpen(false)}
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setDriversOpen(false)}>Cancelar</button>
+            <PendingButton
+              type="button"
+              actionId="upload-drivers"
+              pendingAction={pendingAction}
+              className="btn btn-primary"
+              disabled={!selectedDriversFile}
+              pendingLabel="Subiendo..."
+              onClick={() => handleUploadFleetData('drivers')}
+            >
+              Cargar
+            </PendingButton>
+          </>
+        )}
+      >
+        <label htmlFor="uploadDrivers">
+          Planilla de choferes
+          <input type="file" id="uploadDrivers" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'drivers')} className="input-field" />
+        </label>
+      </Modal>
 
       {loadingLists ? (
         <AdminLoading label="Cargando la flota…" />
@@ -209,6 +245,7 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
         <p>La planilla tiene una columna llamada name, con un móvil o un chofer por fila.</p>
       </AdvancedSection>
     </div>
+    </PageContainer>
   );
 }
 

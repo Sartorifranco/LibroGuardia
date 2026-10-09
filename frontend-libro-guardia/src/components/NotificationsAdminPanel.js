@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
 import { AdminLoading } from './admin/AdminUi';
 import { apiFetch } from '../services/api';
-import { PageHeader, EmptyState, AdvancedSection, HelpTip } from './admin-ui';
+import { PageHeader, EmptyState, HelpTip, Modal, WizardModal, PageContainer } from './admin-ui';
 import { MAIL_PRESETS } from '../pages/Admin/NotificationsAdmin/mailPresets';
 
 const EVENT_META = [
@@ -97,6 +97,8 @@ function NotificationsAdminPanel({ authToken, pendingAction, onPending, onSucces
   const [users, setUsers] = useState([]);
   const [looseDraft, setLooseDraft] = useState({});
   const [mailChoice, setMailChoice] = useState('otro');
+  const [recipientKey, setRecipientKey] = useState(null);
+  const [mailOpen, setMailOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!authToken) return;
@@ -285,7 +287,11 @@ function NotificationsAdminPanel({ authToken, pendingAction, onPending, onSucces
     );
   }
 
+  const recipientMeta = EVENT_META.find((item) => item.key === recipientKey) || null;
+  const recipientEvent = recipientKey ? (config.events[recipientKey] || { enabled: false, recipients: [] }) : null;
+
   return (
+    <PageContainer width="medium">
     <div className="admin-simple admin-sub-section">
       <PageHeader
         title="Avisos por mail"
@@ -412,15 +418,14 @@ function NotificationsAdminPanel({ authToken, pendingAction, onPending, onSucces
             <article key={meta.key} className="admin-simple-card">
               <strong>{meta.label}</strong>
               <p className="historial-meta">{meta.hint}</p>
-              <RecipientPicker
-                meta={meta}
-                event={event}
-                userMails={userMails}
-                loose={looseDraft[meta.key] || ''}
-                onLoose={(value) => setLooseDraft((prev) => ({ ...prev, [meta.key]: value }))}
-                onAdd={(mail) => addRecipient(meta.key, mail)}
-                onRemove={(mail) => removeRecipient(meta.key, mail)}
-              />
+              <p className="historial-meta">
+                {(event.recipients || []).length
+                  ? (event.recipients || []).join(', ')
+                  : 'Nadie recibe este aviso todavía.'}
+              </p>
+              <button type="button" className="btn btn-secondary" onClick={() => setRecipientKey(meta.key)}>
+                Editar destinatarios
+              </button>
               <label className="admin-simple-sentence">
                 <input
                   type="checkbox"
@@ -438,85 +443,138 @@ function NotificationsAdminPanel({ authToken, pendingAction, onPending, onSucces
         })}
       </div>
 
-      <AdvancedSection>
-        <h4 className="admin-block__title">¿Qué correo usan?</h4>
-        <div className="admin-simple-choice" role="group" aria-label="Tipo de correo">
-          {MAIL_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className={`admin-simple-choice__card${mailChoice === preset.id ? ' is-selected' : ''}`}
-              onClick={() => applyPreset(preset.id)}
-            >
-              <strong>{preset.label}</strong>
+      <button type="button" className="btn btn-secondary" onClick={() => setMailOpen(true)}>
+        Configurar correo
+      </button>
+      <WizardModal
+        open={mailOpen}
+        title="¿Qué correo usan?"
+        onClose={() => setMailOpen(false)}
+        onFinish={() => { setMailOpen(false); save(); }}
+        finishLabel="Guardar correo"
+        steps={[
+          {
+            id: 'tipo',
+            title: 'Qué correo',
+            canContinue: Boolean(mailChoice),
+            content: (
+              <>
+                <div className="admin-simple-choice" role="group" aria-label="Tipo de correo">
+                  {MAIL_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={`admin-simple-choice__card${mailChoice === preset.id ? ' is-selected' : ''}`}
+                      onClick={() => applyPreset(preset.id)}
+                    >
+                      <strong>{preset.label}</strong>
+                    </button>
+                  ))}
+                </div>
+                <p className="historial-meta">
+                  Gmail y Outlook completan el servidor. En Otro lo cargás vos.
+                </p>
+                <label className="field-label">
+                  Servidor de correo (SMTP)
+                  <HelpTip text="Es la dirección que te da quien administra el correo. En Gmail suele ser smtp.gmail.com." />
+                  <input
+                    className="input-field"
+                    aria-label="Servidor SMTP"
+                    value={config.smtp.host || ''}
+                    onChange={(e) => updateSmtp('host', e.target.value)}
+                  />
+                </label>
+                <label className="field-label">
+                  Puerto
+                  <input
+                    className="input-field"
+                    aria-label="Puerto"
+                    type="number"
+                    value={config.smtp.port || 587}
+                    onChange={(e) => updateSmtp('port', Number(e.target.value))}
+                  />
+                </label>
+              </>
+            )
+          },
+          {
+            id: 'cuenta',
+            title: 'La cuenta',
+            content: (
+              <>
+                <label className="admin-simple-sentence">
+                  <input
+                    type="checkbox"
+                    aria-label="TLS"
+                    checked={config.smtp.secure === true}
+                    onChange={(e) => updateSmtp('secure', e.target.checked)}
+                  />
+                  Conexión cifrada (puerto 465)
+                </label>
+                <label className="field-label">
+                  Usuario
+                  <input
+                    className="input-field"
+                    aria-label="Usuario del correo"
+                    value={config.smtp.user || ''}
+                    onChange={(e) => updateSmtp('user', e.target.value)}
+                  />
+                </label>
+                <label className="field-label">
+                  Contraseña del correo
+                  <input
+                    className="input-field"
+                    type="password"
+                    aria-label="Contraseña del correo"
+                    placeholder={config.smtp.hasPassword ? 'Ya hay una guardada. Dejala vacía si no cambia.' : 'Contraseña'}
+                    value={config.smtp.password || ''}
+                    onChange={(e) => updateSmtp('password', e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </label>
+                <label className="field-label">
+                  Mail que aparece como remitente
+                  <input
+                    className="input-field"
+                    aria-label="Remitente"
+                    placeholder="avisos@empresa.com"
+                    value={config.smtp.from || ''}
+                    onChange={(e) => updateSmtp('from', e.target.value)}
+                  />
+                </label>
+              </>
+            )
+          }
+        ]}
+      />
+      <Modal
+        open={Boolean(recipientMeta)}
+        title={recipientMeta ? `Destinatarios: ${recipientMeta.label}` : 'Destinatarios'}
+        description={recipientMeta?.hint || ''}
+        onClose={() => setRecipientKey(null)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setRecipientKey(null)}>Cancelar</button>
+            <button type="button" className="btn btn-primary" onClick={() => { setRecipientKey(null); }}>
+              Listo
             </button>
-          ))}
-        </div>
-        <p className="historial-meta">
-          Gmail y Outlook completan el servidor, el puerto y la seguridad. En Otro los cargás vos.
-        </p>
-        <label className="field-label">
-          Servidor de correo (SMTP)
-          <HelpTip text="Es la dirección que te da quien administra el correo. En Gmail suele ser smtp.gmail.com." />
-          <input
-            className="input-field"
-            aria-label="Servidor SMTP"
-            value={config.smtp.host || ''}
-            onChange={(e) => updateSmtp('host', e.target.value)}
+          </>
+        )}
+      >
+        {recipientMeta && recipientEvent ? (
+          <RecipientPicker
+            meta={recipientMeta}
+            event={recipientEvent}
+            userMails={userMails}
+            loose={looseDraft[recipientMeta.key] || ''}
+            onLoose={(value) => setLooseDraft((prev) => ({ ...prev, [recipientMeta.key]: value }))}
+            onAdd={(mail) => addRecipient(recipientMeta.key, mail)}
+            onRemove={(mail) => removeRecipient(recipientMeta.key, mail)}
           />
-        </label>
-        <label className="field-label">
-          Puerto
-          <input
-            className="input-field"
-            aria-label="Puerto"
-            type="number"
-            value={config.smtp.port || 587}
-            onChange={(e) => updateSmtp('port', Number(e.target.value))}
-          />
-        </label>
-        <label className="admin-simple-sentence">
-          <input
-            type="checkbox"
-            aria-label="TLS"
-            checked={config.smtp.secure === true}
-            onChange={(e) => updateSmtp('secure', e.target.checked)}
-          />
-          TLS (conexión cifrada directa, puerto 465)
-        </label>
-        <label className="field-label">
-          Usuario
-          <input
-            className="input-field"
-            aria-label="Usuario del correo"
-            value={config.smtp.user || ''}
-            onChange={(e) => updateSmtp('user', e.target.value)}
-          />
-        </label>
-        <label className="field-label">
-          Contraseña del correo
-          <input
-            className="input-field"
-            type="password"
-            aria-label="Contraseña del correo"
-            placeholder={config.smtp.hasPassword ? 'Ya hay una guardada. Dejala vacía si no cambia.' : 'Contraseña'}
-            value={config.smtp.password || ''}
-            onChange={(e) => updateSmtp('password', e.target.value)}
-            autoComplete="new-password"
-          />
-        </label>
-        <label className="field-label">
-          Mail que aparece como remitente
-          <input
-            className="input-field"
-            aria-label="Remitente"
-            placeholder="avisos@empresa.com"
-            value={config.smtp.from || ''}
-            onChange={(e) => updateSmtp('from', e.target.value)}
-          />
-        </label>
-      </AdvancedSection>
+        ) : null}
+      </Modal>
     </div>
+    </PageContainer>
   );
 }
 
