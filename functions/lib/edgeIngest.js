@@ -292,9 +292,80 @@ const stableJson = (value) => {
   try { return JSON.stringify(value); } catch { return String(value); }
 };
 
+const MAX_REPORTED_CONTROLLERS = 64;
+/** Aunque no cambie nada, el estado de cada controlador se refresca cada 30 min (lastSeenAt). */
+const CONTROLLER_STATUS_REFRESH_MS = 30 * 60 * 1000;
+
+/** `controllers` del heartbeat del hub → { id: {configVersionApplied, online, lastSeenAt, lastError} }. */
+const normalizeReportedControllers = (raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  Object.entries(raw).slice(0, MAX_REPORTED_CONTROLLERS).forEach(([id, st]) => {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || !st || typeof st !== 'object') return;
+    const v = st.configVersionApplied == null ? null : Number(st.configVersionApplied);
+    const seen = st.lastSeenAt == null ? null : Number(st.lastSeenAt);
+    out[id] = {
+      configVersionApplied: Number.isFinite(v) ? v : null,
+      online: st.online === true,
+      lastSeenAt: Number.isFinite(seen) ? seen : null,
+      lastError: st.lastError ? String(st.lastError).slice(0, 120) : null
+    };
+  });
+  return out;
+};
+
+const controllerStatusChanged = (prev, cur, now) => !prev
+  || (prev.configVersionApplied ?? null) !== cur.configVersionApplied
+  || Boolean(prev.online) !== cur.online
+  || (prev.lastError ?? null) !== cur.lastError
+  || now - (Number(prev.writtenAt) || 0) > CONTROLLER_STATUS_REFRESH_MS;
+
+/**
+ * Estado de controladores informado por el hub → `devices/{ctl}` SOLO de los que cambiaron
+ * (configVersionApplied / online / lastError, o refresco cada 30 min). Lo último informado
+ * queda en el doc del hub (`controllersReported`, ya leído) para comparar sin leer cada
+ * controlador. Por cada cambio: 1 lectura (validar sitio/tipo/estado) + 1 escritura.
+ */
+const applyReportedControllers = async ({ hubData, hubId, siteId, reported, now }) => {
+  const prevMap = hubData.controllersReported && typeof hubData.controllersReported === 'object'
+    ? hubData.controllersReported : {};
+  const nextMap = {};
+  let written = 0;
+  let ignored = 0;
+  for (const [id, cur] of Object.entries(reported)) {
+    const prev = prevMap[id];
+    if (!controllerStatusChanged(prev, cur, now)) {
+      nextMap[id] = prev;
+      continue;
+    }
+    const ref = db.collection(DEVICES_COLLECTION).doc(id);
+    // eslint-disable-next-line no-await-in-loop
+    const snap = await ref.get();
+    const c = snap.exists ? snap.data() || {} : null;
+    if (!c || c.kind !== 'controller' || (c.siteId || 'principal') !== siteId || c.status !== 'active') {
+      ignored += 1;
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await ref.set({
+      configVersionApplied: cur.configVersionApplied,
+      online: cur.online,
+      lastSeenAt: cur.lastSeenAt,
+      lastError: cur.lastError,
+      reportedBy: hubId,
+      statusUpdatedAt: now
+    }, { merge: true });
+    nextMap[id] = { ...cur, writtenAt: now };
+    written += 1;
+  }
+  const mapChanged = stableJson(prevMap) !== stableJson(nextMap);
+  return { nextMap, written, ignored, mapChanged };
+};
+
 /**
  * Heartbeat: 1 lectura del equipo; escribe solo si cambió algo o pasaron > 5 min
- * desde la última escritura. El hub además publica `sites/{s}.lanUrl` si cambió.
+ * desde la última escritura. El hub además publica `sites/{s}.lanUrl` si cambió y el
+ * estado de sus controladores (`controllers`, ver applyReportedControllers).
  */
 const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = Date.now() }) => {
   const ref = db.collection(DEVICES_COLLECTION).doc(String(deviceId));
@@ -314,11 +385,19 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
   const lastWrite = toMillis(d.lastSeenAt) || 0;
   const stale = now - lastWrite > HEARTBEAT_MIN_WRITE_INTERVAL_MS;
 
+  let controllers = { written: 0, ignored: 0, mapChanged: false, nextMap: null };
+  if (deviceKind === 'hub' && body.controllers) {
+    controllers = await applyReportedControllers({
+      hubData: d, hubId: deviceId, siteId, reported: normalizeReportedControllers(body.controllers), now
+    });
+  }
+
   let wrote = false;
   let siteWrote = false;
-  if (changed || stale) {
+  if (changed || stale || controllers.mapChanged) {
     const update = { lastSeenAt: now, configVersionApplied, checks };
     if (deviceKind === 'hub') update.lanUrl = lanUrl;
+    if (controllers.mapChanged) update.controllersReported = controllers.nextMap;
     await ref.set(update, { merge: true });
     wrote = true;
   }
@@ -330,6 +409,8 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
     ok: true,
     wrote,
     siteWrote,
+    controllersWritten: controllers.written,
+    controllersIgnored: controllers.ignored,
     nextHeartbeatSec: HEARTBEAT_MIN_WRITE_INTERVAL_MS / 1000
   };
 };
@@ -581,6 +662,7 @@ module.exports = {
   buildAlarmDoc,
   ingestEventBatch,
   recordHeartbeat,
+  normalizeReportedControllers,
   createOpenCommand,
   getCommand,
   listPendingCommands,

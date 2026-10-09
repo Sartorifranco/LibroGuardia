@@ -26,7 +26,7 @@ describe('Edge: comandos pendientes y señal en el head', () => {
       routers: ['routes/edge.js'],
       initial: {
         roles: defaultRoleDocs(),
-        users: { guardia: user('guardia') },
+        users: { guardia: user('guardia'), admin: user('admin') },
         devices: {
           'hub-1': { siteId: 'principal', kind: 'hub', name: 'Hub', status: 'active', doorIds: [] },
           'ctl-a': { siteId: 'principal', kind: 'controller', name: 'Pi', status: 'active', doorIds: ['p1'] }
@@ -129,6 +129,56 @@ describe('Edge: comandos pendientes y señal en el head', () => {
     assert.equal(counter().pending, 0);
     const again = await cloud.request('POST', `/api/edge/v1/commands/${id}/result`, { token: hubToken, body: { status: 'done' } });
     assert.equal(again.body.command.duplicate, true);
+  });
+
+  it('heartbeat del hub: estado por controlador en devices/{id} solo cuando cambia', async () => {
+    cloud.fs.poke('devices/ctl-x', { siteId: 'otro', kind: 'controller', status: 'active' });
+    const body = (v, online = true) => ({
+      hubId: 'hub-1',
+      siteId: 'principal',
+      configVersionApplied: 9,
+      controllers: {
+        'ctl-a': { configVersionApplied: v, lastSeenAt: Date.now(), online, lastError: null },
+        'ctl-x': { configVersionApplied: v, lastSeenAt: Date.now(), online: true },
+        'hub-1': { configVersionApplied: v, online: true }
+      },
+      checks: { db: 'ok' },
+      lanUrl: 'http://192.168.0.10:8080'
+    });
+    const hb = (b) => cloud.request('POST', '/api/edge/v1/heartbeat', { token: hubToken, body: b });
+
+    const first = await hb(body(9));
+    assert.equal(first.status, 200, first.text);
+    assert.equal(first.body.controllersWritten, 1);
+    assert.equal(first.body.controllersIgnored, 2, 'otro sitio y no-controlador se ignoran');
+    const ctl = cloud.fs.peek('devices/ctl-a');
+    assert.equal(ctl.configVersionApplied, 9);
+    assert.equal(ctl.online, true);
+    assert.equal(ctl.reportedBy, 'hub-1');
+    assert.equal(cloud.fs.peek('devices/ctl-x').configVersionApplied, undefined);
+    const hubDoc = cloud.fs.peek('devices/hub-1');
+    assert.equal(hubDoc.configVersionApplied, 9, 'campos propios del hub se mantienen');
+    assert.equal(hubDoc.lanUrl, 'http://192.168.0.10:8080');
+    assert.equal(hubDoc.controllersReported['ctl-a'].configVersionApplied, 9);
+
+    // Sin cambios: 1 lectura (doc del hub) + las de equipos inválidos que se re-validan; 0 escrituras al controlador.
+    cloud.fs.resetStats();
+    const same = await hb(body(9));
+    assert.equal(same.body.controllersWritten, 0);
+    assert.ok(!cloud.fs.stats.log.some((l) => l === 'W set devices/ctl-a'), cloud.fs.stats.log.join('\n'));
+
+    // Cambia la versión aplicada y se cae: se escribe.
+    cloud.fs.resetStats();
+    const changed = await hb(body(10, false));
+    assert.equal(changed.body.controllersWritten, 1);
+    assert.equal(cloud.fs.peek('devices/ctl-a').configVersionApplied, 10);
+    assert.equal(cloud.fs.peek('devices/ctl-a').online, false);
+    const list = await cloud.request('GET', '/api/admin/devices', { token: signTestToken({ id: 'admin', role: 'admin', username: 'admin' }) });
+    assert.equal(list.status, 200, list.text);
+    {
+      const a = list.body.devices.find((d) => d.id === 'ctl-a');
+      assert.equal(a.online, false);
+    }
   });
 
   it('el hub puede reportar expired/rejected; contador negativo se acota a 0; listado vacío re-sincroniza', async () => {

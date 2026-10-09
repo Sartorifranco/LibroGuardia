@@ -145,7 +145,10 @@ const deviceToJSON = (id, data = {}) => ({
   lastSeenAt: toMillis(data.lastSeenAt),
   configVersionApplied: data.configVersionApplied ?? null,
   checks: data.checks || null,
-  lanUrl: data.lanUrl || null
+  lanUrl: data.lanUrl || null,
+  online: data.online ?? null,
+  statusUpdatedAt: toMillis(data.statusUpdatedAt),
+  reportedBy: data.reportedBy || null
 });
 
 /** Crea un código nuevo para el equipo (doc id = sha256 del código). */
