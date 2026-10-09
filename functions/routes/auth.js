@@ -192,6 +192,11 @@ router.post('/api/auth/login', async (req, res) => {
     }
 
     await clearLoginFailures(db, { username, ip: clientIp, technical });
+    try {
+      await userRef.update({ lastLoginAt: new Date().toISOString() });
+    } catch (_loginStampErr) {
+      // Anotar el último ingreso no puede impedir entrar.
+    }
     if (technical) {
       await recordSuccessfulLogin(db, FieldValue, { username, ip: clientIp, technical }).catch((err) => {
         console.warn('[auth/login] No se pudo registrar la IP del login técnico', err.message);

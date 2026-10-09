@@ -7,7 +7,7 @@ const express = require('express');
 const { db } = require('../firestore');
 const { normalizeIdNumber, normalizePlate } = require('../permissions');
 const { getAuthorizationLabel } = require('../authorizations');
-const { listAuditLog } = require('../lib/auditLog');
+const { listAuditLog, logAdminAction } = require('../lib/auditLog');
 const { getArgentinaDateString } = require('../lib/normalize');
 const { buildReportsSummary, REPORTS_PERMISSION } = require('../reports');
 const {
@@ -15,6 +15,7 @@ const {
   publicNotificationsConfig,
   saveNotificationsConfig
 } = require('../lib/notifications');
+const { sendNotification } = require('../lib/notifications/email');
 const {
   evaluateExpiry,
   buildExpiryMessage,
@@ -251,12 +252,49 @@ router.get('/api/admin/notifications-config', auth, requirePermission('notificat
 router.put('/api/admin/notifications-config', auth, requirePermission('notifications.config'), async (req, res) => {
   try {
     const saved = await saveNotificationsConfig(req.body || {});
+    logAdminAction({
+      req,
+      action: 'notifications.update',
+      targetType: 'notifications',
+      targetId: 'notificationsConfig',
+      after: { enabled: saved.enabled === true }
+    }).catch((err) => console.error('auditLog notifications.update:', err.message));
     res.json({
       message: 'Configuración de notificaciones guardada',
       config: publicNotificationsConfig(saved)
     });
   } catch (err) {
     sendServerError(res, err, 'Error al guardar notificaciones');
+  }
+});
+
+router.post('/api/admin/notifications-config/test', auth, requirePermission('notifications.config'), async (req, res) => {
+  try {
+    const to = String(req.body?.to || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return res.status(400).json({ message: 'Escribí un mail válido para la prueba.' });
+    }
+    const config = await getNotificationsConfig();
+    const result = await sendNotification({
+      to: [to],
+      subject: 'Prueba de avisos',
+      text: 'Este es un aviso de prueba. Si lo recibiste, el correo está bien configurado.'
+    }, { smtp: config.smtp });
+    logAdminAction({
+      req,
+      action: 'notifications.test',
+      targetType: 'notifications',
+      targetId: 'notificationsConfig',
+      after: { to, sent: result.sent === true }
+    }).catch((err) => console.error('auditLog notifications.test:', err.message));
+    if (!result.sent) {
+      return res.status(400).json({
+        message: 'No se pudo enviar. Completá el correo en Opciones avanzadas y guardá antes de probar.'
+      });
+    }
+    res.json({ message: 'Prueba enviada. Revisá la bandeja de entrada.' });
+  } catch (err) {
+    sendServerError(res, err, 'Error al enviar la prueba');
   }
 });
 

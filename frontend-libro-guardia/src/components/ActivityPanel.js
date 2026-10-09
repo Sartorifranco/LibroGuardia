@@ -56,7 +56,7 @@ function ActivityPanel() {
           Resumen de lo que pasó en el sistema: altas, cambios, eliminaciones, aprobaciones de visitas
           y ajustes de configuración. Pensado para lectura rápida (no hace falta saber de programación).
         </p>
-        <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
+        <button type="button" className="btn btn-primary" onClick={load} disabled={loading}>
           {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
           Actualizar
         </button>
@@ -72,7 +72,7 @@ function ActivityPanel() {
       ) : !items.length && !error ? (
         <div className="activity-panel__empty">
           <Activity size={22} aria-hidden />
-          <span>Todavía no hay eventos registrados.</span>
+          <span>Todavía no hay cambios. Cuando alguien cargue o modifique datos, van a aparecer acá.</span>
         </div>
       ) : (
         <ul className="activity-panel__list">

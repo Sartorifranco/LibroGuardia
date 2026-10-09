@@ -90,7 +90,9 @@ const userToJSON = (doc, permissions = null) => {
     customPermissions: data.permissions || [],
     empresaId: data.empresaId || null,
     nombre: data.nombre || null,
-    email: data.email || null
+    email: data.email || null,
+    puesto: data.puesto || null,
+    lastLoginAt: data.lastLoginAt || null
   };
 };
 

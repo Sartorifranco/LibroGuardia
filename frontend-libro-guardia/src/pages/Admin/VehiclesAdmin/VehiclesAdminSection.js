@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { PlusCircle, Trash2, Upload, Car } from 'lucide-react';
+import { PlusCircle, Trash2, Upload } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
-import { AdminBlock, AdminEmpty } from '../../../components/admin/AdminUi';
+import PageHeader from '../../../components/admin-ui/PageHeader';
+import EmptyState from '../../../components/admin-ui/EmptyState';
+import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -26,6 +28,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
   const [newVehicleDriver, setNewVehicleDriver] = useState('');
   const [newVehicleInsuranceExpiry, setNewVehicleInsuranceExpiry] = useState('');
   const [newVehicleVtvExpiry, setNewVehicleVtvExpiry] = useState('');
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     const fetchVehicleMasterData = async () => {
@@ -142,7 +145,7 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
         setSelectedVehiclesFile(null);
       } catch (err) {
         console.error('Error al procesar archivo de vehicles:', err);
-        setError(err.message || `Error al procesar el archivo. Asegúrese de que el formato sea correcto (CSV/XLSX con una columna 'name').`);
+        setError(err.message || 'No pudimos leer el archivo. Usá columnas Patente, Marca, Empresa y Conductor.');
       } finally {
         setPendingAction(null);
       }
@@ -156,87 +159,131 @@ function VehiclesAdminSection({ pendingAction, runAction, setPendingAction }) {
 
   if (!hasPermission(currentUser, 'master.vehicles.write')) return null;
 
+  const visible = vehicleMasterData.filter((vehicle) => {
+    const blob = `${vehicle.plate || ''} ${vehicle.brand || ''} ${vehicle.company || ''} ${vehicle.driver || ''}`.toLowerCase();
+    return blob.includes(query.trim().toLowerCase());
+  });
+
   return (
-    <>
-      <AdminBlock title="Precarga de vehículos autorizados">
-        <form onSubmit={handleSavePreloadedVehicle} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
-          <input type="text" value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} className="input-field" placeholder="Patente" required />
-          <input type="text" value={newVehicleBrand} onChange={(e) => setNewVehicleBrand(e.target.value)} className="input-field" placeholder="Marca / modelo" />
-          <input type="text" value={newVehicleCompany} onChange={(e) => setNewVehicleCompany(e.target.value)} className="input-field" placeholder="Empresa" />
-          <input type="text" value={newVehicleDriver} onChange={(e) => setNewVehicleDriver(e.target.value)} className="input-field" placeholder="Conductor" />
-          <label className="text-sm text-gray-600 md:col-span-1">
-            Venc. seguro (opcional)
-            <input type="date" value={newVehicleInsuranceExpiry} onChange={(e) => setNewVehicleInsuranceExpiry(e.target.value)} className="input-field mt-1" />
-          </label>
-          <label className="text-sm text-gray-600 md:col-span-1">
-            Venc. VTV (opcional)
-            <input type="date" value={newVehicleVtvExpiry} onChange={(e) => setNewVehicleVtvExpiry(e.target.value)} className="input-field mt-1" />
-          </label>
-          <PendingButton type="submit" actionId="saveVehicle" pendingAction={pendingAction} className="btn btn-primary xl:col-span-4" pendingLabel="Guardando...">
-            <PlusCircle size={18} /> Agregar vehículo autorizado
+    <div className="admin-simple">
+      <PageHeader
+        title="Vehículos"
+        purpose="Los vehículos que pueden entrar, con patente, empresa y conductor."
+        howTo={[
+          'Completá la patente y, si la tenés, la marca y la empresa.',
+          'Agregá el vehículo.',
+          'Si son muchos, cargalos juntos desde Opciones avanzadas.'
+        ]}
+        action={(
+          <PendingButton type="submit" form="vehicle-form" actionId="saveVehicle" pendingAction={pendingAction} className="btn btn-primary" pendingLabel="Guardando...">
+            <PlusCircle size={18} /> Agregar vehículo
           </PendingButton>
-        </form>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="uploadVehicles" className="block text-sm font-medium text-gray-700 mb-1">Carga masiva (XLSX/CSV)</label>
-            <input type="file" id="uploadVehicles" accept=".csv, .xlsx" onChange={handleFileChange} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100" />
-            <PendingButton
-              type="button"
-              actionId="upload-vehicles"
-              pendingAction={pendingAction}
-              className="btn btn-secondary mt-2 w-full"
-              disabled={!selectedVehiclesFile}
-              pendingLabel="Subiendo..."
-              onClick={handleUploadVehicles}
-            >
-              <Upload size={20} /> Cargar vehículos
-            </PendingButton>
-          </div>
-        </div>
-      </AdminBlock>
-      <AdminBlock title={`Base actual (${vehicleMasterData.length})`}>
-        {vehicleMasterData.length === 0 ? (
-          <AdminEmpty
-            icon={Car}
-            title="Todavía no hay vehículos autorizados"
-            description="Agregá uno a uno o subí un archivo XLSX/CSV."
-          />
-        ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="px-4 py-2 text-left text-xs uppercase">Patente</th>
-                <th className="px-4 py-2 text-left text-xs uppercase">Marca</th>
-                <th className="px-4 py-2 text-left text-xs uppercase">Empresa</th>
-                <th className="px-4 py-2 text-left text-xs uppercase">Conductor</th>
-                <th className="px-4 py-2 text-left text-xs uppercase">Seguro</th>
-                <th className="px-4 py-2 text-left text-xs uppercase">VTV</th>
-                <th className="px-4 py-2 text-left text-xs uppercase">Estado</th>
-                <th className="px-4 py-2 text-left text-xs uppercase">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {vehicleMasterData.map((vehicle) => (
-                <tr key={vehicle.id} className="border-t">
-                  <td className="px-4 py-2">{vehicle.plate}</td>
-                  <td className="px-4 py-2">{vehicle.brand}</td>
-                  <td className="px-4 py-2">{vehicle.company}</td>
-                  <td className="px-4 py-2">{vehicle.driver}</td>
-                  <td className="px-4 py-2">{vehicle.insuranceExpiryDate || '—'}</td>
-                  <td className="px-4 py-2">{vehicle.vtvExpiryDate || '—'}</td>
-                  <td className="px-4 py-2">{vehicle.authorized !== false ? 'Autorizado' : 'No autorizado'}</td>
-                  <td className="px-4 py-2">
-                    <button type="button" className="btn btn-danger-small" onClick={() => handleDeletePreloadedVehicle(vehicle.id)}><Trash2 size={14} /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
         )}
-      </AdminBlock>
-    </>
+      />
+      <form id="vehicle-form" onSubmit={handleSavePreloadedVehicle} className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+        <label>
+          Patente
+          <input type="text" aria-label="Patente" value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} className="input-field" required />
+        </label>
+        <label>
+          Marca
+          <input type="text" aria-label="Marca" value={newVehicleBrand} onChange={(e) => setNewVehicleBrand(e.target.value)} className="input-field" />
+        </label>
+        <label>
+          Empresa
+          <input type="text" aria-label="Empresa del vehículo" value={newVehicleCompany} onChange={(e) => setNewVehicleCompany(e.target.value)} className="input-field" />
+        </label>
+        <label>
+          Conductor
+          <input type="text" aria-label="Conductor" value={newVehicleDriver} onChange={(e) => setNewVehicleDriver(e.target.value)} className="input-field" />
+        </label>
+        <label className="text-sm">
+          Vencimiento del seguro
+          <input type="date" aria-label="Vencimiento del seguro" value={newVehicleInsuranceExpiry} onChange={(e) => setNewVehicleInsuranceExpiry(e.target.value)} className="input-field mt-1" />
+        </label>
+        <label className="text-sm">
+          Vencimiento de la VTV
+          <input type="date" aria-label="Vencimiento de la VTV" value={newVehicleVtvExpiry} onChange={(e) => setNewVehicleVtvExpiry(e.target.value)} className="input-field mt-1" />
+        </label>
+      </form>
+
+      <div className="admin-simple-search">
+        <input className="input-field" type="search" aria-label="Buscar vehículo" placeholder="Buscar por patente, marca o empresa" value={query} onChange={(e) => setQuery(e.target.value)} />
+      </div>
+
+      {visible.length === 0 ? (
+        <EmptyState
+          title={vehicleMasterData.length === 0 ? 'Todavía no cargaste vehículos' : 'Ningún vehículo coincide'}
+          text={vehicleMasterData.length === 0
+            ? 'Un vehículo autorizado puede entrar cuando el guardia anota la patente.'
+            : 'Probá con otra patente.'}
+          actionLabel={vehicleMasterData.length === 0 ? 'Cargar el primero' : undefined}
+          onAction={vehicleMasterData.length === 0 ? () => document.querySelector('[aria-label="Patente"]')?.focus() : undefined}
+        />
+      ) : (
+        <>
+          <div className="admin-simple-table-wrap">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="px-3 py-2 text-left">Patente</th>
+                  <th className="px-3 py-2 text-left">Marca</th>
+                  <th className="px-3 py-2 text-left">Empresa</th>
+                  <th className="px-3 py-2 text-left">Conductor</th>
+                  <th className="px-3 py-2 text-left">Seguro</th>
+                  <th className="px-3 py-2 text-left">VTV</th>
+                  <th className="px-3 py-2 text-left">Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((vehicle) => (
+                  <tr key={vehicle.id}>
+                    <td className="px-3 py-2">{vehicle.plate}</td>
+                    <td className="px-3 py-2">{vehicle.brand}</td>
+                    <td className="px-3 py-2">{vehicle.company}</td>
+                    <td className="px-3 py-2">{vehicle.driver}</td>
+                    <td className="px-3 py-2">{vehicle.insuranceExpiryDate || '—'}</td>
+                    <td className="px-3 py-2">{vehicle.vtvExpiryDate || '—'}</td>
+                    <td className="px-3 py-2">
+                      <button type="button" className="btn btn-danger-small" aria-label={`Quitar ${vehicle.plate}`} onClick={() => handleDeletePreloadedVehicle(vehicle.id)}><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="admin-simple-cards">
+            {visible.map((vehicle) => (
+              <article key={`card-${vehicle.id}`} className="admin-simple-card">
+                <strong>{vehicle.plate}</strong>
+                <p>{vehicle.brand || 'Sin marca'} · {vehicle.company || 'Sin empresa'}</p>
+                <p>{vehicle.driver || 'Sin conductor'}</p>
+                <div className="admin-simple-card__actions">
+                  <button type="button" className="btn btn-danger-small" aria-label={`Quitar ${vehicle.plate}`} onClick={() => handleDeletePreloadedVehicle(vehicle.id)}>Quitar</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
+
+      <AdvancedSection>
+        <label htmlFor="uploadVehicles" className="block text-sm font-medium mb-1">Cargar varios desde una planilla</label>
+        <p className="historial-meta">Columnas: Patente, Marca, Empresa y Conductor.</p>
+        <input type="file" id="uploadVehicles" accept=".csv, .xlsx" onChange={handleFileChange} className="input-field" />
+        <PendingButton
+          type="button"
+          actionId="upload-vehicles"
+          pendingAction={pendingAction}
+          className="btn btn-secondary mt-2"
+          disabled={!selectedVehiclesFile}
+          pendingLabel="Subiendo..."
+          onClick={handleUploadVehicles}
+        >
+          <Upload size={20} /> Cargar la planilla
+        </PendingButton>
+      </AdvancedSection>
+    </div>
   );
 }
 
