@@ -44,8 +44,8 @@ export const ADMIN_SECTION_META = {
   },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
-  activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },
-  audit: { title: 'Auditoría', description: 'Trazabilidad de cambios administrativos (usuarios, roles, permisos, puertas).' },
+  activity: { title: 'Registro de cambios', description: 'Resumen de altas, cambios y bajas.' },
+  audit: { title: 'Registro de cambios', description: 'Quién cambió qué, y qué quedó distinto.' },
   notifications: { title: 'Avisos por mail', description: 'Quién recibe cada aviso y cómo se envía el correo.' },
 };
 

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ClipboardList, ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from 'lucide-react';
-import { AdminEmpty, AdminLoading } from '../../../components/admin/AdminUi';
+import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { AdminLoading } from '../../../components/admin/AdminUi';
+import PageHeader from '../../../components/admin-ui/PageHeader';
+import EmptyState from '../../../components/admin-ui/EmptyState';
 import { apiFetch } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { hasPermission } from '../../../utils/permissions';
@@ -74,38 +76,39 @@ function AuditAdminSection() {
   if (!canView) return null;
 
   return (
-    <div className="admin-sub-section audit-admin-section">
-      <div className="activity-panel__toolbar" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
-        <p className="theme-section-desc" style={{ margin: 0, flex: '1 1 220px' }}>
-          Historial detallado de cambios: quién hizo qué, sobre qué registro, y qué campos se modificaron.
-          Los detalles se muestran en lenguaje claro (sin código técnico).
-        </p>
-        <div className="flex flex-wrap gap-2 items-end">
-          <label className="field-label" style={{ margin: 0 }}>
-            Tipo de acción
-            <select className="input-field" value={action} onChange={(e) => setAction(e.target.value)}>
-              {ACTION_OPTIONS.map((opt) => (
-                <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field-label" style={{ margin: 0 }}>
-            Desde
-            <input className="input-field" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          </label>
-          <label className="field-label" style={{ margin: 0 }}>
-            Hasta
-            <input className="input-field" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          </label>
-          <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-            Filtrar
-          </button>
-          <button type="button" className="btn btn-secondary" onClick={load} disabled={loading}>
-            <RefreshCw size={16} />
+    <div className="admin-sub-section audit-admin-section admin-simple">
+      <PageHeader
+        title="Registro de cambios"
+        purpose="Quién cambió qué en el sistema, y qué quedó distinto."
+        howTo={[
+          'Filtrá por tipo de cambio o por fechas.',
+          'Abrí una fila para ver el antes y el después.',
+          'Actualizá si acabás de hacer un cambio.'
+        ]}
+        action={(
+          <button type="button" className="btn btn-primary" onClick={load} disabled={loading}>
+            {loading ? <Loader2 size={16} className="animate-spin" /> : null}
             Actualizar
           </button>
-        </div>
+        )}
+      />
+      <div className="activity-panel__toolbar" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+        <label className="field-label" style={{ margin: 0 }}>
+          Tipo de cambio
+          <select className="input-field" aria-label="Tipo de cambio" value={action} onChange={(e) => setAction(e.target.value)}>
+            {ACTION_OPTIONS.map((opt) => (
+              <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field-label" style={{ margin: 0 }}>
+          Desde
+          <input className="input-field" aria-label="Desde" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label className="field-label" style={{ margin: 0 }}>
+          Hasta
+          <input className="input-field" aria-label="Hasta" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
       </div>
 
       {error && <div className="activity-panel__error">{error}</div>}
@@ -113,10 +116,9 @@ function AuditAdminSection() {
       {loading && !items.length ? (
         <AdminLoading label="Cargando auditoría…" />
       ) : !items.length && !error ? (
-        <AdminEmpty
-          icon={ClipboardList}
-          title="Todavía no hay eventos de auditoría"
-          description="Cuando se creen o modifiquen usuarios, roles, empresas, puertas u otros datos admin, van a aparecer acá."
+        <EmptyState
+          title="Todavía no hay cambios"
+          text="Cuando alguien cree o modifique usuarios, empresas o puertas, el cambio va a aparecer acá."
         />
       ) : (
         <div className="theme-panel-nested" style={{ overflowX: 'auto' }}>
