@@ -409,18 +409,30 @@ class Controller {
     const readerKnown = Boolean(cred.readerId && snapDoor && (snapDoor.readers || []).some((r) => r.id === cred.readerId));
     const side = cred.side || d.cfg.readers.find((r) => r.id === cred.readerId)?.side || 'in';
 
+    const decideAs = (type, value) => decide({
+      snap,
+      credential: { type, value },
+      ...(this.configSync.credentialKey() ? { credentialKey: this.configSync.credentialKey() } : {}),
+      doorId: cred.doorId,
+      ...(readerKnown ? { readerId: cred.readerId } : { side }),
+      at,
+      state: this.engineState(),
+      mode: 'scan'
+    });
+
     let decision;
     try {
-      decision = decide({
-        snap,
-        credential: { type: cred.type, value: cred.value },
-        ...(this.configSync.credentialKey() ? { credentialKey: this.configSync.credentialKey() } : {}),
-        doorId: cred.doorId,
-        ...(readerKnown ? { readerId: cred.readerId } : { side }),
-        at,
-        state: this.engineState(),
-        mode: 'scan'
-      });
+      // Ficha QR: el DNI embebido se resuelve como la línea suelta. Si ese DNI no está
+      // y el texto tampoco es un QR registrado, queda una sola credencial_desconocida.
+      if (cred.dniHint) {
+        decision = decideAs('dni', cred.dniHint);
+        if (decision.reason === 'credencial_desconocida') {
+          const byQr = decideAs(cred.type || 'qr', cred.value);
+          if (byQr.reason !== 'credencial_desconocida') decision = byQr;
+        }
+      } else {
+        decision = decideAs(cred.type, cred.value);
+      }
     } catch (err) {
       this.logger.error('El motor falló', { error: err.message, stack: err.stack });
       decision = { decision: 'deny', reason: 'error_interno', message: reasonMessage('error_interno'), actions: [], stateEffects: {}, warnings: [], side, cardholderId: null, credentialHash: null };
@@ -479,7 +491,7 @@ class Controller {
       approvalId = this.addApproval({ cred, decision, side: decision.side || side, at });
     }
 
-    const idNumberMasked = maskIdNumber(cred.type === 'dni' ? cred.value : '');
+    const idNumberMasked = maskIdNumber(cred.type === 'dni' ? cred.value : (cred.dniHint || ''));
     const evt = this.record({
       doorId: cred.doorId,
       side: decision.side || side,

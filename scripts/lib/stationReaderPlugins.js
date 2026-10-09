@@ -4,7 +4,11 @@
  * sin cambiar la lógica de autorización en la nube.
  *
  * Compat: plugin "serial_dni" (default) = comportamiento histórico (raw → kiosk/ingest).
+ * Una ficha multilínea (QR de credencial) no es un PDF417: se lee entera y, si trae un DNI,
+ * el edge la resuelve por ese DNI como credencial qr.
  */
+
+const { findEmbeddedDni } = require('../../functions/dniParser');
 
 const PLUGIN_IDS = ['serial_dni', 'zkteco', 'hikvision', 'suprema', 'hid'];
 
@@ -189,6 +193,31 @@ const parseReaderFrame = (pluginIdOrBrand, rawFrame) => {
   };
 };
 
+const normalizeMultilineText = (raw = '') => String(raw || '')
+  .replace(/^\uFEFF/, '')
+  .replace(/\0/g, '')
+  .replace(/\r\n/g, '\n')
+  .replace(/\r/g, '\n')
+  .replace(/^\n+|\n+$/g, '')
+  .trim();
+
+/**
+ * Ficha con saltos internos (QR de empresa). null si es una sola línea:
+ * esa sigue el camino de siempre (PDF417, número suelto, QR registrado).
+ * @returns {{type:'qr', value:string, dniHint?:string, format:'qr'}|null}
+ */
+const parseMultilineCredential = (raw) => {
+  const text = normalizeMultilineText(raw);
+  if (!text.includes('\n')) return null;
+  const dniHint = findEmbeddedDni(text);
+  return {
+    type: 'qr',
+    value: text,
+    ...(dniHint ? { dniHint } : {}),
+    format: 'qr'
+  };
+};
+
 /** Body listo para POST /api/access/ingest (+ doorId/readerId los agrega el bridge). */
 const toIngestBody = (parsed, { doorId, readerId } = {}) => {
   if (!parsed) return null;
@@ -212,6 +241,7 @@ module.exports = {
   resolvePluginId,
   getReaderPlugin,
   parseReaderFrame,
+  parseMultilineCredential,
   toIngestBody,
   parseUniversalPrefix
 };

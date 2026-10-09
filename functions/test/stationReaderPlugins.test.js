@@ -5,6 +5,7 @@ const path = require('path');
 const {
   resolvePluginId,
   parseReaderFrame,
+  parseMultilineCredential,
   toIngestBody,
   getReaderPlugin
 } = require(path.join(__dirname, '..', '..', 'scripts', 'lib', 'stationReaderPlugins'));
@@ -39,6 +40,19 @@ describe('stationReaderPlugins', () => {
     const bio = parseReaderFrame('hid', 'BIO:77');
     assert.equal(bio.authMethod, 'biometric');
     assert.equal(bio.biometricExternalId, '77');
+  });
+
+  it('ficha multilínea: un DNI etiquetado, o el único de 7–8 dígitos', () => {
+    const labeled = parseMultilineCredential('EMPRESA\r\nNombre\tAna\r\nDNI\t30.111.222\r\nLegajo\t12345678');
+    assert.equal(labeled.type, 'qr');
+    assert.equal(labeled.dniHint, '30111222');
+    assert.equal(labeled.value.includes('\n'), true);
+    assert.equal(labeled.value.includes('\r'), false);
+    const unique = parseMultilineCredential('Codigo\t28445555\nNombre\tLuis');
+    assert.equal(unique.dniHint, '28445555');
+    const ambiguous = parseMultilineCredential('A\t12345678\nB\t87654321');
+    assert.equal(ambiguous.dniHint, undefined);
+    assert.equal(parseMultilineCredential('30111222'), null);
   });
 
   it('toIngestBody arma el contrato de /access/ingest', () => {

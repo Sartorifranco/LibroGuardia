@@ -217,7 +217,7 @@ describe('Etapa 2 · Hito 1: nube ⇄ hub ⇄ controlador de punta a punta', { s
         cooldownMs: 0,
         doors: [{
           id: DOOR,
-          readers: [{ id: 'p1-stdin', driver: 'stdin', side: 'in', idleMs: 30 }],
+          readers: [{ id: 'p1-stdin', driver: 'stdin', side: 'in', idleMs: 30, interFrameGapMs: 20 }],
           output: { driver: 'sr201', host: '192.168.0.38', port: 6722, channel: 1 },
           inputs: { driver: 'none' }
         }]

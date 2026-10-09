@@ -101,8 +101,42 @@ const parseScanData = (rawData = '') => {
   return { format: 'unknown', idNumber: '', rawData: trimmed };
 };
 
+const dniFromToken = (token) => {
+  const digits = String(token || '').replace(/\D/g, '');
+  return digits.length >= 7 && digits.length <= 8 ? digits : '';
+};
+
+/**
+ * DNI de 7–8 dígitos dentro de una ficha (QR de credencial, no PDF417).
+ * Prioriza una línea o campo etiquetado DNI / Documento / Doc.
+ * Sin etiqueta, solo si hay un único número de 7–8 dígitos.
+ * @returns {string} solo dígitos, o '' si no hay uno inequívoco
+ */
+const findEmbeddedDni = (raw = '') => {
+  const text = String(raw || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!text.trim()) return '';
+
+  const labeledRe = /(?<![A-Za-z])(?:documento|dni|doc)\.?(?![A-Za-z])\s*[#:=]?\s*(\d{1,2}(?:[.\s]\d{3}){2}|\d{7,8})(?!\d)/gi;
+  const labeled = [];
+  for (const match of text.matchAll(labeledRe)) {
+    const dni = dniFromToken(match[1]);
+    if (dni) labeled.push(dni);
+  }
+  if (labeled.length) return labeled[0];
+
+  const bareRe = /(?<!\d)(\d{1,2}\.\d{3}\.\d{3})(?!\d)|(?<!\d)(\d{1,2} \d{3} \d{3})(?!\d)|\b(\d{7,8})\b/g;
+  const bare = new Set();
+  for (const match of text.matchAll(bareRe)) {
+    const dni = dniFromToken(match[1] || match[2] || match[3]);
+    if (dni) bare.add(dni);
+  }
+  if (bare.size === 1) return [...bare][0];
+  return '';
+};
+
 module.exports = {
   normalizeIdNumber,
   parseScanData,
-  parseArgentinePdf417
+  parseArgentinePdf417,
+  findEmbeddedDni
 };
