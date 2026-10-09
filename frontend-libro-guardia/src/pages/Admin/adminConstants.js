@@ -19,8 +19,8 @@ export const ADMIN_SECTION_META = {
   vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },
   fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
   empresas: {
-    title: 'Empresas del predio',
-    description: 'Dominios de email para autoregistro de empleados que luego cargan visitas/autorizados.'
+    title: 'Empresas y responsables',
+    description: 'Las empresas del predio y los mails con los que su gente pide visitas.'
   },
   destinos: {
     title: 'Destinos',
