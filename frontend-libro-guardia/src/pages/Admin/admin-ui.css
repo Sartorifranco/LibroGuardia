@@ -1886,6 +1886,7 @@ button.estaciones-admin__icon-btn.pending-button,
   padding: 0.45rem 0.85rem;
   font-size: 0.85rem;
   cursor: pointer;
+  min-height: 44px;
 }
 .equipos-acceso-tab.is-active {
   border-color: rgba(185, 28, 28, 0.45);
@@ -1956,6 +1957,94 @@ button.estaciones-admin__icon-btn.pending-button,
 }
 .equipos-acceso-marca-tags span.is-custom {
   background: rgba(180, 83, 9, 0.12);
+}
+
+.equipos-admin__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.equipos-admin__card,
+.equipos-admin__wizard,
+.equipos-admin__code,
+.equipos-admin__log {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 0.75rem;
+  padding: 0.9rem 1rem;
+  background: var(--surface, #fff);
+}
+.equipos-admin__card h4,
+.equipos-admin__wizard h4,
+.equipos-admin__code h4,
+.equipos-admin__log h4 {
+  margin: 0 0 0.25rem;
+}
+.equipos-admin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.equipos-admin .btn,
+.equipos-admin__actions .btn,
+.equipos-admin__choice {
+  min-height: 44px;
+  min-width: 44px;
+}
+.equipos-admin__choice {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+}
+.equipos-admin input[type="text"],
+.equipos-admin input:not([type="checkbox"]):not([type="radio"]) {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 0.3rem;
+  box-sizing: border-box;
+}
+.equipos-health {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 700;
+  margin: 0.35rem 0;
+}
+.equipos-health::before {
+  content: '';
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex: 0 0 auto;
+}
+.equipos-health--online { color: #15803d; }
+.equipos-health--problem { color: #b45309; }
+.equipos-health--offline { color: #b91c1c; }
+.equipos-health--pending,
+.equipos-health--revoked,
+.equipos-health--replaced { color: #4b5563; }
+.equipos-code {
+  font-size: clamp(2rem, 10vw, 3rem);
+  letter-spacing: 0.18em;
+  font-weight: 800;
+  text-align: center;
+  margin: 0.4rem 0;
+  word-break: break-all;
+}
+.equipos-admin__timer {
+  font-weight: 700;
+}
+.equipos-admin__move {
+  color: #9a3412;
+  font-weight: 700;
+}
+@media (max-width: 420px) {
+  .equipos-admin__actions .btn {
+    flex: 1 1 100%;
+  }
 }
 .people-access-credentials {
   margin-top: 1rem;

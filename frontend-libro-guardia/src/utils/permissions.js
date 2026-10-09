@@ -39,6 +39,8 @@ export const PERMISSION_LABELS = {
   'empresas.manage': 'Gestionar empresas del predio',
   'destinos.manage': 'Gestionar destinos y secuencias de puertas',
   'lectores.manage': 'Gestionar los lectores de las puertas',
+  'alarmas.ver': 'Ver las alarmas del sitio',
+  'alarmas.reconocer': 'Reconocer y cerrar alarmas',
   'visitas.create': 'Cargar visitas autorizadas (sin aprobación)',
   'visitas.request': 'Solicitar visita (queda pendiente de aprobación)',
   'visitas.approve': 'Aprobar o rechazar solicitudes de visita',
@@ -92,7 +94,9 @@ export const PERMISSION_CATEGORIES = [
       'puertas.estanco.forzar',
       'access.manual_override',
       'monitoring.doors.panel',
-      'guard.doors.panel'
+      'guard.doors.panel',
+      'alarmas.ver',
+      'alarmas.reconocer'
     ]
   },
   {
@@ -155,7 +159,9 @@ export const ROLE_TEMPLATES = {
       'access.exceptional_entry',
       'fleet.gps.read',
       'attendance.alerts.read',
-      'guard.doors.panel'
+      'guard.doors.panel',
+      'alarmas.ver',
+      'alarmas.reconocer'
     ]
   },
   supervisor: {
@@ -192,7 +198,9 @@ export const ROLE_TEMPLATES = {
       'access.kiosk',
       'access.exceptional_entry',
       'attendance.alerts.read',
-      'visitas.approve'
+      'visitas.approve',
+      'alarmas.ver',
+      'alarmas.reconocer'
     ]
   },
   monitoreo: {
@@ -303,6 +311,7 @@ export const canAccessGuardia = (user) => {
     || hasPermission(user, 'master.vehicles.quick_authorize')
     || hasPermission(user, 'monitoring.doors.panel')
     || hasPermission(user, 'guard.doors.panel')
+    || hasPermission(user, 'alarmas.ver')
   );
 };
 

@@ -16,7 +16,8 @@ Errores: `{message, code?}`, textos en español simple. CORS solo si el `Origin`
 | `POST /api/guard/open-door` | Reenvía al controlador dueño. |
 | `GET /api/entries` | Pasos del journal en forma de `entries`. |
 | `GET /api/guard/live-alerts` | Alarmas abiertas, cada una con `kind:'alarm'`. |
-| `POST /api/guard/alarms/:id/ack` | `{note}` (mínimo 3 caracteres) → `{ok}`. |
+| `GET /api/guard/alarms?status=&type=&doorId=&limit=` | Misma forma `{alerts, queriedAt}`. `status` abierto por defecto; `recent` incluye reconocidas. `limit` ≤ 50. |
+| `POST /api/guard/alarms/:id/ack` | `{note}` (mínimo 3 caracteres) → `{ok}`. `close:true` la deja cerrada. |
 | `GET /api/live?token=` | SSE. Eventos `door`, `access`, `alarm`, `config`, `runtime`. `: ping` cada 20 s. |
 | Cualquier otra `/api/*` | **501** `{code:'EDGE_UNSUPPORTED', message:'Disponible solo con internet'}`. |
 

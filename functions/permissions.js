@@ -43,7 +43,9 @@ const PERMISSION_KEYS = [
   'visitas.create',
   'visitas.request',
   'visitas.approve',
-  'visitas.view.own'
+  'visitas.view.own',
+  'alarmas.ver',
+  'alarmas.reconocer'
 ];
 
 const TECHNICAL_PERMISSIONS = [
@@ -79,7 +81,9 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'puertas.estanco.forzar',
     'fleet.gps.read',
     'attendance.alerts.read',
-    'guard.doors.panel'
+    'guard.doors.panel',
+    'alarmas.ver',
+    'alarmas.reconocer'
   ],
   supervisor: [
     'entries.create',
@@ -111,7 +115,9 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.kiosk',
     'access.exceptional_entry',
     'attendance.alerts.read',
-    'visitas.approve'
+    'visitas.approve',
+    'alarmas.ver',
+    'alarmas.reconocer'
   ],
   'empleado-visitas': [
     'visitas.create',

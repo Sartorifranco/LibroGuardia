@@ -34,6 +34,11 @@ const GUIDES = {
     label: 'Falla de cerradura',
     action: 'No fuerces la puerta. Avisá a sistemas.',
     critical: true
+  },
+  interlock_violation: {
+    label: 'Estanco',
+    action: 'Revisá que no hayan quedado las dos puertas abiertas al mismo tiempo.',
+    critical: true
   }
 };
 
@@ -58,7 +63,10 @@ const ALIASES = {
   offline: 'device_offline',
   lock_fault: 'lock_fault',
   falla: 'lock_fault',
-  falla_cerradura: 'lock_fault'
+  falla_cerradura: 'lock_fault',
+  interlock_violation: 'interlock_violation',
+  estanco: 'interlock_violation',
+  apertura_forzada_estanco: 'interlock_violation'
 };
 
 export const ALARM_TYPE_KEYS = new Set(Object.keys(ALIASES));

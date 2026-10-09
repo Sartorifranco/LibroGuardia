@@ -1,7 +1,10 @@
 /**
  * API edge (Etapa 2, docs/ETAPA2-DISENO.md §3–§4, tarea T4 mínima para el Hito 1).
  *
- *   Admin (usuario):  GET/POST /api/admin/devices, POST /api/admin/devices/:id/{revoke,replace}
+ *   Admin (usuario):  GET/POST /api/admin/devices,
+ *                     POST /api/admin/devices/:id/{revoke,replace,enrollment},
+ *                     GET  /api/admin/devices/:id/log
+ *   Guardia:          GET /api/guard/alarms, POST /api/guard/alarms/:id/ack
  *   Equipo (sin JWT): POST /api/edge/v1/enroll, POST /api/edge/v1/token
  *   Equipo (JWT de equipo, kind:'device'):
  *     GET  /api/edge/v1/head                       (hub y controlador)
@@ -38,6 +41,9 @@ const {
   recordPairingFailure
 } = require('../lib/loginRateLimit');
 const devices = require('../lib/devices');
+const deviceDoors = require('../lib/deviceDoors');
+const deviceHealth = require('../lib/deviceHealth');
+const guardAlarms = require('../lib/guardAlarms');
 const edge = require('../lib/edgeIngest');
 
 const router = express.Router();
@@ -53,6 +59,35 @@ const actorOf = (req) => ({
 const audit = (req, payload) => {
   logAdminAction({ req, ...payload }).catch((err) => console.error(`auditLog ${payload.action}:`, err.message));
 };
+
+const sendDeviceError = (res, err, fallback) => {
+  if (err && err.moves) {
+    return res.status(err.status || 409).json({
+      message: err.message,
+      code: err.code || 'DOOR_MOVE_CONFIRM',
+      moves: err.moves
+    });
+  }
+  return sendRouteError(res, err, fallback);
+};
+
+const configVersionsBySite = async (siteIds) => {
+  const out = {};
+  for (const siteId of siteIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const snap = await db.collection('sites').doc(siteId).collection('compiled').doc('head').get();
+    out[siteId] = snap.exists ? (snap.data()?.version ?? null) : null;
+  }
+  return out;
+};
+
+const withHealth = (device, versions, now = Date.now()) => ({
+  ...device,
+  health: deviceHealth.deviceHealth(device, {
+    configVersion: versions[device.siteId] ?? null,
+    now
+  })
+});
 
 /**
  * JWT de equipo. Rechaza tokens de usuario (sin kind:'device') y, si se pide, otros tipos de equipo.
@@ -99,7 +134,16 @@ const anyDevice = deviceAuth(['hub', 'controller']);
 router.get('/api/admin/devices', auth, requirePermission('lectores.manage'), async (req, res) => {
   try {
     const list = await devices.listDevices({ siteId: req.query.siteId || null });
-    res.json({ devices: list });
+    const siteIds = [...new Set(list.map((item) => item.siteId || devices.DEFAULT_SITE_ID))];
+    const versions = await configVersionsBySite(siteIds.length ? siteIds : [devices.DEFAULT_SITE_ID]);
+    const catalog = await deviceDoors.doorCatalog();
+    const siteKey = req.query.siteId ? devices.sanitizeSiteId(req.query.siteId) : devices.DEFAULT_SITE_ID;
+    res.json({
+      devices: list.map((item) => withHealth(item, versions)),
+      doors: catalog.doors,
+      airlocks: catalog.airlocks,
+      configVersion: versions[siteKey] ?? null
+    });
   } catch (err) {
     sendRouteError(res, err, 'Error al listar equipos');
   }
@@ -107,29 +151,111 @@ router.get('/api/admin/devices', auth, requirePermission('lectores.manage'), asy
 
 router.post('/api/admin/devices', auth, requirePermission('lectores.manage'), async (req, res) => {
   try {
-    const { siteId, kind, name, doorIds } = req.body || {};
-    const result = await devices.createDevice({ siteId, kind, name, doorIds }, { createdBy: actorOf(req).username });
+    const { siteId, kind, name, doorIds, confirmMoves } = req.body || {};
+    const k = String(kind || '').trim();
+    const doors = Array.isArray(doorIds) ? doorIds : [];
+    if (k === 'hub' && doors.length) {
+      return res.status(400).json({
+        message: 'La central del sitio no maneja puertas. Elegí un controlador de puertas.'
+      });
+    }
+    if (k === 'controller') {
+      await deviceDoors.validateAssignment({ doorIds: doors, confirmMoves: confirmMoves === true, deviceId: null });
+    }
+    const actor = actorOf(req).username;
+    const result = await devices.createDevice({ siteId, kind, name, doorIds: k === 'controller' ? doors : [] }, { createdBy: actor });
+    let assignment = null;
+    if (k === 'controller' && doors.length) {
+      try {
+        assignment = await deviceDoors.applyAssignment({ deviceId: result.device.id, doorIds: doors, by: actor });
+        if (!assignment.linked) assignment = null;
+      } catch (err) {
+        await db.collection(devices.DEVICES_COLLECTION).doc(result.device.id).delete().catch(() => {});
+        throw err;
+      }
+    }
+    await devices.appendDeviceLog(result.device.id, {
+      action: 'device.create',
+      message: 'Alta del equipo',
+      actor,
+      detail: result.device.name
+    });
+    const device = assignment
+      ? { ...result.device, doorIds: assignment.doorIds }
+      : result.device;
     audit(req, {
       action: 'device.create',
       targetType: 'device',
+      targetId: device.id,
+      before: null,
+      after: { siteId: device.siteId, kind: device.kind, name: device.name, doorIds: device.doorIds }
+    });
+    if (assignment) {
+      await logAdminAction({
+        req,
+        action: 'device.doors',
+        targetType: 'device',
+        targetId: device.id,
+        before: { doorIds: [] },
+        after: { doorIds: assignment.doorIds, moves: assignment.moves }
+      });
+    }
+    res.status(201).json({ ...result, device });
+  } catch (err) {
+    sendDeviceError(res, err, 'Error al crear el equipo');
+  }
+});
+
+router.get('/api/admin/devices/:id/log', auth, requirePermission('lectores.manage'), async (req, res) => {
+  try {
+    const page = await devices.listDeviceLog(req.params.id, {
+      limit: req.query.limit,
+      cursor: req.query.cursor || null
+    });
+    res.json(page);
+  } catch (err) {
+    sendRouteError(res, err, 'Error al leer la bitácora');
+  }
+});
+
+router.post('/api/admin/devices/:id/enrollment', auth, requirePermission('lectores.manage'), async (req, res) => {
+  try {
+    const result = await devices.reissueEnrollment(req.params.id);
+    const actor = actorOf(req).username;
+    await devices.appendDeviceLog(result.device.id, {
+      action: 'device.enrollment',
+      message: 'Se generó otro código de instalación',
+      actor
+    });
+    audit(req, {
+      action: 'device.enrollment',
+      targetType: 'device',
       targetId: result.device.id,
       before: null,
-      after: { siteId: result.device.siteId, kind: result.device.kind, name: result.device.name, doorIds: result.device.doorIds }
+      after: { status: result.device.status }
     });
     res.status(201).json(result);
   } catch (err) {
-    sendRouteError(res, err, 'Error al crear el equipo');
+    sendRouteError(res, err, 'Error al generar el código');
   }
 });
 
 router.post('/api/admin/devices/:id/revoke', auth, requirePermission('lectores.manage'), async (req, res) => {
   try {
+    const actor = actorOf(req).username;
     const { before, after } = await devices.revokeDevice(req.params.id, {
-      by: actorOf(req).username,
+      by: actor,
       reason: req.body?.reason || null
     });
+    await deviceDoors.clearDoors(after.id);
+    await devices.appendDeviceLog(after.id, {
+      action: 'device.revoke',
+      message: 'Se dio de baja',
+      actor,
+      detail: req.body?.reason ? String(req.body.reason).slice(0, 300) : null
+    });
     audit(req, { action: 'device.revoke', targetType: 'device', targetId: after.id, before, after });
-    res.json({ device: after });
+    res.json({ device: { ...after, doorIds: [], status: 'revoked' } });
   } catch (err) {
     sendRouteError(res, err, 'Error al revocar el equipo');
   }
@@ -137,9 +263,23 @@ router.post('/api/admin/devices/:id/revoke', auth, requirePermission('lectores.m
 
 router.post('/api/admin/devices/:id/replace', auth, requirePermission('lectores.manage'), async (req, res) => {
   try {
+    const actor = actorOf(req).username;
     const result = await devices.replaceDevice(req.params.id, {
-      by: actorOf(req).username,
+      by: actor,
       name: req.body?.name || null
+    });
+    await deviceDoors.retargetDoors(req.params.id, result.device.id);
+    await devices.appendDeviceLog(req.params.id, {
+      action: 'device.replace',
+      message: 'Se reemplazó el equipo',
+      actor,
+      detail: result.device.id
+    });
+    await devices.appendDeviceLog(result.device.id, {
+      action: 'device.create',
+      message: 'Alta del equipo que reemplaza al anterior',
+      actor,
+      detail: result.device.name
     });
     audit(req, {
       action: 'device.replace',
@@ -166,6 +306,11 @@ router.post('/api/edge/v1/enroll', async (req, res) => {
     }
     const { code, publicKey, kind, hostname } = req.body || {};
     const result = await devices.enrollDevice({ code, publicKey, kind, hostname });
+    devices.appendDeviceLog(result.deviceId, {
+      action: 'device.enroll',
+      message: 'Quedó instalado',
+      actor: hostname ? String(hostname).slice(0, 80) : null
+    }).catch((err) => console.error('bitácora device.enroll:', err.message));
     logAdminAction({
       actorId: result.deviceId,
       actorUsername: `device:${result.deviceId}`,
@@ -274,6 +419,48 @@ router.get('/api/sites/:siteId/live', auth, requireAnyPermission([
     onError: (res, err) => sendRouteError(res, err, 'Error al leer el resumen en vivo')
   }
 ));
+
+// ───────────────────────────── Alarmas (misma forma que el hub LAN) ─────────────────────────────
+
+router.get('/api/guard/alarms', auth, requirePermission('alarmas.ver'), async (req, res) => {
+  try {
+    const page = await guardAlarms.listAlarms({
+      siteId: req.query.siteId || devices.DEFAULT_SITE_ID,
+      status: req.query.status || 'open',
+      type: req.query.type || '',
+      doorId: req.query.doorId || '',
+      limit: req.query.limit
+    });
+    res.set('Cache-Control', 'no-store');
+    res.json(page);
+  } catch (err) {
+    sendRouteError(res, err, 'Error al listar alarmas');
+  }
+});
+
+router.post('/api/guard/alarms/:id/ack', auth, requirePermission('alarmas.reconocer'), async (req, res) => {
+  try {
+    const actor = actorOf(req).username;
+    const result = await guardAlarms.ackAlarm({
+      siteId: req.query.siteId || req.body?.siteId || devices.DEFAULT_SITE_ID,
+      alarmId: req.params.id,
+      note: req.body?.note,
+      by: actor,
+      close: req.body?.close === true
+    });
+    await logAdminAction({
+      req,
+      action: result.after.close ? 'alarm.close' : 'alarm.ack',
+      targetType: 'alarm',
+      targetId: req.params.id,
+      before: result.before,
+      after: { ackBy: actor, note: String(req.body?.note || '').trim().slice(0, 500), state: result.after.state }
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    sendRouteError(res, err, 'Error al reconocer la alarma');
+  }
+});
 
 // ───────────────────────────── Comandos ─────────────────────────────
 

@@ -302,6 +302,12 @@ export const buildSidebarItems = (user, runtime = null) => {
     });
   }
 
+  addIf(hasPermission(user, 'alarmas.ver'), {
+    id: 'alarmas',
+    label: 'Alarmas',
+    icon: Bell
+  });
+
   addIf(canAccessHistorial(user), {
     id: 'historial',
     label: 'Historial',

@@ -78,7 +78,7 @@ const ADMIN_NAV_GROUPS = [
     items: [
       {
         id: 'equiposAcceso',
-        label: 'Equipos de acceso',
+        label: 'Sistemas',
         icon: DoorOpen,
         match: (u) =>
           hasPermission(u, 'access.doors.manage')

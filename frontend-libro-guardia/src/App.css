@@ -7559,7 +7559,33 @@ body {
 
 .alarm-card__ack {
   width: 100%;
-  margin-top: 0.65rem;
+  margin-top: 0.35rem;
+}
+
+.alarm-panel__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+
+.alarm-panel__filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1 1 8rem;
+  font-size: 0.85rem;
+}
+
+.alarm-panel__filters select {
+  min-height: 44px;
+  font-size: 1rem;
+}
+
+.alarm-card__kicker {
+  margin: 0.45rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .critical-alarm-banner {
