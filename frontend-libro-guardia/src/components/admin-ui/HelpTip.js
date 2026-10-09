@@ -13,6 +13,7 @@ export function HelpTip({ text }) {
       <button
         type="button"
         className="aui-help__btn"
+        aria-label={`Ayuda: ${text}`}
         aria-expanded={open}
         aria-describedby={open ? tipId : undefined}
         onClick={(event) => {
@@ -30,3 +31,5 @@ export function HelpTip({ text }) {
     </span>
   );
 }
+
+export default HelpTip;

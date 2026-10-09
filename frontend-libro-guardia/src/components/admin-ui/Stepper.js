@@ -22,3 +22,5 @@ export function Stepper({ steps = [], current = 0 }) {
     </ol>
   );
 }
+
+export default Stepper;

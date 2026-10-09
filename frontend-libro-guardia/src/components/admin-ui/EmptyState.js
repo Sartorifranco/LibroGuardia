@@ -17,3 +17,5 @@ export function EmptyState({ title, text, actionLabel, onAction }) {
     </div>
   );
 }
+
+export default EmptyState;

@@ -29,7 +29,7 @@ describe('Empresas y responsables', () => {
     render(<EmpresasAdminSection pendingAction={null} runAction={jest.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Empresas y responsables' })).toBeInTheDocument();
     expect(screen.getByText(/Para qué sirve:/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Mails de la empresa')).toBeInTheDocument();
+    expect(screen.getByLabelText('Mails de la empresa', { selector: 'input, textarea' })).toBeInTheDocument();
     expect(await screen.findByText('Todavía no cargaste empresas')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Guardar empresa' })).toBeInTheDocument();
   });

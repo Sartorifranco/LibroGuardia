@@ -84,7 +84,7 @@ describe('Usuarios del sistema', () => {
     fireEvent.click(screen.getByRole('button', { name: /Guardia/ }));
     fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'Ana Pérez' } });
     fireEvent.change(screen.getByLabelText('Usuario o mail'), { target: { value: 'ana.perez' } });
-    fireEvent.change(screen.getByLabelText('Puesto o puertas'), { target: { value: 'Portón principal' } });
+    fireEvent.change(screen.getByLabelText('Puesto o puertas', { selector: 'input, textarea, select' }), { target: { value: 'Portón principal' } });
     fireEvent.click(screen.getByRole('button', { name: 'Crear usuario' }));
 
     await waitFor(() => {
