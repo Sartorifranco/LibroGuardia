@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import Modal from './Modal';
 import WizardModal from './WizardModal';
@@ -100,6 +100,37 @@ describe('Modal', () => {
     const mobile = screen.getByRole('dialog');
     expect(mobile).toHaveClass('aui-modal--full');
     expect(mobile).toHaveStyle({ width: '100%', maxWidth: 'none', height: '100%' });
+  });
+
+  it('con otro modal encima, Escape cierra solo el de arriba y devuelve el foco', () => {
+    function Harness() {
+      const [inner, setInner] = useState(false);
+      return (
+        <>
+          <Modal open dirty title="Puerta" onClose={() => {}}>
+            <select aria-label="Lugar" onChange={() => setInner(true)}>
+              <option value="">Elegir</option>
+              <option value="new">Crear</option>
+            </select>
+          </Modal>
+          <Modal open={inner} size="sm" title="Crear un lugar nuevo" onClose={() => setInner(false)}>
+            <input aria-label="Nombre del lugar" />
+          </Modal>
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const lugar = screen.getByLabelText('Lugar');
+    expect(lugar).toHaveFocus();
+    fireEvent.change(lugar, { target: { value: 'new' } });
+    expect(screen.getByRole('dialog', { name: 'Crear un lugar nuevo' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Nombre del lugar')).toHaveFocus();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Crear un lugar nuevo' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Puerta' })).toBeInTheDocument();
+    expect(screen.queryByText('¿Descartar los cambios?')).not.toBeInTheDocument();
+    expect(lugar).toHaveFocus();
   });
 });
 
