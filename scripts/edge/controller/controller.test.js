@@ -342,6 +342,26 @@ describe('controlador: estanco (interlock)', { skip: SKIP }, () => {
     t.controller.simInput('p1', 'dps', 'open');
     t.clock.advance(60);
     assert.equal((await t.scan('p2', 'ana')).decision, 'grant');
+    assert.equal(t.controller.snap().interlockGroup('p1'), null);
+    assert.deepEqual(t.controller.snap().interlockGroups('p1'), []);
+  });
+
+  it('interlockGroups del snap y efectos de varios estancos a la vez', async () => {
+    t = await createTestController({ interlockMode: 'timed' });
+    assert.deepEqual(t.controller.snap().interlockGroups('p1').map((g) => g.id), ['est1']);
+    t.controller.applyInterlockEffect({
+      stateEffects: {
+        interlock: { groupId: 'est1', phase: 'inner_open', innerOpenedAtMs: 1 },
+        interlocks: [
+          { groupId: 'est1', phase: 'inner_open', innerOpenedAtMs: 1 },
+          { groupId: 'est2', phase: 'outer_open', outerOpenedAtMs: 1, entryDoorId: 'p2' }
+        ]
+      }
+    });
+    assert.equal(t.controller.interlockState.est1.phase, 'inner_open');
+    assert.equal(t.controller.interlockState.est2.phase, 'outer_open');
+    t.controller.applyInterlockEffect({ stateEffects: { interlock: { groupId: 'est3', phase: 'outer_open' } } });
+    assert.equal(t.controller.interlockState.est3.phase, 'outer_open');
   });
 
   it('emergencia en P1: retiene destrabadas P1 y P2 (su estanco), no P3', async () => {

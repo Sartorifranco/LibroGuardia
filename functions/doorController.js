@@ -291,16 +291,61 @@ const evaluateAirlockForOpen = async ({
 const httpError = (status, message, extra = {}) => Object.assign(new Error(message), { status }, extra);
 
 /**
+ * Todos los estancos habilitados de la puerta: primero el de `airlockGroupId` y después
+ * los grupos cuyo doorIds la incluye (por id). Una puerta puede estar entre dos estancos.
+ */
+const findDoorAirlockGroups = (doorsConfig, door) => {
+  const out = [];
+  const primary = door.airlockGroupId ? findAirlockGroup(doorsConfig, door.airlockGroupId) : null;
+  if (primary) out.push(primary);
+  const others = (doorsConfig?.airlockGroups || [])
+    .filter((g) => g && g.enabled !== false && g.id !== primary?.id
+      && Array.isArray(g.doorIds) && g.doorIds.includes(door.id))
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return out.concat(others);
+};
+
+/**
+ * Rol de la puerta dentro de un estanco. En su grupo principal manda `door.airlockRole`;
+ * en los demás, `outerDoorId` del grupo (o la puerta marcada exterior de ese grupo, o la primera).
+ */
+const airlockRoleIn = (doorsConfig, door, group) => {
+  if (group.id === door.airlockGroupId) return door.airlockRole || null;
+  const ids = group.doorIds || [];
+  const outerId = group.outerDoorId
+    || (ids.map((id) => findDoorById(doorsConfig, id))
+      .find((d) => d && d.airlockRole === 'outer' && d.airlockGroupId === group.id) || {}).id
+    || ids[0];
+  return door.id === outerId ? 'outer' : 'inner';
+};
+
+/** Estancos que aplican a esta apertura: [{ group, role, otherDoorName }]. */
+const resolveDoorAirlocks = (doorsConfig, door, { bypassAirlock = false } = {}) => {
+  if (bypassAirlock) return [];
+  return findDoorAirlockGroups(doorsConfig, door)
+    .map((group) => {
+      const role = airlockRoleIn(doorsConfig, door, group);
+      const others = getAirlockDoors(doorsConfig, group.id)
+        .filter((d) => d.id !== door.id && airlockRoleIn(doorsConfig, d, group) !== role);
+      return { group, role, otherDoorName: others.map((d) => d.name).filter(Boolean).join(' / ') };
+    })
+    .filter((a) => a.role === 'outer' || a.role === 'inner');
+};
+
+/**
  * Reserva atómica (transacción Firestore) antes de pulsar:
  * - cooldown por puerta (MANUAL_COOLDOWN_MS) compartido entre instancias;
  * - chequeo + transición del estanco (outer → outer_open, inner → inner_open),
  *   así dos lecturas simultáneas en instancias distintas no abren ambas.
+ * Con `airlocks` ([{ group, role, otherDoorName }]) se evalúan todos los estancos de la
+ * puerta: si cualquiera bloquea, no se abre. Sin `airlocks` se usa `group` + `airlockApplies`.
  * Devuelve lo necesario para revertir si el pulso falla.
  */
 const reserveDoorOpen = async ({
   door,
   group,
   airlockApplies,
+  airlocks = null,
   personId = null,
   entryId = null,
   manual = false,
@@ -308,11 +353,14 @@ const reserveDoorOpen = async ({
   otherDoorName = '',
   nowMs = Date.now()
 }) => db.runTransaction(async (tx) => {
+  const list = Array.isArray(airlocks)
+    ? airlocks
+    : (airlockApplies && group ? [{ group, role: door.airlockRole, otherDoorName }] : []);
   const cooldownRef = db.collection(COOLDOWN_COLLECTION).doc(door.id);
-  const airlockRef = airlockApplies ? db.collection(AIRLOCK_COLLECTION).doc(group.id) : null;
-  const [cooldownSnap, airlockSnap] = await Promise.all([
+  const airlockRefs = list.map((a) => db.collection(AIRLOCK_COLLECTION).doc(a.group.id));
+  const [cooldownSnap, ...airlockSnaps] = await Promise.all([
     tx.get(cooldownRef),
-    airlockRef ? tx.get(airlockRef) : Promise.resolve(null)
+    ...airlockRefs.map((r) => tx.get(r))
   ]);
 
   const previousCooldownMs = cooldownSnap?.exists ? Number(cooldownSnap.data()?.lastOpenAtMs) || 0 : 0;
@@ -322,34 +370,38 @@ const reserveDoorOpen = async ({
 
   let airlockCheck = { allowed: true, phase: 'bypass' };
   let previousAirlock = null;
+  const previousAirlocks = {};
   let forcedAirlock = null;
-  if (airlockRef) {
-    const data = airlockSnap?.exists ? (airlockSnap.data() || {}) : {};
-    previousAirlock = data;
-    const phase = deriveAirlockPhase(data, group, nowMs);
-    airlockCheck = manual
-      ? evaluateManualAirlockPhase(door.airlockRole, phase, otherDoorName)
-      : evaluateAirlockPhase(door.airlockRole, phase);
-    if (!airlockCheck.allowed) {
+  const writes = [];
+  list.forEach((a, i) => {
+    const data = airlockSnaps[i]?.exists ? (airlockSnaps[i].data() || {}) : {};
+    previousAirlocks[a.group.id] = data;
+    if (i === 0) previousAirlock = data;
+    const phase = deriveAirlockPhase(data, a.group, nowMs);
+    let check = manual
+      ? evaluateManualAirlockPhase(a.role, phase, a.otherDoorName || '')
+      : evaluateAirlockPhase(a.role, phase);
+    if (!check.allowed) {
       if (manual && forceAirlock) {
         // Apertura forzada (permiso puertas.estanco.forzar + motivo, validado por la ruta).
         // Se registra el estado que se pisó; la auditoría la hace openDoor / la ruta.
-        forcedAirlock = { ...airlockCheck };
-        airlockCheck = { allowed: true, phase, forced: true };
+        if (!forcedAirlock) forcedAirlock = { ...check, groupId: a.group.id };
+        check = { allowed: true, phase, forced: true };
       } else if (manual) {
-        throw httpError(409, airlockCheck.message, {
+        throw httpError(409, check.message, {
           code: 'AIRLOCK_OTHER_OPEN',
-          airlock: { ...airlockCheck, forcible: true }
+          airlock: { ...check, groupId: a.group.id, forcible: true }
         });
       } else {
-        throw httpError(423, airlockCheck.message || 'Puerta bloqueada por secuencia de estanco', {
-          airlock: airlockCheck
+        throw httpError(423, check.message || 'Puerta bloqueada por secuencia de estanco', {
+          airlock: { ...check, groupId: a.group.id }
         });
       }
     }
-    if (door.airlockRole === 'outer') {
-      tx.set(airlockRef, {
-        groupId: group.id,
+    if (i === 0 || (check.forced && !airlockCheck.forced)) airlockCheck = check;
+    if (a.role === 'outer') {
+      writes.push([airlockRefs[i], {
+        groupId: a.group.id,
         ...IDLE_AIRLOCK_FIELDS,
         phase: 'outer_open',
         outerOpenedAt: FieldValue.serverTimestamp(),
@@ -357,17 +409,18 @@ const reserveDoorOpen = async ({
         lastPersonId: personId,
         lastEntryId: entryId,
         updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
-    } else if (door.airlockRole === 'inner') {
-      tx.set(airlockRef, {
-        groupId: group.id,
+      }]);
+    } else if (a.role === 'inner') {
+      writes.push([airlockRefs[i], {
+        groupId: a.group.id,
         phase: 'inner_open',
         innerOpenedAt: FieldValue.serverTimestamp(),
         innerOpenedAtMs: nowMs,
         updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true });
+      }]);
     }
-  }
+  });
+  for (const [ref, payload] of writes) tx.set(ref, payload, { merge: true });
 
   tx.set(cooldownRef, {
     doorId: door.id,
@@ -375,19 +428,19 @@ const reserveDoorOpen = async ({
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
 
-  return { airlockCheck, previousCooldownMs, previousAirlock, forcedAirlock };
+  return { airlockCheck, previousCooldownMs, previousAirlock, previousAirlocks, forcedAirlock };
 });
 
 /** El pulso falló: devolver cooldown y estanco a como estaban (best effort). */
-const releaseDoorOpenReservation = async ({ door, group, airlockApplies, reservation }) => {
+const releaseDoorOpenReservation = async ({ door, airlocks = [], reservation }) => {
   try {
     await db.collection(COOLDOWN_COLLECTION).doc(door.id).set({
       doorId: door.id,
       lastOpenAtMs: reservation?.previousCooldownMs || 0,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
-    if (airlockApplies) {
-      const prev = reservation?.previousAirlock || {};
+    for (const { group } of airlocks) {
+      const prev = (reservation?.previousAirlocks || {})[group.id] || {};
       await setAirlockState(group.id, {
         ...IDLE_AIRLOCK_FIELDS,
         ...prev,
@@ -499,28 +552,21 @@ const openDoor = async ({
     throw error;
   }
 
-  const group = door.airlockGroupId
-    ? findAirlockGroup(doorsConfig, door.airlockGroupId)
-    : null;
-  // Las aperturas manuales también respetan el estanco (nunca ambas puertas abiertas);
-  // solo se puede forzar con forceAirlock (permiso + motivo validados por la ruta).
-  const airlockApplies = Boolean(group)
-    && !bypassAirlock
-    && (door.airlockRole === 'outer' || door.airlockRole === 'inner');
-  const otherDoor = airlockApplies
-    ? getAirlockDoors(doorsConfig, group.id).find((d) => d.id !== door.id && d.airlockRole !== door.airlockRole)
-    : null;
+  const groups = findDoorAirlockGroups(doorsConfig, door);
+  const group = groups[0] || null;
+  // Las aperturas manuales también respetan el estanco (nunca dos puertas abiertas en
+  // ninguno de los estancos de la puerta); solo se puede forzar con forceAirlock
+  // (permiso + motivo validados por la ruta).
+  const airlocks = resolveDoorAirlocks(doorsConfig, door, { bypassAirlock });
 
-  // Cooldown + estanco en una transacción (429 / 423 automático / 409 manual).
+  // Cooldown + estancos en una transacción (429 / 423 automático / 409 manual).
   const reservation = await reserveDoorOpen({
     door,
-    group,
-    airlockApplies,
+    airlocks,
     personId,
     entryId,
     manual,
-    forceAirlock: manual && forceAirlock === true,
-    otherDoorName: otherDoor?.name || ''
+    forceAirlock: manual && forceAirlock === true
   });
   const forcedAirlock = reservation?.forcedAirlock || null;
 
@@ -542,6 +588,7 @@ const openDoor = async ({
       doorId: door.id,
       doorName: door.name,
       airlockGroupId: group?.id || null,
+      ...(groups.length > 1 ? { airlockGroupIds: groups.map((g) => g.id) } : {}),
       airlockRole: door.airlockRole || null,
       authMethod: authMethod || (manual ? 'manual' : null),
       username,
@@ -580,7 +627,7 @@ const openDoor = async ({
   } catch (err) {
     if (!pulseSucceeded) {
       // La puerta no se abrió: liberar cooldown y estanco para no bloquear el reintento.
-      await releaseDoorOpenReservation({ door, group, airlockApplies, reservation });
+      await releaseDoorOpenReservation({ door, airlocks, reservation });
     }
     await logDoorEvent({
       type: manual ? 'manual_open' : 'door_open',
@@ -589,6 +636,7 @@ const openDoor = async ({
       doorId: door.id,
       doorName: door.name,
       airlockGroupId: group?.id || null,
+      ...(groups.length > 1 ? { airlockGroupIds: groups.map((g) => g.id) } : {}),
       username,
       userId,
       reason: reason || 'error_apertura',
@@ -625,14 +673,13 @@ const resolveDoorContext = async ({ doorId, readerId }) => {
     throw error;
   }
 
-  const group = door.airlockGroupId
-    ? findAirlockGroup(doorsConfig, door.airlockGroupId)
-    : null;
+  const groups = findDoorAirlockGroups(doorsConfig, door);
+  const group = groups[0] || null;
 
   const airlockState = group ? await getAirlockState(group.id, group) : null;
   const airlockDoors = group ? getAirlockDoors(doorsConfig, group.id) : [];
 
-  return { door, group, airlockState, airlockDoors, doorsConfig };
+  return { door, group, groups, airlockState, airlockDoors, doorsConfig };
 };
 
 const listActiveDoors = async () => {
@@ -816,5 +863,7 @@ module.exports = {
   evaluateManualAirlockPhase,
   deriveAirlockPhase,
   reserveDoorOpen,
+  findDoorAirlockGroups,
+  resolveDoorAirlocks,
   MANUAL_COOLDOWN_MS
 };

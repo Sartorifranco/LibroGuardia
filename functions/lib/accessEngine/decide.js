@@ -437,9 +437,15 @@ const decide = (input = {}) => {
   // No se vuelve a evaluar el estanco: la otra hoja, si está abierta, no invalida el registro.
   const passageState = !manual && PASSAGE_STATES.has(doorStateOf(door.id));
   const stateEffects = {};
-  const group = typeof snap.interlockGroup === 'function' ? snap.interlockGroup(door.id) : null;
+  let groups = [];
+  if (typeof snap.interlockGroups === 'function') groups = snap.interlockGroups(door.id) || [];
+  else if (typeof snap.interlockGroup === 'function') {
+    const g = snap.interlockGroup(door.id);
+    if (g) groups = [g];
+  }
   let forced = false;
-  if (!passageState && group) {
+  const interlockEffects = [];
+  if (!passageState) for (const group of groups) {
     const il = evaluateInterlock({
       group,
       doorId: door.id,
@@ -460,11 +466,15 @@ const decide = (input = {}) => {
         passId
       });
     }
-    if (il.forced) {
+    if (il.forced && !forced) {
       forced = true;
       warnings.push('apertura_forzada_estanco');
     }
-    if (il.effect) stateEffects.interlock = il.effect;
+    if (il.effect) interlockEffects.push(il.effect);
+  }
+  if (interlockEffects.length) {
+    stateEffects.interlock = interlockEffects[0];
+    stateEffects.interlocks = interlockEffects;
   }
 
   // ── 7. Anti-passback ──

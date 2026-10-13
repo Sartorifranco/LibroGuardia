@@ -5,7 +5,7 @@
  * (functions/lib/accessEngine) sobre las tablas materializadas por chunkStore.js.
  *
  *   findCredential(type, valueHash) cardholder(id) rightsFor(cardholderId, doorId)
- *   schedule(id) isHoliday(ymd, setId) door(id) interlockGroup(doorId) pass(qrIdOrDni)
+ *   schedule(id) isHoliday(ymd, setId) door(id) interlockGroup(doorId) interlockGroups(doorId) pass(qrIdOrDni)
  *   isRevoked(id) policy() credentialKey() area(id)
  *
  * Todo sincrónico, statements preparados y cacheados. Los objetos de config chicos
@@ -155,8 +155,8 @@ class SqliteSnapshot {
     return cache.get(key);
   }
 
-  /** Grupo de estanco que contiene la puerta (o null). Acepta `doorIds` o `doors`. */
-  interlockGroup(doorId) {
+  /** Todos los grupos de estanco que contienen la puerta, ordenados por id ([] si ninguno). */
+  interlockGroups(doorId) {
     const cache = this.c();
     if (!cache.interlockByDoor) {
       const map = new Map();
@@ -165,12 +165,20 @@ class SqliteSnapshot {
         if (!g) continue;
         for (const d of g.doorIds || g.doors || []) {
           const id = typeof d === 'object' && d ? d.doorId || d.id : d;
-          if (id && !map.has(String(id))) map.set(String(id), g);
+          if (!id) continue;
+          const list = map.get(String(id)) || [];
+          if (!list.includes(g)) list.push(g);
+          map.set(String(id), list);
         }
       }
       cache.interlockByDoor = map;
     }
-    return cache.interlockByDoor.get(String(doorId)) || null;
+    return (cache.interlockByDoor.get(String(doorId)) || []).slice();
+  }
+
+  /** Primer grupo de estanco que contiene la puerta (o null). Acepta `doorIds` o `doors`. */
+  interlockGroup(doorId) {
+    return this.interlockGroups(doorId)[0] || null;
   }
 
   /**

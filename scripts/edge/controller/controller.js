@@ -189,6 +189,7 @@ class Controller {
     return new Proxy(s, {
       get(target, prop) {
         if (prop === 'interlockGroup') return () => null;
+        if (prop === 'interlockGroups') return () => [];
         const v = target[prop];
         return typeof v === 'function' ? v.bind(target) : v;
       }
@@ -252,7 +253,7 @@ class Controller {
     }
   }
 
-  /** Emergencia: mantiene destrabadas la puerta y las de su estanco (las de este equipo). */
+  /** Emergencia: mantiene destrabadas la puerta y las de todos sus estancos (las de este equipo). */
   onEmergencyInput(sourceDoorId, active) {
     if (active) this.emergencySources.add(sourceDoorId);
     else this.emergencySources.delete(sourceDoorId);
@@ -267,8 +268,13 @@ class Controller {
 
   emergencyGroup(doorId) {
     const ids = new Set([doorId]);
-    const g = this.edge.snapshot.interlockGroup(doorId);
-    for (const id of (g && (g.doorIds || g.doors)) || []) ids.add(typeof id === 'object' ? id.doorId || id.id : id);
+    const snap = this.edge.snapshot;
+    const groups = typeof snap.interlockGroups === 'function'
+      ? snap.interlockGroups(doorId)
+      : [snap.interlockGroup(doorId)].filter(Boolean);
+    for (const g of groups) {
+      for (const id of g.doorIds || g.doors || []) ids.add(typeof id === 'object' ? id.doorId || id.id : id);
+    }
     const extra = this.doors.get(doorId)?.cfg.emergencyDoors;
     if (extra === '*') for (const id of this.doors.keys()) ids.add(id);
     else if (Array.isArray(extra)) extra.forEach((id) => ids.add(id));
@@ -318,10 +324,12 @@ class Controller {
     return { relayOk, relayConfirmed, pulseAttempted, ...(relayError ? { relayError } : {}) };
   }
 
-  /** Efecto de estanco del motor, si el paso quedó registrado. */
+  /** Efectos de estanco del motor (uno por grupo de la puerta), si el paso quedó registrado. */
   applyInterlockEffect(decision) {
-    if (decision.stateEffects && decision.stateEffects.interlock) {
-      const { groupId, ...rest } = decision.stateEffects.interlock;
+    const fx = decision.stateEffects || {};
+    const list = Array.isArray(fx.interlocks) ? fx.interlocks : (fx.interlock ? [fx.interlock] : []);
+    for (const e of list) {
+      const { groupId, ...rest } = e || {};
       if (groupId) this.interlockState[groupId] = rest;
     }
   }

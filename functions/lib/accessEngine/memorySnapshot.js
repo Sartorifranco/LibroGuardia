@@ -104,7 +104,10 @@ const createMemorySnapshot = (chunks = {}) => {
   for (const g of data.interlockGroups.slice().sort((a, b) => String(a.id).localeCompare(String(b.id)))) {
     for (const d of g.doorIds || g.doors || []) {
       const id = typeof d === 'object' && d ? d.doorId || d.id : d;
-      if (id && !interlockByDoor.has(String(id))) interlockByDoor.set(String(id), g);
+      if (!id) continue;
+      const list = interlockByDoor.get(String(id)) || [];
+      if (!list.includes(g)) list.push(g);
+      interlockByDoor.set(String(id), list);
     }
   }
 
@@ -243,7 +246,8 @@ const createMemorySnapshot = (chunks = {}) => {
     },
     door(id) { return doors.get(String(id)) || null; },
     area(id) { return areas.get(String(id)) || null; },
-    interlockGroup(doorId) { return interlockByDoor.get(String(doorId)) || null; },
+    interlockGroup(doorId) { return (interlockByDoor.get(String(doorId)) || [])[0] || null; },
+    interlockGroups(doorId) { return (interlockByDoor.get(String(doorId)) || []).slice(); },
     pass(qrIdOrDni) {
       const key = String(qrIdOrDni);
       if (passesById.has(key)) return passesById.get(key);
