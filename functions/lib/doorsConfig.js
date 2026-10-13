@@ -238,6 +238,12 @@ const normalizeSides = (sides, { strict = false } = {}) => {
   };
 };
 
+const normalizeMapPos = (pos) => {
+  if (!pos || typeof pos !== 'object') return null;
+  const inRange = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
+  return inRange(pos.x) && inRange(pos.y) ? { x: pos.x, y: pos.y } : null;
+};
+
 const normalizeDoor = (door = {}, index = 0, { strict = false } = {}) => {
   const id = slugifyDoorId(door.id || door.name) || `puerta-${index + 1}`;
   const { readers, readerIds } = normalizeReaders(door);
@@ -303,6 +309,8 @@ const normalizeDoor = (door = {}, index = 0, { strict = false } = {}) => {
       delete normalized.heldOpenSec;
     } else normalized.heldOpenSec = Math.round(held);
   } else delete normalized.heldOpenSec;
+
+  normalized.mapPos = normalizeMapPos(door.mapPos);
 
   const unlock = Number(door.unlockSec);
   normalized.unlockSec = Number.isFinite(unlock) && unlock > 0

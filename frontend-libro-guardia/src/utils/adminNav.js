@@ -187,6 +187,13 @@ export const ADMIN_NAV_GROUPS = [
         match: canDoors
       },
       {
+        id: 'plano',
+        label: 'Plano del predio',
+        description: 'El plano real con cada puerta marcada.',
+        icon: Building2,
+        match: canDoors
+      },
+      {
         id: 'lugares',
         label: 'Lugares',
         description: 'Zonas del predio, como Oficinas o Tesorería.',
