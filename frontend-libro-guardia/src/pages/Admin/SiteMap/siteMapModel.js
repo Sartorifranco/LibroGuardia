@@ -1,143 +1,5 @@
 export const EXTERIOR_ID = 'exterior';
 
-export const BOX_W = 170;
-export const BOX_H = 56;
-const GAP_X = 220;
-const GAP_Y = 46;
-const PAD = 24;
-const HEADER_H = 28;
-
-const PLACE_CHARS = 20;
-export const PLACE_LINE_H = 18;
-const LABEL_CHAR_W = 6.6;
-const LABEL_PAD = 14;
-const LABEL_MAX_W = 190;
-const LABEL_LINE_H = 14;
-const LABEL_T = [0.5, 0.35, 0.65, 0.25, 0.75];
-const LABEL_STEP_Y = 18;
-const LABEL_GAP = 3;
-
-/** Parte un texto en renglones de hasta `maxChars`; el último renglón se lleva el resto (nunca corta con …). */
-export function wrapText(text, maxChars, maxLines = 2) {
-  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-  const lines = [];
-  let current = '';
-  words.forEach((word) => {
-    let rest = word;
-    while (rest.length > maxChars && lines.length < maxLines - 1) {
-      if (current) { lines.push(current); current = ''; continue; }
-      lines.push(rest.slice(0, maxChars));
-      rest = rest.slice(maxChars);
-    }
-    if (lines.length >= maxLines - 1) {
-      current = current ? `${current} ${rest}` : rest;
-    } else if (!current) {
-      current = rest;
-    } else if (current.length + 1 + rest.length <= maxChars) {
-      current = `${current} ${rest}`;
-    } else {
-      lines.push(current);
-      current = rest;
-    }
-  });
-  if (current || !lines.length) lines.push(current);
-  return lines;
-}
-
-/** Tamaño de la etiqueta de una puerta: ancho según el texto hasta 190 px y después 2 renglones. */
-export function doorLabelSize(name) {
-  const maxChars = Math.floor((LABEL_MAX_W - LABEL_PAD) / LABEL_CHAR_W);
-  const lines = wrapText(name, maxChars, 2);
-  const longest = Math.max(...lines.map((line) => line.length));
-  return {
-    lines,
-    w: Math.round(longest * LABEL_CHAR_W + LABEL_PAD),
-    h: lines.length > 1 ? 8 + lines.length * LABEL_LINE_H : 22
-  };
-}
-
-const overlaps = (a, b) => (
-  a.x < b.x + b.w + LABEL_GAP && b.x < a.x + a.w + LABEL_GAP
-  && a.y < b.y + b.h + LABEL_GAP && b.y < a.y + a.h + LABEL_GAP
-);
-
-const bezierAt = ({ start, ctrl, end }, t) => {
-  const u = 1 - t;
-  return {
-    x: u * u * start.x + 2 * t * u * ctrl.x + t * t * end.x,
-    y: u * u * start.y + 2 * t * u * ctrl.y + t * t * end.y
-  };
-};
-
-/**
- * Ubica las etiquetas de puertas sin que se pisen entre sí ni con las cajas de lugares.
- * Prueba varios puntos de la línea y, si todos chocan, la corre en vertical de a 18 px.
- * `labels`: [{ id, w, h, start, ctrl, end }]; `obstacles`: rectángulos { x, y, w, h }.
- * Devuelve Map id → { x, y } (centro de la etiqueta).
- */
-export function placeDoorLabels(labels, obstacles = []) {
-  const placed = [];
-  const result = new Map();
-  const rectAt = (label, center) => ({ x: center.x - label.w / 2, y: center.y - label.h / 2, w: label.w, h: label.h });
-  const free = (rect) => rect.y >= 0
-    && !placed.some((other) => overlaps(rect, other))
-    && !obstacles.some((box) => overlaps(rect, box));
-
-  labels.forEach((label) => {
-    let center = null;
-    for (const t of LABEL_T) {
-      const candidate = bezierAt(label, t);
-      if (free(rectAt(label, candidate))) { center = candidate; break; }
-    }
-    if (!center) {
-      const base = bezierAt(label, 0.5);
-      for (let step = 1; step <= 200 && !center; step += 1) {
-        for (const sign of [1, -1]) {
-          const candidate = { x: base.x, y: base.y + sign * step * LABEL_STEP_Y };
-          if (free(rectAt(label, candidate))) { center = candidate; break; }
-        }
-      }
-      if (!center) center = base;
-    }
-    placed.push(rectAt(label, center));
-    result.set(label.id, center);
-  });
-  return result;
-}
-
-/** Ordena los lugares de cada nivel por el promedio de la posición de sus vecinos, para cruzar menos líneas. */
-function orderByBarycenter(model) {
-  const levels = new Map();
-  model.nodes.forEach((node) => {
-    levels.set(node.level, [...(levels.get(node.level) || []), node.id]);
-  });
-  const levelOf = new Map(model.nodes.map((node) => [node.id, node.level]));
-  const neighbors = new Map(model.nodes.map((node) => [node.id, []]));
-  model.edges.forEach((edge) => {
-    neighbors.get(edge.from)?.push(edge.to);
-    neighbors.get(edge.to)?.push(edge.from);
-  });
-  const sorted = [...levels.keys()].sort((a, b) => a - b);
-  const index = new Map();
-  sorted.forEach((lvl) => levels.get(lvl).forEach((id, i) => index.set(id, i)));
-
-  const sweep = (lvl, ref) => {
-    const ids = levels.get(lvl);
-    const bary = new Map(ids.map((id) => {
-      const near = neighbors.get(id).filter((other) => levelOf.get(other) === ref);
-      return [id, near.length ? near.reduce((sum, other) => sum + index.get(other), 0) / near.length : index.get(id)];
-    }));
-    ids.sort((a, b) => (bary.get(a) - bary.get(b)) || (index.get(a) - index.get(b)));
-    ids.forEach((id, i) => index.set(id, i));
-  };
-
-  for (let pass = 0; pass < 3; pass += 1) {
-    if (pass % 2 === 0) sorted.slice(1).forEach((lvl) => sweep(lvl, lvl - 1));
-    else sorted.slice(0, -1).reverse().forEach((lvl) => sweep(lvl, lvl + 1));
-  }
-  return index;
-}
-
 const normName = (name) => String(name || '').trim().toLowerCase();
 const quote = (name) => `“${String(name || '').trim() || 'sin nombre'}”`;
 
@@ -168,11 +30,12 @@ export function buildSiteMap({ areas = [], doors = [], airlockGroups = [] } = {}
       name: String(area.name || area.id),
       fixed: Boolean(area.fixed) || area.id === EXTERIOR_ID,
       airlock: false,
-      airlockGroupIds: []
+      airlockGroupIds: [],
+      airlockDoorIds: []
     });
   });
   if (!nodes.has(EXTERIOR_ID)) {
-    nodes.set(EXTERIOR_ID, { id: EXTERIOR_ID, name: 'Exterior', fixed: true, airlock: false, airlockGroupIds: [] });
+    nodes.set(EXTERIOR_ID, { id: EXTERIOR_ID, name: 'Exterior', fixed: true, airlock: false, airlockGroupIds: [], airlockDoorIds: [] });
   }
 
   const problems = [];
@@ -259,6 +122,7 @@ export function buildSiteMap({ areas = [], doors = [], airlockGroups = [] } = {}
       const node = nodes.get(place);
       node.airlock = true;
       node.airlockGroupIds.push(group.id);
+      node.airlockDoorIds = [...new Set([...node.airlockDoorIds, ...ids])];
     }
 
     if (ids.length < 2) {
@@ -376,109 +240,73 @@ export function buildSiteMap({ areas = [], doors = [], airlockGroups = [] } = {}
   };
 }
 
-/** Posiciones del dibujo: una columna por nivel, de izquierda (Exterior) a derecha. */
-export function layoutSiteMap(model) {
-  const pos = new Map();
-  const order = orderByBarycenter(model);
-  let maxLevel = 0;
-  let bottom = PAD + HEADER_H;
-  const nextY = new Map();
-  [...model.nodes]
-    .sort((a, b) => (a.level - b.level) || (order.get(a.id) - order.get(b.id)))
-    .forEach((node) => {
-      maxLevel = Math.max(maxLevel, node.level);
-      const lines = wrapText(node.name, PLACE_CHARS, 2);
-      const h = BOX_H + (lines.length - 1) * PLACE_LINE_H;
-      const y = nextY.has(node.level) ? nextY.get(node.level) : PAD + HEADER_H;
-      nextY.set(node.level, y + h + GAP_Y);
-      bottom = Math.max(bottom, y + h);
-      pos.set(node.id, { x: PAD + node.level * (BOX_W + GAP_X), y, w: BOX_W, h, lines });
-    });
-
-  const pairCount = new Map();
-  const pairIndex = new Map();
-  const pairKey = (edge) => [edge.from, edge.to].sort().join('|');
-  model.edges.forEach((edge) => pairCount.set(pairKey(edge), (pairCount.get(pairKey(edge)) || 0) + 1));
-
-  const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
-  const curves = model.edges.map((edge) => {
-    const key = pairKey(edge);
-    const index = pairIndex.get(key) || 0;
-    pairIndex.set(key, index + 1);
-    const spread = (index - ((pairCount.get(key) || 1) - 1) / 2) * 34;
-
-    let a = nodeById.get(edge.from);
-    let b = nodeById.get(edge.to);
-    if (a.level > b.level) [a, b] = [b, a];
-    const pa = pos.get(a.id);
-    const pb = pos.get(b.id);
-    let start;
-    let end;
-    let ctrl;
-    if (a.level === b.level) {
-      start = { x: pa.x + BOX_W, y: pa.y + pa.h / 2 };
-      end = { x: pb.x + BOX_W, y: pb.y + pb.h / 2 };
-      ctrl = { x: pa.x + BOX_W + 60 + Math.abs(spread), y: (start.y + end.y) / 2 + spread };
-    } else {
-      start = { x: pa.x + BOX_W, y: pa.y + pa.h / 2 };
-      end = { x: pb.x, y: pb.y + pb.h / 2 };
-      ctrl = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 + spread * 2 };
-    }
-    return { edge, start, ctrl, end, size: doorLabelSize(edge.name) };
-  });
-
-  const centers = placeDoorLabels(
-    curves.map(({ edge, start, ctrl, end, size }) => ({ id: edge.id, w: size.w, h: size.h, start, ctrl, end })),
-    [...pos.values()].map(({ x, y, w, h }) => ({ x, y, w, h }))
-  );
-
-  let right = PAD + (maxLevel + 1) * BOX_W + maxLevel * GAP_X + 80;
-  const edges = curves.map(({ edge, start, ctrl, end, size }) => {
-    const center = centers.get(edge.id);
-    right = Math.max(right, center.x + size.w / 2);
-    bottom = Math.max(bottom, center.y + size.h / 2);
-    return {
-      ...edge,
-      path: `M ${start.x} ${start.y} Q ${ctrl.x} ${ctrl.y} ${end.x} ${end.y}`,
-      label: { x: center.x, y: center.y, w: size.w, h: size.h, lines: size.lines }
-    };
-  });
-
-  return {
-    positions: pos,
-    edges,
-    width: Math.ceil(right + PAD),
-    height: Math.ceil(bottom + PAD),
-    columnX: (lvl) => PAD + lvl * (BOX_W + GAP_X)
-  };
-}
+const byName = (a, b) => a.localeCompare(b, 'es');
 
 /**
- * Árbol para celular: Exterior → puerta → lugar → puerta → …
- * Cada lugar aparece una vez; si otra puerta vuelve a un lugar ya listado, queda como `repeat`.
+ * Recorrido: Exterior → puerta → lugar → puerta → …
+ * Cada lugar aparece una sola vez, debajo del lugar desde el que se llega con menos puertas
+ * (empates por nombre). Una puerta hacia un lugar que ya figura más arriba queda como `repeat`.
+ * Los lugares a los que no se llega desde Exterior arman sus propios recorridos en `unreachable`.
  */
 export function buildSiteTree(model) {
   const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
-  const edgeById = new Map(model.edges.map((edge) => [edge.id, edge]));
+  const links = new Map(model.nodes.map((node) => [node.id, []]));
+  model.edges.forEach((edge) => {
+    links.get(edge.from).push({ door: edge, otherId: edge.to });
+    links.get(edge.to).push({ door: edge, otherId: edge.from });
+  });
+  links.forEach((list) => list.sort((a, b) => (
+    byName(nodeById.get(a.otherId).name, nodeById.get(b.otherId).name) || byName(a.door.name, b.door.name)
+  )));
 
-  const walk = (nodeId, viaEdgeId) => {
-    const node = nodeById.get(nodeId);
-    const children = node.doorIds
-      .filter((doorId) => doorId !== viaEdgeId)
-      .map((doorId) => {
-        const edge = edgeById.get(doorId);
-        const otherId = edge.from === nodeId ? edge.to : edge.from;
-        const other = nodeById.get(otherId);
-        const isChild = other.parentEdgeId === doorId && other.level > node.level;
-        return isChild
-          ? { door: edge, place: walk(otherId, doorId) }
-          : { door: edge, place: { node: other, children: [] }, repeat: true };
+  const viaDoor = new Map();
+  const childLinks = new Map();
+  const spread = (rootId) => {
+    viaDoor.set(rootId, null);
+    const queue = [rootId];
+    while (queue.length) {
+      const current = queue.shift();
+      childLinks.set(current, []);
+      links.get(current).forEach((link) => {
+        if (viaDoor.has(link.otherId)) return;
+        viaDoor.set(link.otherId, link.door.id);
+        childLinks.get(current).push(link);
+        queue.push(link.otherId);
       });
-    return { node, children };
+    }
+  };
+  spread(EXTERIOR_ID);
+  const aloneRoots = [];
+  model.nodes
+    .filter((node) => !viaDoor.has(node.id))
+    .sort((a, b) => byName(a.name, b.name))
+    .forEach((node) => {
+      if (viaDoor.has(node.id)) return;
+      spread(node.id);
+      aloneRoots.push(node.id);
+    });
+
+  const shownAt = new Map();
+  const numberFrom = (id) => {
+    shownAt.set(id, shownAt.size);
+    childLinks.get(id).forEach((link) => numberFrom(link.otherId));
+  };
+  numberFrom(EXTERIOR_ID);
+  aloneRoots.forEach(numberFrom);
+
+  const walk = (id) => {
+    const childDoors = new Set(childLinks.get(id).map((link) => link.door.id));
+    const children = links.get(id)
+      .filter(({ door, otherId }) => childDoors.has(door.id)
+        || (door.id !== viaDoor.get(id) && shownAt.get(otherId) < shownAt.get(id)))
+      .map(({ door, otherId }) => (childDoors.has(door.id)
+        ? { door, place: walk(otherId) }
+        : { door, place: { node: nodeById.get(otherId), children: [] }, repeat: true }));
+    return { node: nodeById.get(id), children };
   };
 
   return {
-    root: walk(EXTERIOR_ID, null),
-    unreachable: model.nodes.filter((node) => !node.reachable)
+    root: walk(EXTERIOR_ID),
+    unreachable: aloneRoots.map(walk)
   };
 }
