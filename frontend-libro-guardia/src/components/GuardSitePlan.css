@@ -125,24 +125,71 @@
   display: none;
 }
 
+.guard-plan__stage--labels .guard-plan__label,
+.guard-plan__dot:hover .guard-plan__label,
 .guard-plan__dot.is-selected .guard-plan__label,
 .guard-plan__dot:focus-visible .guard-plan__label {
   display: block;
 }
 
-@media (min-width: 900px) {
-  .guard-plan__label { display: block; }
+.guard-plan__dot:hover,
+.guard-plan__dot:focus-visible {
+  z-index: 2;
+}
+
+.guard-plan__hint {
+  margin: -0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
 }
 
 .guard-plan__card {
   display: grid;
   gap: 0.6rem;
-  max-width: 360px;
   padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
   color: var(--text);
+}
+
+/* Ventanita junto al punto; las variantes la dan vuelta para no salirse del plano. */
+.guard-plan__popover {
+  position: absolute;
+  z-index: 5;
+  width: 240px;
+  max-width: calc(100vw - 24px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  transform: translate(16px, -16px);
+}
+
+.guard-plan__popover--left {
+  transform: translate(calc(-100% - 16px), -16px);
+}
+
+.guard-plan__popover--up {
+  transform: translate(16px, calc(-100% + 16px));
+}
+
+.guard-plan__popover--left.guard-plan__popover--up {
+  transform: translate(calc(-100% - 16px), calc(-100% + 16px));
+}
+
+@media (max-width: 600px) {
+  .guard-plan__popover,
+  .guard-plan__popover--left,
+  .guard-plan__popover--up,
+  .guard-plan__popover--left.guard-plan__popover--up {
+    position: fixed;
+    left: 12px !important;
+    right: 12px;
+    top: auto !important;
+    bottom: 12px;
+    width: auto;
+    max-width: none;
+    transform: none;
+    z-index: 1000;
+  }
 }
 
 .guard-plan__card-head {

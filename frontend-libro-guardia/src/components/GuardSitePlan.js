@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { apiFetch } from '../services/api';
 import { doorLivePresentation } from '../utils/doorLiveState';
@@ -55,6 +55,8 @@ const LEGEND = [
 
 function GuardSitePlan({ plan, doors, onOpenDoor, openingId, onShowList }) {
   const viewportRef = useRef(null);
+  const openBtnRef = useRef(null);
+  const closeBtnRef = useRef(null);
   const { zoom, canZoomIn, canZoomOut, zoomIn, zoomOut, fitZoom } = useSitePlanZoom(viewportRef);
   const [selectedId, setSelectedId] = useState(null);
 
@@ -62,6 +64,22 @@ function GuardSitePlan({ plan, doors, onOpenDoor, openingId, onShowList }) {
   const unplacedCount = doors.length - placed.length;
   const selected = placed.find((door) => door.id === selectedId) || null;
   const selectedStatus = selected ? doorPlanStatus(selected) : null;
+  const showLabels = zoom >= 2;
+  const hasSelected = Boolean(selected);
+
+  useEffect(() => {
+    if (!hasSelected) return undefined;
+    (openBtnRef.current || closeBtnRef.current)?.focus();
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setSelectedId(null);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [selectedId, hasSelected]);
+
+  const popoverClass = selected
+    ? `guard-plan__popover${selected.mapPos.x > 0.5 ? ' guard-plan__popover--left' : ''}${selected.mapPos.y > 0.5 ? ' guard-plan__popover--up' : ''}`
+    : '';
 
   return (
     <div className="guard-plan">
@@ -70,9 +88,18 @@ function GuardSitePlan({ plan, doors, onOpenDoor, openingId, onShowList }) {
         <button type="button" className="btn btn-secondary" aria-label="Acercar" disabled={!canZoomIn} onClick={zoomIn}>+</button>
         <button type="button" className="btn btn-secondary" onClick={fitZoom}>Ajustar</button>
       </div>
+      {!showLabels && (
+        <p className="guard-plan__hint">Acercá el plano para ver los nombres de las puertas.</p>
+      )}
 
       <div ref={viewportRef} className="guard-plan__viewport">
-        <div className="guard-plan__stage" style={{ width: `${zoom * 100}%` }}>
+        <div
+          className={`guard-plan__stage${showLabels ? ' guard-plan__stage--labels' : ''}`}
+          style={{ width: `${zoom * 100}%` }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget || event.target.tagName === 'IMG') setSelectedId(null);
+          }}
+        >
           <img
             className="guard-plan__image"
             src={plan.imageDataUrl}
@@ -100,38 +127,44 @@ function GuardSitePlan({ plan, doors, onOpenDoor, openingId, onShowList }) {
               </button>
             );
           })}
-        </div>
-      </div>
-
-      {selected && (
-        <div className="guard-plan__card" role="region" aria-label={`Puerta ${selected.name || selected.id}`}>
-          <div className="guard-plan__card-head">
-            <span className={`guard-plan__swatch guard-plan__swatch--${selectedStatus.color}`} aria-hidden="true" />
-            <div>
-              <strong>{selected.name || selected.id}</strong>
-              <span className="guard-plan__card-status">{selectedStatus.text}</span>
+          {selected && (
+            <div
+              className={`guard-plan__card ${popoverClass}`}
+              role="dialog"
+              aria-label={`Puerta ${selected.name || selected.id}`}
+              style={{ left: `${selected.mapPos.x * 100}%`, top: `${selected.mapPos.y * 100}%` }}
+            >
+              <div className="guard-plan__card-head">
+                <span className={`guard-plan__swatch guard-plan__swatch--${selectedStatus.color}`} aria-hidden="true" />
+                <div>
+                  <strong>{selected.name || selected.id}</strong>
+                  <span className="guard-plan__card-status">{selectedStatus.text}</span>
+                </div>
+                <button
+                  ref={closeBtnRef}
+                  type="button"
+                  className="guard-plan__close"
+                  aria-label="Cerrar"
+                  onClick={() => setSelectedId(null)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              {selected.manualOpenAllowed !== false && (
+                <button
+                  ref={openBtnRef}
+                  type="button"
+                  className="btn btn-primary guard-plan__open"
+                  disabled={Boolean(openingId)}
+                  onClick={() => onOpenDoor(selected)}
+                >
+                  {openingId === selected.id ? 'Abriendo…' : 'Abrir puerta'}
+                </button>
+              )}
             </div>
-            <button
-              type="button"
-              className="guard-plan__close"
-              aria-label="Cerrar"
-              onClick={() => setSelectedId(null)}
-            >
-              <X size={16} />
-            </button>
-          </div>
-          {selected.manualOpenAllowed !== false && (
-            <button
-              type="button"
-              className="btn btn-primary guard-plan__open"
-              disabled={Boolean(openingId)}
-              onClick={() => onOpenDoor(selected)}
-            >
-              {openingId === selected.id ? 'Abriendo…' : 'Abrir puerta'}
-            </button>
           )}
         </div>
-      )}
+      </div>
 
       <ul className="guard-plan__legend" aria-label="Qué significa cada color">
         {LEGEND.map((item) => (
