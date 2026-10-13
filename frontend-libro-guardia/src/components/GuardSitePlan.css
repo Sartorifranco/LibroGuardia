@@ -1,0 +1,224 @@
+.guard-doors-view {
+  display: inline-flex;
+  gap: 0;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.guard-doors-view button {
+  min-height: 40px;
+  min-width: 84px;
+  padding: 0 1rem;
+  border: 0;
+  background: var(--panel-muted);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.guard-doors-view button[aria-pressed='true'] {
+  background: var(--accent, #2563eb);
+  color: #ffffff;
+}
+
+.guard-plan {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.guard-plan__toolbar {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.guard-plan__toolbar .btn {
+  min-width: 44px;
+  min-height: 40px;
+}
+
+.guard-plan__viewport {
+  position: relative;
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-muted);
+  -webkit-overflow-scrolling: touch;
+}
+
+.guard-plan__stage {
+  position: relative;
+  max-width: none;
+}
+
+.guard-plan__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  pointer-events: none;
+}
+
+.guard-plan__dot {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin: 0;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+}
+
+/* Zona táctil de 44px alrededor del punto. */
+.guard-plan__dot::before {
+  content: '';
+  position: absolute;
+  inset: -13px;
+  border-radius: 50%;
+}
+
+.guard-plan__dot--green,
+.guard-plan__swatch--green { background: #16a34a; }
+.guard-plan__dot--yellow,
+.guard-plan__swatch--yellow { background: #eab308; }
+.guard-plan__dot--red,
+.guard-plan__swatch--red { background: #dc2626; }
+.guard-plan__dot--gray,
+.guard-plan__swatch--gray { background: #9ca3af; }
+
+.guard-plan__dot--red {
+  animation: guard-plan-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes guard-plan-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 0 0 rgba(220, 38, 38, 0.55); }
+  50% { box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 0 8px rgba(220, 38, 38, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guard-plan__dot--red { animation: none; }
+}
+
+.guard-plan__dot.is-selected {
+  outline: 3px solid var(--accent, #2563eb);
+  outline-offset: 2px;
+}
+
+.guard-plan__label {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(17, 24, 39, 0.88);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  display: none;
+}
+
+.guard-plan__dot.is-selected .guard-plan__label,
+.guard-plan__dot:focus-visible .guard-plan__label {
+  display: block;
+}
+
+@media (min-width: 900px) {
+  .guard-plan__label { display: block; }
+}
+
+.guard-plan__card {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 360px;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.guard-plan__card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.guard-plan__card-head > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.guard-plan__card-status {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.guard-plan__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-muted);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.guard-plan__open {
+  min-height: 44px;
+}
+
+.guard-plan__swatch {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.guard-plan__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.guard-plan__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.guard-plan__unplaced {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.guard-plan__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, #2563eb);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}

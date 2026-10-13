@@ -25,6 +25,7 @@ import { openControllerDoor } from '../utils/remoteDoorOpen';
 import { doorOpenUserMessage, lastPulseStatusWord } from '../utils/doorOpenStatus';
 import { applyDoorLiveEvent, doorLivePresentation } from '../utils/doorLiveState';
 import { openBotoneraWindow } from '../utils/openBotoneraWindow';
+import GuardSitePlan, { hasMapPos, loadGuardSitePlan } from './GuardSitePlan';
 import {
   HOTKEY_SLOTS,
   loadDoorHotkeys,
@@ -39,6 +40,24 @@ const AUTH_METHOD_META = {
   face: { label: 'Rostro', icon: ScanFace },
   manual: { label: 'Manual', icon: Hand }
 };
+
+const VIEW_KEY = 'mss-guard-doors-view';
+
+function readSavedView() {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === 'plan' ? 'plan' : 'list';
+  } catch {
+    return 'list';
+  }
+}
+
+function saveView(view) {
+  try {
+    window.localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // Sin localStorage: la elección dura hasta recargar.
+  }
+}
 
 function formatAgo(iso) {
   if (!iso) return '';
@@ -94,9 +113,27 @@ function DigitalDoorPanel({
   const [assignSlot, setAssignSlot] = useState(null);
   const [connectivityMode, setConnectivityMode] = useState('cloud');
   const [openPhase, setOpenPhase] = useState({});
+  const [sitePlan, setSitePlan] = useState(null);
+  const [view, setView] = useState(readSavedView);
 
   const allowed = canManualOpen || hasPermission(currentUser, 'access.manual_open');
   const lan = mode === 'lan';
+  const planAvailable = Boolean(sitePlan) && doors.some(hasMapPos);
+  const showPlan = planAvailable && view === 'plan';
+
+  const chooseView = (next) => {
+    setView(next);
+    saveView(next);
+  };
+
+  useEffect(() => {
+    if (!authToken || !allowed || lan) return undefined;
+    let cancelled = false;
+    loadGuardSitePlan(authToken)
+      .then((plan) => { if (!cancelled) setSitePlan(plan); })
+      .catch(() => { if (!cancelled) setSitePlan(null); });
+    return () => { cancelled = true; };
+  }, [authToken, allowed, lan]);
 
   const title = profile === 'guardia'
     ? 'Puertas — puesto Guardia'
@@ -304,6 +341,24 @@ function DigitalDoorPanel({
       )}
       {loadError && !doors.length && <p className="control-doors__error">{loadError}</p>}
 
+      {planAvailable && (
+        <div className="guard-doors-view" role="group" aria-label="Cómo ver las puertas">
+          <button type="button" aria-pressed={!showPlan} onClick={() => chooseView('list')}>Lista</button>
+          <button type="button" aria-pressed={showPlan} onClick={() => chooseView('plan')}>Plano</button>
+        </div>
+      )}
+
+      {showPlan && (
+        <GuardSitePlan
+          plan={sitePlan}
+          doors={doors}
+          onOpenDoor={openDoor}
+          openingId={openingId}
+          onShowList={() => chooseView('list')}
+        />
+      )}
+
+      {!showPlan && (
       <div className="control-doors__grid">
         {doors.map((door) => {
           const methods = Array.isArray(door.authMethods) && door.authMethods.length
@@ -413,6 +468,7 @@ function DigitalDoorPanel({
           );
         })}
       </div>
+      )}
 
       {helpOpen && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="door-hotkeys-title">
@@ -435,6 +491,7 @@ function DigitalDoorPanel({
                       className="btn btn-secondary"
                       onClick={() => {
                         setAssignSlot(slot);
+                        setView('list');
                         setHelpOpen(false);
                         showSuccess(`Elegí una puerta para Ctrl+Alt+${slot}`);
                       }}
