@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { LogOut, QrCode } from 'lucide-react';
+import { Ban, LogOut, Pencil, QrCode } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
@@ -9,6 +9,7 @@ import ConnectivityChrome from '../../components/ConnectivityChrome';
 import ToastStack from '../../components/ToastStack';
 import VisitaInviteQrModal from '../../components/VisitaInviteQrModal';
 import PersonPhotoField from '../../components/PersonPhotoField';
+import Modal from '../../components/admin-ui/Modal';
 import { getVisitaWindow } from '../../utils/visitaInvite';
 import { hasPermission } from '../../utils/permissions';
 
@@ -17,13 +18,28 @@ const ESTADO_LABEL = {
   autorizada: 'Esperando ingreso',
   pendiente_aprobacion: 'Pendiente de aprobación',
   rechazada: 'Rechazada',
+  cancelada: 'Cancelada',
+  revocada: 'Cancelada',
   ingreso_registrado: 'Ingreso registrado',
   egreso_registrado: 'Egreso registrado'
 };
 
+const HOST_EDITABLE_ESTADOS = new Set(['pendiente_aprobacion', 'autorizada', 'pendiente']);
+
 function toLocalInputValue(date = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function editFormFrom(visita) {
+  const expected = visita?.fechaHoraEsperada ? new Date(visita.fechaHoraEsperada) : null;
+  return {
+    fechaHoraEsperada: expected && !Number.isNaN(expected.getTime())
+      ? toLocalInputValue(expected)
+      : toLocalInputValue(),
+    motivo: visita?.motivo || '',
+    destinoId: visita?.destinoId || ''
+  };
 }
 
 function EmpleadoVisitasPage() {
@@ -46,6 +62,13 @@ function EmpleadoVisitasPage() {
   const [motivo, setMotivo] = useState('');
   const [destinoId, setDestinoId] = useState('');
   const [photoDataUrl, setPhotoDataUrl] = useState('');
+
+  const [editVisita, setEditVisita] = useState(null);
+  const [editForm, setEditForm] = useState(() => editFormFrom(null));
+  const [editError, setEditError] = useState('');
+  const [cancelVisita, setCancelVisita] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [reshareVisita, setReshareVisita] = useState(null);
 
   const load = useCallback(async () => {
     if (!authToken) return;
@@ -129,8 +152,81 @@ function EmpleadoVisitasPage() {
     }
   };
 
+  const replaceVisita = (updated) => {
+    if (!updated?.id) return;
+    setVisitas((prev) => prev.map((v) => (v.id === updated.id ? { ...v, ...updated } : v)));
+  };
+
+  const openEdit = (visita) => {
+    setEditVisita(visita);
+    setEditForm(editFormFrom(visita));
+    setEditError('');
+  };
+
+  const editDirty = Boolean(editVisita) && JSON.stringify(editForm) !== JSON.stringify(editFormFrom(editVisita));
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    if (!editVisita) return;
+    if (!editForm.destinoId) {
+      setEditError('Elegí un destino.');
+      return;
+    }
+    const expected = new Date(editForm.fechaHoraEsperada);
+    if (!editForm.fechaHoraEsperada || Number.isNaN(expected.getTime())) {
+      setEditError('Poné la fecha y la hora de la visita.');
+      return;
+    }
+    setActionBusy(true);
+    setEditError('');
+    try {
+      const result = await apiFetch(`/empleado/visitas/${editVisita.id}`, {
+        method: 'PATCH',
+        token: authToken,
+        body: {
+          fechaHoraEsperada: expected.toISOString(),
+          motivo: editForm.motivo.trim(),
+          destinoId: editForm.destinoId
+        }
+      });
+      const updated = result.visita || { ...editVisita };
+      replaceVisita(updated);
+      setEditVisita(null);
+      if (canShowQr(updated)) {
+        setReshareVisita(updated);
+      } else {
+        showSuccess(result.message || 'Visita modificada. Queda pendiente de aprobación.');
+      }
+    } catch (err) {
+      setEditError(err.message || 'No se pudo guardar el cambio');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleCancelConfirm = async () => {
+    if (!cancelVisita) return;
+    setActionBusy(true);
+    try {
+      const result = await apiFetch(`/empleado/visitas/${cancelVisita.id}/cancel`, {
+        method: 'POST',
+        token: authToken
+      });
+      replaceVisita(result.visita || { ...cancelVisita, estado: 'cancelada' });
+      setCancelVisita(null);
+      showSuccess(result.message || 'Visita cancelada. El QR ya no sirve para entrar.');
+    } catch (err) {
+      showError(err.message || 'No se pudo cancelar la visita');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const displayName = currentUser?.nombre || currentUser?.username || 'Empleado';
-  const canShowQr = (v) => v?.estado === 'pendiente' || v?.estado === 'autorizada';
+  function canShowQr(v) {
+    return v?.estado === 'pendiente' || v?.estado === 'autorizada';
+  }
+  const canChange = (v) => canSubmit && HOST_EDITABLE_ESTADOS.has(v?.estado || 'pendiente');
 
   return (
     <div className="empleado-shell">
@@ -316,6 +412,28 @@ function EmpleadoVisitasPage() {
                           Compartir / QR
                         </button>
                       )}
+                      {canChange(v) && (
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => openEdit(v)}
+                            aria-label={`Editar visita de ${v.nombreVisitante}`}
+                          >
+                            <Pencil size={14} />
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setCancelVisita(v)}
+                            aria-label={`Cancelar visita de ${v.nombreVisitante}`}
+                          >
+                            <Ban size={14} />
+                            Cancelar visita
+                          </button>
+                        </>
+                      )}
                     </div>
                   </li>
                 );
@@ -337,6 +455,124 @@ function EmpleadoVisitasPage() {
           }}
         />
       )}
+
+      <Modal
+        open={Boolean(editVisita)}
+        title="Editar visita"
+        description={editVisita ? `${editVisita.nombreVisitante}. Al guardar se genera una invitación nueva y la anterior deja de servir.` : ''}
+        onClose={() => setEditVisita(null)}
+        dirty={editDirty && !actionBusy}
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" disabled={actionBusy}>
+              Cancelar
+            </button>
+            <button type="submit" form="editar-visita-form" className="btn btn-primary" disabled={actionBusy}>
+              {actionBusy ? 'Guardando…' : 'Guardar cambios'}
+            </button>
+          </>
+        )}
+      >
+        <form id="editar-visita-form" onSubmit={handleEditSubmit} className="empleado-form">
+          <label className="empleado-form-full">
+            Fecha y hora esperada
+            <input
+              type="datetime-local"
+              className="input-field"
+              value={editForm.fechaHoraEsperada}
+              onChange={(e) => setEditForm((f) => ({ ...f, fechaHoraEsperada: e.target.value }))}
+              required
+            />
+          </label>
+          <label className="empleado-form-full">
+            Destino
+            <select
+              className="input-field"
+              value={editForm.destinoId}
+              onChange={(e) => setEditForm((f) => ({ ...f, destinoId: e.target.value }))}
+              required
+            >
+              <option value="">Seleccionar…</option>
+              {destinos.map((d) => (
+                <option key={d.id} value={d.id}>{d.nombre}</option>
+              ))}
+            </select>
+          </label>
+          <label className="empleado-form-full">
+            Motivo
+            <input
+              className="input-field"
+              value={editForm.motivo}
+              onChange={(e) => setEditForm((f) => ({ ...f, motivo: e.target.value }))}
+            />
+          </label>
+          {!canCreate && (
+            <p className="empleado-hint empleado-form-full">
+              Al cambiarla, la visita vuelve a quedar pendiente de aprobación.
+            </p>
+          )}
+          {editError ? <p className="empleado-hint empleado-form-full" role="alert">{editError}</p> : null}
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(cancelVisita)}
+        title="¿Cancelar esta visita?"
+        onClose={() => setCancelVisita(null)}
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" data-aui-cancel="true" disabled={actionBusy}>
+              No, volver
+            </button>
+            <button type="button" className="btn btn-primary" onClick={handleCancelConfirm} disabled={actionBusy}>
+              {actionBusy ? 'Cancelando…' : 'Sí, cancelar visita'}
+            </button>
+          </>
+        )}
+      >
+        {cancelVisita ? (
+          <p>
+            La visita de <strong>{cancelVisita.nombreVisitante}</strong> se cancela y
+            {' '}
+            <strong>el QR que le mandaste deja de servir</strong>
+            . Tampoco va a poder entrar con el DNI por esta visita.
+          </p>
+        ) : null}
+      </Modal>
+
+      <Modal
+        open={Boolean(reshareVisita)}
+        title="Se generó una invitación nueva"
+        onClose={() => setReshareVisita(null)}
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" data-aui-cancel="true">
+              Después
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                setQrVisita(reshareVisita);
+                setReshareVisita(null);
+              }}
+            >
+              <QrCode size={16} />
+              Compartir / QR
+            </button>
+          </>
+        )}
+      >
+        <p>
+          Volvé a compartirla con
+          {' '}
+          <strong>{reshareVisita?.nombreVisitante || 'el visitante'}</strong>
+          : el QR y el link anteriores ya no sirven.
+        </p>
+      </Modal>
     </div>
   );
 }

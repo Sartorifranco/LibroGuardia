@@ -13,6 +13,7 @@ function VisitaInvitacionPage() {
   const [invite, setInvite] = useState(null);
   const [dataUrl, setDataUrl] = useState('');
   const [error, setError] = useState('');
+  const [gone, setGone] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,10 +27,12 @@ function VisitaInvitacionPage() {
         });
         if (cancelled) return;
         setInvite(data.invite || null);
+        setGone(false);
         setError('');
       } catch (err) {
         if (!cancelled) {
           setInvite(null);
+          setGone(err.status === 410);
           setError(err.message || 'No se pudo cargar la invitación');
         }
       } finally {
@@ -44,7 +47,9 @@ function VisitaInvitacionPage() {
     let cancelled = false;
     (async () => {
       try {
-        const url = await QRCode.toDataURL(buildVisitaQrPayload(invite), {
+        const payload = buildVisitaQrPayload(invite);
+        if (!payload) throw new Error('Tu invitación todavía no tiene QR. Pedile a quien te invitó que te la mande de nuevo.');
+        const url = await QRCode.toDataURL(payload, {
           width: 280,
           margin: 2,
           errorCorrectionLevel: 'M'
@@ -75,12 +80,23 @@ function VisitaInvitacionPage() {
           <img src={brand.logoPath} alt={brand.logoAlt} className="auth-logo" />
           <div>
             <h1 className="auth-title">Invitación de visita</h1>
-            <p className="auth-subtitle">Mostrá este QR en el acceso o usá tu DNI</p>
+            {!gone && <p className="auth-subtitle">Mostrá este QR en el acceso o usá tu DNI</p>}
           </div>
         </div>
 
         {loading && <p className="auth-help-text">Cargando invitación…</p>}
-        {error && !loading && (
+
+        {gone && !loading && (
+          <div className="visita-invite-page__gone" role="alert">
+            <h2>Esta invitación ya no es válida</h2>
+            <p className="auth-help-text">
+              Puede que haya vencido o que la hayan cancelado. Si tenés que venir igual,
+              pedile una nueva a quien te invitó.
+            </p>
+          </div>
+        )}
+
+        {error && !gone && !loading && (
           <p className="auth-help-text" role="alert">{error}</p>
         )}
 
@@ -88,7 +104,7 @@ function VisitaInvitacionPage() {
           <>
             <div className="visita-invite-page__meta">
               <p><strong>{invite.nombreVisitante}</strong></p>
-              <p>DNI {invite.dniVisitanteNormalized || invite.dniVisitante}</p>
+              {invite.dniMasked ? <p>DNI {invite.dniMasked}</p> : null}
               <p>Destino: {invite.destinoNombre || '—'}</p>
               {windowInfo && <p className="visita-invite-page__window">{windowInfo.label}</p>}
             </div>
@@ -96,7 +112,7 @@ function VisitaInvitacionPage() {
             {dataUrl ? (
               <img src={dataUrl} alt="QR de acceso" className="visita-invite-page__qr" />
             ) : (
-              <p className="auth-help-text">Generando QR…</p>
+              !error && <p className="auth-help-text">Generando QR…</p>
             )}
 
             <p className="auth-help-text">
