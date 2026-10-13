@@ -26,9 +26,14 @@ const { hydrateAuthorizationForRead } = require('./lib/transportCsvParser');
 const { applyDoorRestrictionForIngreso } = require('./lib/doorAccess');
 const {
   findEligibleVisita,
+  findVisitaByPassCode,
   markVisitaEstado,
   nextEstadoForMovement
 } = require('./lib/visitasAccess');
+const { looksLikePassCode } = require('./lib/visitPassCode');
+
+/** DNI leído; un código de pase (MSSV1.) no es DNI. */
+const scannedDni = (value) => (looksLikePassCode(value) ? '' : normalizeDni(value));
 const { runWithKioskProfile, mark: profileMark, finish: profileFinish } = require('./lib/kioskProfile');
 
 const findPersonalMaster = async (idNumber) => {
@@ -61,9 +66,13 @@ const DNI_DUPLICATE_PROBE_LIMIT = 5;
  *   hay un único candidato. Sin escrituras.
  */
 const resolvePersonForValidarAcceso = async ({ dni, nombre, apellido }) => {
+  const fullName = buildFullName(nombre, apellido);
+  if (looksLikePassCode(dni)) {
+    // QR de visita: se resuelve contra `visitas` por código, nunca contra people.
+    return { person: null, personId: null, resolutionPath: 'pase_visita', nameSnapshot: fullName, dniNormalized: null };
+  }
   const dniNormalized = normalizeDni(dni);
   const nameKey = buildNameKey(nombre, apellido);
-  const fullName = buildFullName(nombre, apellido);
 
   let resolutionPath = 'no_encontrado';
   let personDoc = null;
@@ -247,14 +256,17 @@ const decidirAcceso = async ({
   resolvedPerson = null
 }) => {
   const { dateString: today, dayCode } = getArgentinaDateParts(referenceDate);
-  const dniNormalized = normalizeDni(dni);
+  const passCode = looksLikePassCode(dni) ? String(dni).trim() : null;
+  const dniNormalized = scannedDni(dni);
   const nameSnapshot = buildFullName(nombre, apellido);
+  const visitaDni = (visita) => normalizeDni(visita?.dniVisitanteNormalized || visita?.dniVisitante || '') || null;
 
   if (tipoMovimiento === 'egreso') {
     const resolved = resolvedPerson || await resolvePersonForValidarAcceso({ dni, nombre, apellido });
     profileMark(resolvedPerson ? 'decidirAcceso.resolvePerson.reused' : 'decidirAcceso.resolvePerson');
     const visitaMatch = await findEligibleVisita({
       dniNormalized: dniNormalized || resolved.dniNormalized,
+      passCode,
       doorId,
       movementType: 'egreso'
     });
@@ -266,7 +278,7 @@ const decidirAcceso = async ({
         personName: visitaMatch.visita.nombreVisitante || resolved.nameSnapshot || nameSnapshot,
         authorization: null,
         authorizationType: 'visita_empleado',
-        dniNormalized: dniNormalized || resolved.dniNormalized,
+        dniNormalized: dniNormalized || resolved.dniNormalized || visitaDni(visitaMatch.visita),
         allowedDoorIds: visitaMatch.allowedDoorIds,
         visitaId: visitaMatch.visita.id,
         photoDataUrl: visitaMatch.visita.photoDataUrl || null
@@ -411,6 +423,7 @@ const decidirAcceso = async ({
   if (!authorized && !visitaBlocked) {
     const visitaMatch = await findEligibleVisita({
       dniNormalized: dniNormalized || resolved.dniNormalized,
+      passCode,
       doorId,
       movementType: 'ingreso'
     });
@@ -432,7 +445,7 @@ const decidirAcceso = async ({
         personName: visitaMatch.visita.nombreVisitante || resolved.nameSnapshot || nameSnapshot,
         authorization: null,
         authorizationType: 'visita_empleado',
-        dniNormalized: dniNormalized || resolved.dniNormalized,
+        dniNormalized: dniNormalized || resolved.dniNormalized || visitaDni(visitaMatch.visita),
         allowedDoorIds,
         visitaId,
         photoDataUrl: visitaMatch.visita.photoDataUrl || null
@@ -451,6 +464,7 @@ const decidirAcceso = async ({
         visitaId: null
       };
     }
+    if (passCode && visitaMatch.reason) denialReason = visitaMatch.reason;
   }
 
   const restricted = applyDoorRestrictionForIngreso({
@@ -492,7 +506,7 @@ const validarAcceso = async ({
   doorId = null,
   resolvedPerson = null
 }) => {
-  const dniNormalized = normalizeDni(dni);
+  const dniNormalized = scannedDni(dni);
   const nameSnapshot = buildFullName(nombre, apellido);
 
   let decision;
@@ -550,7 +564,8 @@ const validarAcceso = async ({
     authorizationType: decision.authorizationType,
     entryId,
     allowedDoorIds: decision.allowedDoorIds ?? null,
-    visitaId: decision.visitaId || null
+    visitaId: decision.visitaId || null,
+    dniNormalized: decision.dniNormalized || dniNormalized || null
   };
 };
 
@@ -612,7 +627,7 @@ const evaluatePersonalAccess = async ({
 
   const master = result.personId
     ? { id: result.personId, personId: result.personId, name: result.personName }
-    : await findPersonalMaster(idNumber);
+    : (looksLikePassCode(idNumber) ? null : await findPersonalMaster(idNumber));
 
   const authorizationLabel = result.authorized
     ? getAuthorizationLabel(result.authorizationType)
@@ -779,6 +794,10 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
   } else if (scan.authMethod === 'biometric') {
     parsed = { format: 'biometric' };
     scanFormat = 'biometric';
+  } else if (scan.authMethod === 'visita_qr') {
+    idNumber = scan.passCode;
+    parsed = { format: 'visita_qr' };
+    scanFormat = 'visita_qr';
   } else {
     parsed = scan.parsed || parseScanData(effectiveRawData);
     idNumber = normalizeIdNumber(parsed.idNumber || idNumber);
@@ -817,13 +836,20 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     });
   profileMark('kiosk.resolvePerson_preValidar');
 
+  const isVisitaQr = scan.authMethod === 'visita_qr';
   const fixedMovement = prefixed?.direction
     || resolveReaderFixedMovement(door, effectiveReaderId);
-  const movementType = fixedMovement
-    || await inferMovementTypeForToday({
+  let movementType = fixedMovement;
+  if (!movementType && isVisitaQr) {
+    const visita = await findVisitaByPassCode(idNumber);
+    movementType = visita?.estado === 'ingreso_registrado' ? 'egreso' : 'ingreso';
+  }
+  if (!movementType) {
+    movementType = await inferMovementTypeForToday({
       personId: resolvedPerson.personId,
       dniNormalized: idNumber || resolvedPerson.dniNormalized
     });
+  }
   profileMark('kiosk.inferMovementType');
 
   let result;
@@ -861,7 +887,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
         doorId: door.id,
         resolvedPerson
       }),
-      prefetchNominaAccessData({
+      isVisitaQr ? Promise.resolve(null) : prefetchNominaAccessData({
         personId: resolvedPerson.personId,
         dniNormalized: idNumber || resolvedPerson.dniNormalized
       })
@@ -870,6 +896,8 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
     nominaPrefetch = prefetch;
   }
   profileMark('kiosk.validarAcceso+nominaPrefetch');
+  // El código del QR es el secreto del pase: no viaja a logs ni respuestas; se usa el DNI de la visita.
+  if (isVisitaQr) idNumber = result.dniNormalized || '';
 
   let authorized = movementType === 'egreso' ? true : result.authorized;
   let denialReason = result.denialReason;
@@ -881,7 +909,7 @@ const processKioskScan = async ({ rawData, username, doorId = null, readerId = '
 
   if (movementType === 'ingreso') {
     const peoplePerson = resolvedPerson.person || scan.person || null;
-    const nominaAccess = await buildNominaAccessMessage({
+    const nominaAccess = isVisitaQr ? null : await buildNominaAccessMessage({
       personId: result.personId,
       dniNormalized: idNumber,
       personName: result.personName,

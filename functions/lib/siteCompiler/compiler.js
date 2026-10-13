@@ -309,6 +309,7 @@ const createSiteCompiler = (opts = {}) => {
       const r = build.buildPass({ id: d.id, ...d.data() }, { key, tz });
       if (r.pass && passInWindow(r.pass, win)) passes.push(r.pass);
       if (r.revoked) revoked.push(r.revoked);
+      if (r.revokedPrevious) revoked.push(...r.revokedPrevious);
     }
 
     const next = {};
@@ -463,9 +464,12 @@ const createSiteCompiler = (opts = {}) => {
         touchedPassIds.add(visitaIds[i]);
         if (!v) return;
         if (v.qrId) touchedPassIds.add(String(v.qrId));
+        if (v.passCode) touchedPassIds.add(String(v.passCode));
+        (Array.isArray(v.previousPassCodes) ? v.previousPassCodes : []).forEach((c) => touchedPassIds.add(String(c)));
         const res = build.buildPass(v, { key, tz });
         if (res.pass && passInWindow(res.pass, win)) added.push(res.pass);
         if (res.revoked) addedRevoked.push(res.revoked);
+        if (res.revokedPrevious) addedRevoked.push(...res.revokedPrevious);
       });
       const passes = (current.passes || []).filter((p) => !touched.has(String(p.visitaId || p.id)) && !touchedPassIds.has(String(p.id)));
       const revoked = (current.revoked || []).filter((k) => !touchedPassIds.has(String(k).replace(/^pass:/, '')));

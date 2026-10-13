@@ -2,6 +2,7 @@ const { normalizeIdNumber, parseScanData } = require('../dniParser');
 const { db } = require('../firestore');
 const { buildNameTokens } = require('./nameUtils');
 const { hydrateAuthorizationForRead } = require('./transportCsvParser');
+const { parsePassCode, looksLikePassCode } = require('./visitPassCode');
 
 const CREDENTIAL_PREFIX = /^(CARD|CRED|TARJETA|RFID)[:#\s-]*/i;
 const BIOMETRIC_PREFIX = /^(BIO|BIOMETRIC|HUELLA|FACE|ROSTRO|FP)[:#\s-]*/i;
@@ -9,6 +10,11 @@ const BIOMETRIC_PREFIX = /^(BIO|BIOMETRIC|HUELLA|FACE|ROSTRO|FP)[:#\s-]*/i;
 const detectAuthMethod = (rawData = '') => {
   const trimmed = String(rawData || '').trim();
   if (!trimmed) return { method: null, payload: '' };
+
+  // QR de visita: se valida en la misma familia que el DNI (lectores de documento/QR).
+  if (looksLikePassCode(trimmed)) {
+    return { method: 'dni', payload: trimmed, passCode: parsePassCode(trimmed) };
+  }
 
   if (BIOMETRIC_PREFIX.test(trimmed)) {
     return {
@@ -126,6 +132,22 @@ const resolveScanContext = async ({ rawData, door }) => {
     return {
       ok: false,
       message: `Método ${detected.method} no habilitado en ${door?.name || 'esta puerta'}`
+    };
+  }
+
+  if (detected.passCode !== undefined) {
+    if (!detected.passCode) {
+      return { ok: false, message: 'El código QR no es válido. Pedí a quien te invitó que te reenvíe el pase.', authMethod: 'visita_qr' };
+    }
+    return {
+      ok: true,
+      authMethod: 'visita_qr',
+      passCode: detected.passCode,
+      person: null,
+      authorization: null,
+      displayName: '',
+      idNumber: detected.passCode,
+      parsed: { format: 'visita_qr' }
     };
   }
 

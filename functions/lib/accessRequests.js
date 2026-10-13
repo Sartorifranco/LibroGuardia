@@ -14,6 +14,8 @@ const { markDirty } = require('./siteCompiler');
 const { notify } = require('./notifications');
 const { logAdminAction } = require('./auditLog');
 const { resolvePermissions, DEFAULT_ROLE_PERMISSIONS } = require('../permissions');
+const { generatePassCode } = require('./visitPassCode');
+const { endOfArgentinaDay } = require('./visitasAccess');
 
 const COLLECTION = 'accessRequests';
 const TIPOS = ['visita', 'citacion', 'temporal', 'excepcion'];
@@ -455,6 +457,8 @@ const grantOnApprove = async (data) => {
       empresaNombre: data.empresaNombre || '',
       estado: 'autorizada',
       inviteToken: crypto.randomBytes(24).toString('hex'),
+      inviteExpiresAt: Timestamp.fromDate(endOfArgentinaDay(expected)),
+      passCode: generatePassCode(),
       qrId: ref.id,
       personId: person.id,
       accessRequestId: data.id,

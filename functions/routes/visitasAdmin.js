@@ -4,11 +4,13 @@
 
 const crypto = require('crypto');
 const express = require('express');
-const { db, FieldValue } = require('../firestore');
+const { db, FieldValue, Timestamp } = require('../firestore');
 const { markDirty } = require('../lib/siteCompiler');
 const { auth, requirePermission } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { logAdminAction } = require('../lib/auditLog');
+const { generatePassCode } = require('../lib/visitPassCode');
+const { endOfArgentinaDay, toDate } = require('../lib/visitasAccess');
 
 const router = express.Router();
 
@@ -61,9 +63,12 @@ router.post('/api/admin/visitas/:id/approve', auth, requirePermission('visitas.a
     }
     const inviteToken = data.inviteToken || newInviteToken();
     const aprobadoPor = actorLabel(req.user);
+    const expected = toDate(data.fechaHoraEsperada);
     await ref.set({
       estado: 'autorizada',
       inviteToken,
+      passCode: data.passCode || generatePassCode(),
+      ...(expected ? { inviteExpiresAt: Timestamp.fromDate(endOfArgentinaDay(expected)) } : {}),
       aprobadoPor,
       aprobadoPorUserId: req.user.id,
       aprobadoAt: FieldValue.serverTimestamp(),

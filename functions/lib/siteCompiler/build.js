@@ -573,18 +573,27 @@ const buildDoorsChunk = ({
 
 // ───────────────────────────── Visitas ────────────────────────────────
 
+/** Id del pase (= contenido del QR): passCode opaco; visitas viejas usan qrId o el id del doc. */
+const passIdOf = (visita) => String(visita.passCode || visita.qrId || visita.id);
+
 /**
- * Visita → { pass|null, revoked|null } (lib/visitasAccess.js: ventana esperada − 2 h
- * hasta fin del día local). Pendientes de aprobación no generan pase.
+ * Visita → { pass|null, revoked|null, revokedPrevious[] } (lib/visitasAccess.js: ventana
+ * esperada − 2 h hasta fin del día local). Pendientes de aprobación no generan pase.
+ * `revokedPrevious`: códigos reemplazados al editar la visita (ya no sirven).
+ * Un ingreso por pase (maxUses = 1); el egreso no consume usos.
  */
 const buildPass = (visita, { key = null, tz = DEFAULT_TZ } = {}) => {
-  if (!visita || !visita.id) return { pass: null, revoked: null };
+  if (!visita || !visita.id) return { pass: null, revoked: null, revokedPrevious: [] };
   const estado = visita.estado || 'pendiente';
-  const id = String(visita.qrId || visita.id);
-  if (PASS_REVOKED_STATES.has(estado)) return { pass: null, revoked: `pass:${id}` };
-  if (!PASS_STATES.has(estado)) return { pass: null, revoked: null };
+  const id = passIdOf(visita);
+  const revokedPrevious = (Array.isArray(visita.previousPassCodes) ? visita.previousPassCodes : [])
+    .map(String)
+    .filter((code) => code && code !== id)
+    .map((code) => `pass:${code}`);
+  if (PASS_REVOKED_STATES.has(estado)) return { pass: null, revoked: `pass:${id}`, revokedPrevious };
+  if (!PASS_STATES.has(estado)) return { pass: null, revoked: null, revokedPrevious };
   const expected = toMs(visita.fechaHoraEsperada);
-  if (expected == null) return { pass: null, revoked: null };
+  if (expected == null) return { pass: null, revoked: null, revokedPrevious };
   const dni = normalizeDni(visita.dniVisitanteNormalized || visita.dniVisitante || '');
   const pass = {
     id,
@@ -593,14 +602,15 @@ const buildPass = (visita, { key = null, tz = DEFAULT_TZ } = {}) => {
     doors: normalizeAllowedDoorIds(visita.allowedDoorIds),
     validFrom: expected - VISITA_EARLY_MS,
     validTo: dayEndMs(ymdOf(expected, tz), tz),
-    status: estado
+    status: estado,
+    maxUses: 1
   };
   if (dni) {
     if (key) pass.dniHash = hashCredential('dni', dni, key);
     else pass.dni = dni;
   }
   if (visita.personId) pass.cardholderId = String(visita.personId);
-  return { pass, revoked: null };
+  return { pass, revoked: null, revokedPrevious };
 };
 
 // ───────────────────────────── Operadores ─────────────────────────────

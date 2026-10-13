@@ -14,6 +14,7 @@ const { db, FieldValue, Timestamp } = require('../firestore');
 const { normalizeDni } = require('./normalize');
 const { getArgentinaDateParts } = require('./normalize');
 const { isDoorAllowedForIngreso, normalizeAllowedDoorIds } = require('./doorAccess');
+const { parsePassCode, looksLikePassCode } = require('./visitPassCode');
 
 const VISITAS = 'visitas';
 const EARLY_MS = 2 * 60 * 60 * 1000;
@@ -59,41 +60,66 @@ const normalizeVisitaDoc = (doc) => {
   return { id, ...data };
 };
 
+/** Visita por código de pase (QR). Sin match o formato inválido → null. */
+const findVisitaByPassCode = async (rawCode, { visitasDocs = null } = {}) => {
+  const code = parsePassCode(rawCode);
+  if (!code) return null;
+  let docs;
+  if (Array.isArray(visitasDocs)) {
+    docs = visitasDocs.map(normalizeVisitaDoc).filter(Boolean);
+  } else {
+    const snap = await db.collection(VISITAS).where('passCode', '==', code).limit(2).get();
+    docs = snap.docs.map((d) => normalizeVisitaDoc(d));
+  }
+  return docs.find((v) => v.passCode === code) || null;
+};
+
 /**
- * Busca visita elegible para ingreso o egreso.
- * @param {{ dniNormalized: string, doorId?: string|null, movementType?: string, now?: Date, visitasDocs?: object[] }} args
+ * Busca visita elegible para ingreso o egreso, por DNI o por código de pase (QR).
+ * Un valor con prefijo MSSV1. (en passCode o en dniNormalized) nunca se trata como DNI.
+ * @param {{ dniNormalized?: string, passCode?: string|null, doorId?: string|null, movementType?: string, now?: Date, visitasDocs?: object[] }} args
  *   Si pasás visitasDocs, no consulta Firestore (tests).
  */
 const findEligibleVisita = async ({
   dniNormalized,
+  passCode = null,
   doorId = null,
   movementType = 'ingreso',
   now = new Date(),
   visitasDocs = null
 } = {}) => {
-  const dni = normalizeDni(dniNormalized);
-  if (!dni) return { visita: null, reason: 'dni_vacio' };
-
+  const byCode = looksLikePassCode(passCode) || looksLikePassCode(dniNormalized);
+  let matches;
   let docs;
-  if (Array.isArray(visitasDocs)) {
-    docs = visitasDocs.map(normalizeVisitaDoc).filter(Boolean);
+  if (byCode) {
+    const code = parsePassCode(looksLikePassCode(passCode) ? passCode : dniNormalized);
+    if (!code) return { visita: null, reason: 'pase_invalido' };
+    const found = await findVisitaByPassCode(code, { visitasDocs });
+    docs = found ? [found] : [];
+    matches = (v) => v.passCode === code;
   } else {
-    let snap;
-    try {
-      snap = await db.collection(VISITAS)
-        .where('dniVisitanteNormalized', '==', dni)
-        .limit(40)
-        .get();
-    } catch {
-      snap = await db.collection(VISITAS).orderBy('createdAt', 'desc').limit(80).get();
+    const dni = normalizeDni(dniNormalized);
+    if (!dni) return { visita: null, reason: 'dni_vacio' };
+    if (Array.isArray(visitasDocs)) {
+      docs = visitasDocs.map(normalizeVisitaDoc).filter(Boolean);
+    } else {
+      let snap;
+      try {
+        snap = await db.collection(VISITAS)
+          .where('dniVisitanteNormalized', '==', dni)
+          .limit(40)
+          .get();
+      } catch {
+        snap = await db.collection(VISITAS).orderBy('createdAt', 'desc').limit(80).get();
+      }
+      docs = snap.docs.map((d) => normalizeVisitaDoc(d));
     }
-    docs = snap.docs.map((d) => normalizeVisitaDoc(d));
+    matches = (v) => normalizeDni(v.dniVisitanteNormalized || v.dniVisitante || '') === dni;
   }
 
   const movement = movementType === 'egreso' ? 'egreso' : 'ingreso';
   const candidates = docs.filter((v) => {
-    const vDni = normalizeDni(v.dniVisitanteNormalized || v.dniVisitante || '');
-    if (vDni !== dni) return false;
+    if (!matches(v)) return false;
     if (movement === 'ingreso') {
       return v.estado === 'pendiente' || v.estado === 'autorizada';
     }
@@ -318,6 +344,7 @@ module.exports = {
   LIST_ESTADOS,
   isVisitaWithinWindow,
   findEligibleVisita,
+  findVisitaByPassCode,
   markVisitaEstado,
   nextEstadoForMovement,
   endOfArgentinaDay,
