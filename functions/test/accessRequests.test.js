@@ -21,13 +21,16 @@ const user = (role, extra = {}) => ({
 
 const tokenFor = (id, role) => signTestToken({ id, role });
 
+// Fechas relativas a hoy: con fechas fijas la solicitud se vence al pasar el día.
+const isoDay = (offsetDays) => new Date(Date.now() + offsetDays * 86400000).toISOString().slice(0, 10);
+
 const solicitud = (extra = {}) => ({
   tipo: 'temporal',
   persona: { name: 'Ana Pérez', dni: '30111222' },
   empresaId: 'acme',
   destinoId: 'planta',
-  desde: '2026-10-10',
-  hasta: '2026-10-12',
+  desde: isoDay(0),
+  hasta: isoDay(2),
   motivo: 'Trabajo en planta',
   ...extra
 });
