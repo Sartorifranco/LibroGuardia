@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { EmptyState, PageContainer, PageHeader } from '../../../components/admin-ui';
 import { apiFetch } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
@@ -6,10 +6,10 @@ import { useConfirm } from '../../../context/ConfirmContext';
 import { useToast } from '../../../context/ToastContext';
 import { compressPlanImage } from './sitePlanImage';
 import { readCachedPlan, writeCachedPlan } from './sitePlanCache';
+import { useSitePlanZoom } from './useSitePlanZoom';
 import './SitePlan.css';
 
 const PURPOSE = 'Ver dónde está cada puerta sobre el plano real del predio.';
-const ZOOMS = [1, 1.5, 2, 3, 4];
 const DRAG_THRESHOLD = 5;
 
 const hasPos = (door) => {
@@ -34,14 +34,12 @@ function SitePlanSection() {
   const [saving, setSaving] = useState(false);
   const [placingId, setPlacingId] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
-  const [zoomIndex, setZoomIndex] = useState(0);
 
   const fileRef = useRef(null);
   const viewportRef = useRef(null);
   const imgRef = useRef(null);
   const dragRef = useRef(null);
   const draggedRef = useRef(false);
-  const centerRef = useRef(null);
 
   const loadPlan = useCallback(async () => {
     const meta = await apiFetch('/admin/site-plan/meta', { token: authToken });
@@ -76,36 +74,7 @@ function SitePlanSection() {
 
   useEffect(() => { load(); }, [load]);
 
-  const zoom = ZOOMS[zoomIndex];
-
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    const center = centerRef.current;
-    if (!viewport || !center) return;
-    centerRef.current = null;
-    viewport.scrollLeft = center.x * viewport.scrollWidth - viewport.clientWidth / 2;
-    viewport.scrollTop = center.y * viewport.scrollHeight - viewport.clientHeight / 2;
-  }, [zoomIndex]);
-
-  const changeZoom = (nextIndex) => {
-    const viewport = viewportRef.current;
-    if (viewport && viewport.scrollWidth) {
-      centerRef.current = {
-        x: (viewport.scrollLeft + viewport.clientWidth / 2) / viewport.scrollWidth,
-        y: (viewport.scrollTop + viewport.clientHeight / 2) / viewport.scrollHeight
-      };
-    }
-    setZoomIndex(Math.max(0, Math.min(ZOOMS.length - 1, nextIndex)));
-  };
-
-  const fitZoom = () => {
-    centerRef.current = null;
-    setZoomIndex(0);
-    if (viewportRef.current) {
-      viewportRef.current.scrollLeft = 0;
-      viewportRef.current.scrollTop = 0;
-    }
-  };
+  const { zoom, canZoomIn, canZoomOut, zoomIn, zoomOut, fitZoom } = useSitePlanZoom(viewportRef);
 
   const pickFile = () => {
     setUploadError('');
@@ -298,8 +267,8 @@ function SitePlanSection() {
         <div className="site-plan">
           <div className="site-plan__main">
             <div className="site-plan__toolbar" role="toolbar" aria-label="Zoom del plano">
-              <button type="button" className="btn btn-secondary" aria-label="Alejar" disabled={zoomIndex === 0} onClick={() => changeZoom(zoomIndex - 1)}>−</button>
-              <button type="button" className="btn btn-secondary" aria-label="Acercar" disabled={zoomIndex === ZOOMS.length - 1} onClick={() => changeZoom(zoomIndex + 1)}>+</button>
+              <button type="button" className="btn btn-secondary" aria-label="Alejar" disabled={!canZoomOut} onClick={zoomOut}>−</button>
+              <button type="button" className="btn btn-secondary" aria-label="Acercar" disabled={!canZoomIn} onClick={zoomIn}>+</button>
               <button type="button" className="btn btn-secondary" onClick={fitZoom}>Ajustar</button>
               <span className="site-plan__legend">
                 <span className="site-plan__dot site-plan__dot--legend" /> Puerta

@@ -20,20 +20,58 @@ describe('plano del predio', () => {
     process.env.JWT_SECRET = TEST_JWT_SECRET;
     mem = setupHarness({
       initial: {
-        roles: defaultRoleDocs(),
+        roles: defaultRoleDocs({ operador: ['entries.view'] }),
         users: {
           admin: { username: 'admin', role: 'admin', active: true, passwordVersion: 1, permissions: [] },
-          guardia: { username: 'g', role: 'guardia', active: true, passwordVersion: 1, permissions: [] }
+          guardia: { username: 'g', role: 'guardia', active: true, passwordVersion: 1, permissions: [] },
+          operador: { username: 'op', role: 'operador', active: true, passwordVersion: 1, permissions: [] }
+        },
+        settings: {
+          doorsConfig: {
+            defaultDoorId: 'p1',
+            doors: [
+              { id: 'p1', name: 'Portón', mapPos: { x: 0.25, y: 0.75 } },
+              { id: 'p2', name: 'Oficina' }
+            ],
+            airlockGroups: []
+          }
+        }
+      },
+      stubs: {
+        'lib/guardLocalStations.js': {
+          enrichDoorsWithLocalStations: async (doors) => doors
         }
       }
     });
-    srv = await startRouters(['routes/sitePlan.js']);
+    srv = await startRouters(['routes/sitePlan.js', 'routes/access.js']);
   });
 
   after(async () => { await srv.close(); });
 
   const admin = () => signTestToken({ id: 'admin', role: 'admin' });
   const guardia = () => signTestToken({ id: 'guardia', role: 'guardia' });
+  const operador = () => signTestToken({ id: 'operador', role: 'operador' });
+
+  it('el guardia lee el plano por /api/guard/site-plan; sin permiso de abrir puertas, no', async () => {
+    const meta = await srv.request('GET', '/api/guard/site-plan/meta', { token: guardia() });
+    assert.equal(meta.status, 200, meta.text);
+    assert.deepEqual(meta.body, { version: null });
+    const full = await srv.request('GET', '/api/guard/site-plan', { token: guardia() });
+    assert.equal(full.status, 200, full.text);
+    assert.equal(full.body.plan, null);
+
+    assert.equal((await srv.request('GET', '/api/guard/site-plan')).status, 401);
+    assert.equal((await srv.request('GET', '/api/guard/site-plan', { token: operador() })).status, 403);
+    assert.equal((await srv.request('GET', '/api/guard/site-plan/meta', { token: operador() })).status, 403);
+  });
+
+  it('GET /api/guard/doors incluye mapPos de cada puerta', async () => {
+    const res = await srv.request('GET', '/api/guard/doors', { token: guardia() });
+    assert.equal(res.status, 200, res.text);
+    const byId = Object.fromEntries(res.body.doors.map((d) => [d.id, d]));
+    assert.deepEqual(byId.p1.mapPos, { x: 0.25, y: 0.75 });
+    assert.equal(byId.p2.mapPos, null);
+  });
 
   it('sin token no se ve el plano', async () => {
     const res = await srv.request('GET', '/api/admin/site-plan');
@@ -111,6 +149,10 @@ describe('plano del predio', () => {
     const full = await srv.request('GET', '/api/admin/site-plan', { token: admin() });
     assert.equal(full.body.plan.imageDataUrl, smallWebp);
     assert.equal(full.body.plan.width, 1200);
+    const guardMeta = await srv.request('GET', '/api/guard/site-plan/meta', { token: guardia() });
+    assert.deepEqual(guardMeta.body, { version: 2 });
+    const guardFull = await srv.request('GET', '/api/guard/site-plan', { token: guardia() });
+    assert.equal(guardFull.body.plan.imageDataUrl, smallWebp);
 
     const removed = await srv.request('DELETE', '/api/admin/site-plan', { token: admin() });
     assert.equal(removed.status, 200, removed.text);

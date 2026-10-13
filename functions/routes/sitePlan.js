@@ -1,6 +1,6 @@
 /**
  * Plano del predio: imagen de la planta guardada como data URL en Firestore
- * (sin Storage). Solo usuarios autenticados con permiso de puertas.
+ * (sin Storage). Admin con permiso de puertas; el guardia solo lee (/api/guard/site-plan).
  */
 
 const express = require('express');
@@ -59,22 +59,29 @@ const readPlan = async () => {
 
 const planSummary = (plan) => (plan ? { width: plan.width, height: plan.height, version: plan.version } : null);
 
-router.get('/api/admin/site-plan', auth, requireAnyPermission(READ_PERMS), async (_req, res) => {
+const sendPlan = async (_req, res) => {
   try {
     res.json({ plan: await readPlan() });
   } catch (err) {
     sendServerError(res, err, 'Error al leer el plano');
   }
-});
+};
 
-router.get('/api/admin/site-plan/meta', auth, requireAnyPermission(READ_PERMS), async (_req, res) => {
+const sendPlanMeta = async (_req, res) => {
   try {
     const plan = await readPlan();
     res.json({ version: plan ? plan.version : null });
   } catch (err) {
     sendServerError(res, err, 'Error al leer el plano');
   }
-});
+};
+
+router.get('/api/admin/site-plan', auth, requireAnyPermission(READ_PERMS), sendPlan);
+router.get('/api/admin/site-plan/meta', auth, requireAnyPermission(READ_PERMS), sendPlanMeta);
+
+// Mismo permiso que GET /api/guard/doors.
+router.get('/api/guard/site-plan', auth, requirePermission('access.manual_open'), sendPlan);
+router.get('/api/guard/site-plan/meta', auth, requirePermission('access.manual_open'), sendPlanMeta);
 
 router.put('/api/admin/site-plan', auth, requirePermission('access.doors.manage'), async (req, res) => {
   try {
