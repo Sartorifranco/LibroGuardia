@@ -33,6 +33,7 @@ import CitacionesAutoSection from './CitacionesAuto/CitacionesAutoSection';
 import DoorsAdminSection from './DoorsAdmin/DoorsAdminSection';
 import SiteMapSection from './SiteMap/SiteMapSection';
 import EstancosAdminSection from './EstancosAdmin/EstancosAdminSection';
+import SitePlanSection from './SitePlan/SitePlanSection';
 import './admin-ui.css';
 
 const ADVANCED_KEY = 'mss-admin-show-advanced';
@@ -40,6 +41,7 @@ const ADVANCED_KEY = 'mss-admin-show-advanced';
 const OWN_HEADER = new Set([
   'primerosPasos',
   'mapa',
+  'plano',
   'lugares',
   'puertas',
   'estancos',
@@ -240,6 +242,7 @@ function AdminPage({ adminSection, adminQuery = {}, onSectionChange, onExit, onA
           )}
 
           {adminSection === 'mapa' && canDoors && <SiteMapSection onOpen={setAdminSection} />}
+          {adminSection === 'plano' && canDoors && <SitePlanSection />}
 
           {adminSection === 'lugares' && canDoors && <LugaresAdminSection />}
 
