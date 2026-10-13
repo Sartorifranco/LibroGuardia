@@ -1,4 +1,5 @@
 const { db, FieldValue } = require('./firestore');
+const { markDirty } = require('./lib/siteCompiler');
 const { normalizeIdNumber } = require('./dniParser');
 const { normalizePersonName, buildNameTokens } = require('./authorizations');
 const {
@@ -99,7 +100,31 @@ const buildPersonPayload = ({
   };
 };
 
-const syncPersonalMaster = async (person) => {
+const NAME_FIELDS = ['name', 'nombre', 'nameLower', 'nameKey', 'nameTokens'];
+
+const hasStoredName = (record) => Boolean(String(record?.nombre || record?.name || '').trim());
+
+/**
+ * Conserva name/nombre/nameLower/nameKey/nameTokens si el registro ya tiene nombre.
+ * updateName (nómina) permite reemplazarlos. Un nombre entrante vacío no borra el guardado.
+ * Los derivados vacíos se omiten para no completarlos con el nombre entrante.
+ */
+const applyNameUpdatePolicy = (payload, existing, { updateName = false, incomingName = '' } = {}) => {
+  const next = { ...payload };
+  const replace = (updateName && incomingName) || !hasStoredName(existing);
+  if (replace) return next;
+  NAME_FIELDS.forEach((key) => {
+    const value = existing[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      next[key] = value;
+    } else {
+      delete next[key];
+    }
+  });
+  return next;
+};
+
+const syncPersonalMaster = async (person, { updateName = false } = {}) => {
   const legajoNormalized = String(person.legajoNormalized || '').trim();
   const nameLower = String(person.nameLower || person.name || '').trim().toLowerCase();
   if (!legajoNormalized && !nameLower) return;
@@ -146,6 +171,13 @@ const syncPersonalMaster = async (person) => {
   };
 
   if (existing) {
+    const existingData = existing.data() || {};
+    const incomingName = String(person.nombre || person.name || '').trim();
+    if (!(updateName && incomingName) && hasStoredName(existingData)) {
+      NAME_FIELDS.forEach((key) => {
+        delete payload[key];
+      });
+    }
     await existing.ref.set(payload, { merge: true });
   } else {
     await db.collection('personalMaster').add({
@@ -153,11 +185,18 @@ const syncPersonalMaster = async (person) => {
       createdAt: FieldValue.serverTimestamp()
     });
   }
+  if (person.id) markDirty({ people: [person.id] });
 };
 
-const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'empleado', skipPersonalMasterSync = false } = {}) => {
+const resolveOrCreatePerson = async (record, {
+  origen = 'import',
+  tipo = 'empleado',
+  skipPersonalMasterSync = false,
+  updateName = false
+} = {}) => {
   const legajoNormalized = String(record.legajoNormalized || record.legajo || '').trim();
-  const nameKey = record.nameKey || buildNameTokens(record.name);
+  const incomingName = String(record.name || record.nombre || '').trim();
+  const nameKey = record.nameKey || buildNameTokens(incomingName);
   const dniNormalized = normalizeIdNumber(record.idNumberNormalized || record.idNumber);
 
   let personDoc = null;
@@ -179,7 +218,7 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
   }
 
   const basePayload = buildPersonPayload({
-    name: record.name,
+    name: incomingName,
     legajo: legajoNormalized,
     idNumber: dniNormalized,
     company: record.company,
@@ -195,7 +234,7 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
       via: origen === 'nomina' ? 'nomina' : 'import',
       timestamp: FieldValue.serverTimestamp()
     });
-    const merged = {
+    const merged = applyNameUpdatePolicy({
       ...basePayload,
       dni: dniNormalized || existing.dni || null,
       dniNormalized: dniNormalized || existing.dniNormalized || null,
@@ -205,11 +244,12 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
       legajoNormalized: legajoNormalized || existing.legajoNormalized || null,
       origen: existing.origen || origen,
       ...reactivation
-    };
+    }, existing, { updateName, incomingName });
     await personDoc.ref.set(merged, { merge: true });
+    markDirty({ people: [personDoc.id] });
     const person = { id: personDoc.id, ...merged };
     if (!skipPersonalMasterSync) {
-      await syncPersonalMaster(person);
+      await syncPersonalMaster(person, { updateName });
     }
     return person;
   }
@@ -218,9 +258,10 @@ const resolveOrCreatePerson = async (record, { origen = 'import', tipo = 'emplea
     ...basePayload,
     createdAt: FieldValue.serverTimestamp()
   });
+  markDirty({ people: [ref.id] });
   const person = { id: ref.id, ...basePayload };
   if (!skipPersonalMasterSync) {
-    await syncPersonalMaster(person);
+    await syncPersonalMaster(person, { updateName });
   }
   return person;
 };

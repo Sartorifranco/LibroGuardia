@@ -32,20 +32,8 @@ const findPersonByBiometricId = async (biometricExternalId) => {
 
   const rows = snap.docs.map((doc) => ({ id: doc.id, ...(doc.data() || {}) }));
   // Preferir activa y no fusionada (evita reactivar fichas mergeadas).
-  const active = rows.filter((p) => p.active !== false && !p.mergedIntoId);
-  if (active.length) {
-    active.sort((a, b) => {
-      const score = (p) => {
-        let s = 0;
-        if (p.dniNormalized || p.idNumber) s += 5;
-        if (p.legajo || p.legajoNormalized) s += 3;
-        if (p.source && p.source !== 'biostar') s += 2;
-        return s;
-      };
-      return score(b) - score(a);
-    });
-    return active[0];
-  }
+  const best = pickBestPersonRow(rows);
+  if (best) return best;
 
   // Si solo hay fusionadas, seguir el enlace al canónico.
   for (const row of rows) {
@@ -192,6 +180,9 @@ const importBiostarUsers = async (users = [], options = {}) => {
     }
 
     // Sin match: crear huérfano
+    // TODO(decisión del dueño): hoy el huérfano sin DNI recibe la puerta por defecto
+    // (allowedDoorIds = [defaultDoorId]). Pendiente definir si debe quedar sin puertas
+    // hasta que alguien lo clasifique. No se cambia el comportamiento hasta esa decisión.
     const ref = db.collection('people').doc();
     const doc = {
       name,
@@ -251,133 +242,497 @@ const parseEventTime = (value) => {
 
 const eventDocId = (eventId) => `biostar_${String(eventId || '').replace(/\//g, '_').slice(0, 700)}`;
 
+/** Tamaño de lote recomendado: 50 eventos entran holgados en el corte de 60 s de Hosting. */
+const DEFAULT_EVENTS_BATCH_SIZE = 50;
+const MAX_EVENTS_PER_REQUEST = 500;
+/** Presupuesto de tiempo por request: si se pasa, se corta y se devuelve éxito parcial. */
+const DEFAULT_TIME_BUDGET_MS = 40 * 1000;
+/** Límite de `where in` de Firestore. */
+const IN_QUERY_CHUNK = 30;
+/** Firestore admite 500 operaciones por batch; dejamos margen. */
+const WRITE_BATCH_LIMIT = 450;
+
 /**
- * Importa eventos BioStar como entries (idempotente por id de evento).
+ * Códigos BioStar 2 (event_type_id.code, decimal).
+ * 0x1000–0x19FF = eventos de identificación de una persona:
+ *   0x1000 verificación OK, 0x1100 verificación fallida, 0x1200 coacción (verify),
+ *   0x1300 identificación OK, 0x1400 identificación fallida, 0x1500 coacción (identify),
+ *   0x1600 doble autenticación OK, 0x1700 doble autenticación fallida,
+ *   0x1800 autenticación fallida, 0x1900 acceso denegado.
+ * El resto (puerta forzada, mantenida abierta, equipo desconectado, etc.) son
+ * eventos de equipo: no son pases de una persona.
  */
+const IDENTIFICATION_CODE_MIN = 0x1000;
+const IDENTIFICATION_CODE_MAX = 0x19FF;
+const SUCCESS_CODE_RANGES = [
+  [0x1000, 0x10FF],
+  [0x1200, 0x13FF],
+  [0x1500, 0x16FF]
+];
+
+/** Coacción (huella de pánico): abre igual, pero dispara una alarma silenciosa. */
+const DURESS_CODE_RANGES = [
+  [0x1200, 0x12FF],
+  [0x1500, 0x15FF]
+];
+/** Solo se avisa por mail si la coacción es reciente (al drenar atraso no hay falsas alarmas). */
+const DURESS_ALERT_MAX_AGE_MS = 60 * 60 * 1000;
+
+const inRanges = (n, ranges) => ranges.some(([a, b]) => n >= a && n <= b);
+
+const classifyBiostarEventCode = (code, successCodes = new Set()) => {
+  const str = String(code || '').trim();
+  const n = Number(str);
+  const configuredSuccess = Boolean(str) && successCodes.has(str);
+  const isIdentification = configuredSuccess
+    || (Number.isInteger(n) && n >= IDENTIFICATION_CODE_MIN && n <= IDENTIFICATION_CODE_MAX);
+  if (!isIdentification) return { isIdentification: false, authorized: false, duress: false };
+  const authorized = configuredSuccess || (Number.isInteger(n) && inRanges(n, SUCCESS_CODE_RANGES));
+  const duress = Number.isInteger(n) && inRanges(n, DURESS_CODE_RANGES);
+  return { isIdentification: true, authorized, duress };
+};
+
+/** door_id puede venir como {id}, [{id}] o escalar según versión de BioStar. */
+const extractBiostarDoorId = (raw) => {
+  const value = raw?.door_id ?? raw?.doorId;
+  const first = Array.isArray(value) ? value[0] : value;
+  if (first == null) return '';
+  if (typeof first === 'object') return String(first.id ?? first.door_id ?? '').trim();
+  return String(first).trim();
+};
+
+const extractBiostarDeviceId = (raw) => {
+  const value = raw?.device_id ?? raw?.deviceId;
+  if (value == null) return '';
+  if (typeof value === 'object') return String(value.id ?? value.device_id ?? '').trim();
+  return String(value).trim();
+};
+
+const extractBiostarUserId = (raw) => {
+  const value = raw?.user_id ?? raw?.userId;
+  if (value == null) return '';
+  if (typeof value === 'object') return String(value.user_id ?? value.id ?? '').trim();
+  return String(value).trim();
+};
+
+const extractBiostarEventCode = (raw) => String(
+  raw?.event_type_id?.code
+  ?? raw?.event_type_code
+  ?? (typeof raw?.event_type_id !== 'object' ? raw?.event_type_id : '')
+  ?? ''
+).trim();
+
+const DIRECTIONS = new Set(['ingreso', 'egreso']);
+
+/**
+ * Sentido del pase:
+ * 1) devices[deviceId].direction configurado en el puente (equipo de solo entrada o solo salida);
+ * 2) tna_key de BioStar (1 = ingreso, 2 = egreso) si el equipo lo manda;
+ * 3) si no se sabe: 'ingreso' marcado como dirección desconocida.
+ */
+const resolveBiostarDirection = (raw, deviceCfg = null) => {
+  const fromDevice = String(deviceCfg?.direction || '').trim().toLowerCase();
+  if (DIRECTIONS.has(fromDevice)) {
+    return { direction: fromDevice, source: 'device', unknown: false };
+  }
+  const tna = Number(raw?.tna_key ?? raw?.tnaKey);
+  if (tna === 1) return { direction: 'ingreso', source: 'tna_key', unknown: false };
+  if (tna === 2) return { direction: 'egreso', source: 'tna_key', unknown: false };
+  return { direction: 'ingreso', source: null, unknown: true };
+};
+
+const pickBestPersonRow = (rows = []) => {
+  const active = rows.filter((p) => p.active !== false && !p.mergedIntoId);
+  if (!active.length) return null;
+  const score = (p) => {
+    let s = 0;
+    if (p.dniNormalized || p.idNumber) s += 5;
+    if (p.legajo || p.legajoNormalized) s += 3;
+    if (p.source && p.source !== 'biostar') s += 2;
+    return s;
+  };
+  return [...active].sort((a, b) => score(b) - score(a))[0];
+};
+
+/**
+ * Personas por biometricExternalId para todo el lote: consultas `in` de a 30
+ * (en vez de una consulta por evento). Fichas fusionadas siguen al canónico con un getAll.
+ * @returns {Promise<Map<string, object>>} biometricExternalId → persona
+ */
+const loadPeopleByBiometricIds = async (ids = []) => {
+  const unique = [...new Set(ids.map((id) => String(id || '').trim()).filter(Boolean))];
+  const byCode = new Map();
+  if (!unique.length) return byCode;
+
+  const chunks = [];
+  for (let i = 0; i < unique.length; i += IN_QUERY_CHUNK) {
+    chunks.push(unique.slice(i, i + IN_QUERY_CHUNK));
+  }
+  const snaps = await Promise.all(chunks.map((chunk) => db.collection('people')
+    .where('biometricExternalId', 'in', chunk)
+    .get()));
+
+  const rowsByCode = new Map();
+  snaps.forEach((snap) => {
+    snap.docs.forEach((doc) => {
+      const row = { id: doc.id, ...(doc.data() || {}) };
+      const code = String(row.biometricExternalId || '').trim();
+      if (!rowsByCode.has(code)) rowsByCode.set(code, []);
+      rowsByCode.get(code).push(row);
+    });
+  });
+
+  const needCanonical = new Map();
+  rowsByCode.forEach((rows, code) => {
+    const best = pickBestPersonRow(rows);
+    if (best) {
+      byCode.set(code, best);
+      return;
+    }
+    const into = rows.map((r) => String(r.mergedIntoId || '').trim()).find(Boolean);
+    if (into) needCanonical.set(code, into);
+    else byCode.set(code, rows[0]);
+  });
+
+  if (needCanonical.size) {
+    const keepIds = [...new Set(needCanonical.values())];
+    const refs = keepIds.map((id) => db.collection('people').doc(id));
+    const keepSnaps = await db.getAll(...refs);
+    const keepById = new Map();
+    keepSnaps.forEach((snap) => {
+      if (snap.exists) keepById.set(snap.id, { id: snap.id, ...(snap.data() || {}) });
+    });
+    needCanonical.forEach((into, code) => {
+      if (keepById.has(into)) byCode.set(code, keepById.get(into));
+      else byCode.set(code, rowsByCode.get(code)[0]);
+    });
+  }
+
+  return byCode;
+};
+
+/** Subconjunto chico del evento crudo para deviceEvents (sin fotos ni blobs). */
+const pickRawEventSubset = (raw = {}) => {
+  const out = {};
+  const deviceName = raw?.device_id?.name;
+  const doorValue = Array.isArray(raw?.door_id) ? raw.door_id[0] : raw?.door_id;
+  const doorName = doorValue && typeof doorValue === 'object' ? doorValue.name : null;
+  if (deviceName) out.deviceName = String(deviceName).slice(0, 120);
+  if (doorName) out.doorName = String(doorName).slice(0, 120);
+  if (raw?.index != null) out.index = String(raw.index).slice(0, 40);
+  const userId = extractBiostarUserId(raw);
+  if (userId) out.userId = userId.slice(0, 80);
+  if (raw?.tna_key != null) out.tnaKey = String(raw.tna_key).slice(0, 10);
+  if (raw?.server_datetime) out.serverDatetime = String(raw.server_datetime).slice(0, 40);
+  return out;
+};
+
+const normalizeDevicesMap = (devices) => {
+  if (!devices || typeof devices !== 'object' || Array.isArray(devices)) return {};
+  const out = {};
+  Object.entries(devices).forEach(([key, value]) => {
+    const id = String(key || '').trim();
+    if (!id || !value || typeof value !== 'object') return;
+    const doorId = String(value.doorId || '').trim() || null;
+    const direction = String(value.direction || '').trim().toLowerCase();
+    out[id] = {
+      doorId,
+      direction: DIRECTIONS.has(direction) ? direction : null
+    };
+  });
+  return out;
+};
+
+/**
+ * Importa eventos BioStar (idempotente por id de evento).
+ * - Pases de identificación → `entries` (doc biostar_<id>).
+ * - Eventos de equipo (puerta forzada, desconexión, etc.) → `deviceEvents` (no son denegados).
+ *
+ * Rápido: 1 getAll para existencia, consultas `in` de personas y escrituras en batch.
+ * Corta por presupuesto de tiempo y devuelve éxito parcial (`partial`, `processed`)
+ * con el cursor del último evento procesado, para que el puente avance igual.
+ */
+/**
+ * Alarma silenciosa por coacción: deja una alerta visible y avisa por mail
+ * solo si el evento es reciente (al ponerse al día con atraso no se dispara).
+ */
+const raiseDuressAlerts = async (items = [], { nowMs = Date.now() } = {}) => {
+  if (!items.length) return;
+  const { notifySafe } = require('./notifications');
+  await Promise.all(items.map(async (item) => {
+    const recent = nowMs - item.at.getTime() <= DURESS_ALERT_MAX_AGE_MS;
+    try {
+      await db.collection('deviceAlerts').doc(`coaccion__${item.docId}`).set({
+        kind: 'coaccion',
+        severity: 'critica',
+        source: 'biostar',
+        entryId: item.docId,
+        biostarEventId: item.eventId,
+        doorId: item.doorId || null,
+        personId: item.personId,
+        name: item.name,
+        deviceId: item.deviceId,
+        at: Timestamp.fromDate(item.at),
+        notified: recent,
+        message: `Huella de coacción de ${item.name} en ${item.doorId || 'puerta sin mapear'}`,
+        createdAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    } catch (err) {
+      console.error('[biostar] No se pudo guardar la alerta de coacción', err.message);
+    }
+    if (recent) {
+      notifySafe('duress_access', {
+        name: item.name,
+        doorId: item.doorId,
+        at: item.at.toISOString(),
+        entryId: item.docId
+      });
+    }
+  }));
+};
+
 const importBiostarEvents = async (events = [], options = {}) => {
   if (!Array.isArray(events)) throw httpError(400, 'events debe ser un array');
-  if (events.length > 500) throw httpError(400, 'Máximo 500 eventos por lote');
+  if (events.length > MAX_EVENTS_PER_REQUEST) {
+    throw httpError(400, `Máximo ${MAX_EVENTS_PER_REQUEST} eventos por lote`);
+  }
 
   const doorMap = options.doorMap && typeof options.doorMap === 'object' ? options.doorMap : {};
+  const devices = normalizeDevicesMap(options.devices);
   const defaultDoorId = String(options.defaultDoorId || '').trim() || null;
   const successCodes = new Set(
-    (options.successEventCodes || ['4867', '4102', '1']).map((c) => String(c))
+    (options.successEventCodes || ['4867', '4102']).map((c) => String(c))
   );
+  const chunkSize = Math.max(1, Math.min(
+    MAX_EVENTS_PER_REQUEST,
+    Number(options.chunkSize) || DEFAULT_EVENTS_BATCH_SIZE
+  ));
+  const timeBudgetMs = Number(options.timeBudgetMs) > 0
+    ? Number(options.timeBudgetMs)
+    : DEFAULT_TIME_BUDGET_MS;
+  const nowFn = typeof options.now === 'function' ? options.now : Date.now;
+  const startedAt = nowFn();
 
   const results = [];
   let accepted = 0;
+  const duressEvents = [];
+  let deviceEventsStored = 0;
   let skipped = 0;
+  let processed = 0;
+  let partial = false;
   let maxDatetime = options.cursorDatetime || null;
+  let lastEventId = null;
 
-  for (const raw of events) {
-    const eventId = String(raw?.id || raw?.event_id || '').trim();
-    if (!eventId) {
-      skipped += 1;
-      results.push({ status: 'error', message: 'evento sin id' });
-      continue;
+  for (let offset = 0; offset < events.length; offset += chunkSize) {
+    if (offset > 0 && nowFn() - startedAt >= timeBudgetMs) {
+      partial = true;
+      break;
     }
+    const chunk = events.slice(offset, offset + chunkSize);
 
-    const datetime = parseEventTime(raw?.datetime || raw?.server_datetime);
-    if (!datetime) {
-      skipped += 1;
-      results.push({ status: 'error', eventId, message: 'datetime inválido' });
-      continue;
-    }
-    const iso = datetime.toISOString();
-    if (!maxDatetime || iso > maxDatetime) maxDatetime = iso;
-
-    const docId = eventDocId(eventId);
-    const ref = db.collection('entries').doc(docId);
-    const existing = await ref.get();
-    if (existing.exists) {
-      skipped += 1;
-      results.push({ status: 'duplicate', eventId });
-      continue;
-    }
-
-    const biostarUserId = String(
-      raw?.user_id?.user_id
-      || raw?.user_id
-      || raw?.userId
-      || ''
-    ).trim();
-    const biostarDoorId = String(
-      raw?.door_id?.id
-      || raw?.door_id
-      || raw?.doorId
-      || ''
-    ).trim();
-    const doorId = (biostarDoorId && doorMap[biostarDoorId])
-      || defaultDoorId
-      || null;
-    if (!doorId) {
-      skipped += 1;
-      results.push({ status: 'skipped', eventId, message: 'sin doorId mapeado' });
-      continue;
-    }
-
-    const eventCode = String(
-      raw?.event_type_id?.code
-      || raw?.event_type_code
-      || raw?.event_type_id
-      || ''
-    ).trim();
-    const authorized = successCodes.size === 0
-      ? true
-      : successCodes.has(eventCode);
-
-    let person = null;
-    if (biostarUserId) {
-      person = await findPersonByBiometricId(biostarUserId);
-    }
-
-    const nameSnapshot = String(
-      person?.name
-      || person?.nombre
-      || raw?.user_id?.name
-      || biostarUserId
-      || 'BioStar'
-    ).trim();
-    const arParts = getArgentinaDateParts(datetime);
-
-    await ref.set({
-      personId: person?.id || null,
-      nameSnapshot,
-      dniSnapshot: normalizeDni(person?.idNumber || person?.dniNormalized || '') || null,
-      tipoMovimiento: 'ingreso',
-      movementType: 'ingreso',
-      channel: 'molinete',
-      authorized,
-      denialReason: authorized ? null : `biostar_event_${eventCode || 'deny'}`,
-      timestamp: Timestamp.fromDate(datetime),
-      type: 'personal',
-      name: nameSnapshot,
-      idNumber: normalizeDni(person?.idNumber || '') || '',
-      entrySource: 'biostar',
-      accessAuthorized: authorized,
-      accessReason: authorized ? 'biostar_verify' : `biostar_event_${eventCode || 'deny'}`,
-      eventTime: arParts.timeString,
-      doorId,
-      readerId: null,
-      biometricExternalId: biostarUserId || null,
-      biostarEventId: eventId,
-      biostarEventCode: eventCode || null,
-      biostarDoorId: biostarDoorId || null,
-      biostarSyncedAt: FieldValue.serverTimestamp(),
-      relayMode: 'device',
-      relayTriggered: authorized
+    // 1) Parsear y clasificar sin tocar Firestore.
+    const parsed = [];
+    chunk.forEach((raw) => {
+      const eventId = String(raw?.id || raw?.event_id || '').trim();
+      if (!eventId) {
+        skipped += 1;
+        results.push({ status: 'error', message: 'evento sin id' });
+        return;
+      }
+      const datetime = parseEventTime(raw?.datetime || raw?.server_datetime);
+      if (!datetime) {
+        skipped += 1;
+        results.push({ status: 'error', eventId, message: 'datetime inválido' });
+        return;
+      }
+      const eventCode = extractBiostarEventCode(raw);
+      const { isIdentification, authorized, duress } = classifyBiostarEventCode(eventCode, successCodes);
+      const deviceId = extractBiostarDeviceId(raw);
+      const biostarDoorId = extractBiostarDoorId(raw);
+      const deviceCfg = deviceId ? devices[deviceId] || null : null;
+      const doorId = deviceCfg?.doorId
+        || (biostarDoorId && doorMap[biostarDoorId])
+        || defaultDoorId
+        || null;
+      parsed.push({
+        raw,
+        eventId,
+        datetime,
+        eventCode,
+        isIdentification,
+        authorized,
+        duress,
+        deviceId,
+        deviceCfg,
+        biostarDoorId,
+        doorId,
+        biostarUserId: extractBiostarUserId(raw),
+        collection: isIdentification ? 'entries' : 'deviceEvents'
+      });
     });
 
-    accepted += 1;
-    results.push({ status: 'created', eventId, doorId, biometricExternalId: biostarUserId || null });
+    // 2) Existencia en una sola lectura (getAll).
+    const existingIds = new Set();
+    if (parsed.length) {
+      const refs = parsed.map((p) => db.collection(p.collection).doc(eventDocId(p.eventId)));
+      const snaps = await db.getAll(...refs);
+      snaps.forEach((snap, i) => {
+        if (snap.exists) existingIds.add(`${parsed[i].collection}/${parsed[i].eventId}`);
+      });
+    }
+
+    // 3) Personas del lote en consultas `in`.
+    const needPeople = parsed
+      .filter((p) => p.isIdentification && p.biostarUserId
+        && !existingIds.has(`entries/${p.eventId}`))
+      .map((p) => p.biostarUserId);
+    const peopleByCode = await loadPeopleByBiometricIds(needPeople);
+
+    // 4) Escrituras en batch.
+    let batch = db.batch();
+    let ops = 0;
+    const commits = [];
+    const queueWrite = (ref, data) => {
+      batch.set(ref, data);
+      ops += 1;
+      if (ops >= WRITE_BATCH_LIMIT) {
+        commits.push(batch.commit());
+        batch = db.batch();
+        ops = 0;
+      }
+    };
+
+    const seenInChunk = new Set();
+    parsed.forEach((p) => {
+      const key = `${p.collection}/${p.eventId}`;
+      if (existingIds.has(key) || seenInChunk.has(key)) {
+        skipped += 1;
+        results.push({ status: 'duplicate', eventId: p.eventId });
+        return;
+      }
+      seenInChunk.add(key);
+      const docId = eventDocId(p.eventId);
+
+      if (!p.isIdentification) {
+        queueWrite(db.collection('deviceEvents').doc(docId), {
+          source: 'biostar',
+          deviceId: p.deviceId || null,
+          doorId: p.doorId,
+          biostarDoorId: p.biostarDoorId || null,
+          code: p.eventCode || null,
+          at: Timestamp.fromDate(p.datetime),
+          biostarEventId: p.eventId,
+          raw: pickRawEventSubset(p.raw),
+          createdAt: FieldValue.serverTimestamp()
+        });
+        deviceEventsStored += 1;
+        results.push({ status: 'device_event', eventId: p.eventId, code: p.eventCode || null });
+        return;
+      }
+
+      if (!p.doorId) {
+        skipped += 1;
+        results.push({ status: 'skipped', eventId: p.eventId, message: 'sin doorId mapeado' });
+        return;
+      }
+
+      const person = p.biostarUserId ? peopleByCode.get(p.biostarUserId) || null : null;
+      const nameSnapshot = String(
+        person?.name
+        || person?.nombre
+        || p.raw?.user_id?.name
+        || p.biostarUserId
+        || 'BioStar'
+      ).trim();
+      const arParts = getArgentinaDateParts(p.datetime);
+      const dir = resolveBiostarDirection(p.raw, p.deviceCfg);
+      const { authorized, eventCode } = p;
+
+      queueWrite(db.collection('entries').doc(docId), {
+        personId: person?.id || null,
+        nameSnapshot,
+        dniSnapshot: normalizeDni(person?.idNumber || person?.dniNormalized || '') || null,
+        tipoMovimiento: dir.direction,
+        movementType: dir.direction,
+        directionInferred: false,
+        direccionDesconocida: dir.unknown,
+        directionSource: dir.source,
+        channel: 'molinete',
+        authorized,
+        denialReason: authorized ? null : `biostar_event_${eventCode || 'deny'}`,
+        timestamp: Timestamp.fromDate(p.datetime),
+        type: 'personal',
+        name: nameSnapshot,
+        idNumber: normalizeDni(person?.idNumber || '') || '',
+        entrySource: 'biostar',
+        accessAuthorized: authorized,
+        accessReason: authorized ? 'biostar_verify' : `biostar_event_${eventCode || 'deny'}`,
+        eventTime: arParts.timeString,
+        doorId: p.doorId,
+        readerId: null,
+        biometricExternalId: p.biostarUserId || null,
+        biostarEventId: p.eventId,
+        biostarEventCode: eventCode || null,
+        biostarDoorId: p.biostarDoorId || null,
+        biostarDeviceId: p.deviceId || null,
+        biostarSyncedAt: FieldValue.serverTimestamp(),
+        relayMode: 'device',
+        relayTriggered: authorized,
+        duress: Boolean(p.duress)
+      });
+      if (p.duress) {
+        duressEvents.push({
+          eventId: p.eventId,
+          docId,
+          at: p.datetime,
+          doorId: p.doorId,
+          personId: person?.id || null,
+          name: nameSnapshot,
+          deviceId: p.deviceId || null
+        });
+      }
+      accepted += 1;
+      results.push({
+        status: 'created',
+        eventId: p.eventId,
+        doorId: p.doorId,
+        biometricExternalId: p.biostarUserId || null
+      });
+    });
+
+    if (ops > 0) commits.push(batch.commit());
+    await Promise.all(commits);
+    await raiseDuressAlerts(duressEvents.splice(0), { nowMs: Date.now() });
+
+    // El cursor avanza solo con lo ya escrito (BioStar entrega en orden ascendente).
+    parsed.forEach((p) => {
+      const iso = p.datetime.toISOString();
+      if (!maxDatetime || iso > maxDatetime) maxDatetime = iso;
+      lastEventId = p.eventId;
+    });
+    processed += chunk.length;
   }
 
-  return { accepted, skipped, total: events.length, cursorDatetime: maxDatetime, results };
+  return {
+    accepted,
+    deviceEvents: deviceEventsStored,
+    skipped,
+    total: events.length,
+    processed,
+    partial,
+    cursorDatetime: maxDatetime,
+    lastEventId,
+    results
+  };
 };
 
 module.exports = {
   importBiostarUsers,
   importBiostarEvents,
+  classifyBiostarEventCode,
+  resolveBiostarDirection,
+  loadPeopleByBiometricIds,
+  DEFAULT_EVENTS_BATCH_SIZE,
   findPersonByBiometricId,
   eventDocId,
   extractBiostarDniCandidates

@@ -1,8 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import * as XLSX from 'xlsx';
-import { Truck, Upload, User } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
-import { AdminBlock, AdminEmpty, AdminLoading, AdminTable } from '../../../components/admin/AdminUi';
+import { AdminLoading, AdminTable } from '../../../components/admin/AdminUi';
+import PageHeader from '../../../components/admin-ui/PageHeader';
+import EmptyState from '../../../components/admin-ui/EmptyState';
+import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
+import Modal from '../../../components/admin-ui/Modal';
+import PageContainer from '../../../components/admin-ui/PageContainer';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -21,6 +26,8 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
   const [movilesList, setMovilesList] = useState([]);
   const [driversList, setDriversList] = useState([]);
   const [loadingLists, setLoadingLists] = useState(false);
+  const [mobilesOpen, setMobilesOpen] = useState(false);
+  const [driversOpen, setDriversOpen] = useState(false);
 
   const loadLists = useCallback(async () => {
     if (!authToken || !hasPermission(currentUser, 'fleet.upload')) return;
@@ -56,9 +63,6 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
   const handleUploadFleetData = async (type) => {
     const fileToUpload = type === 'mobiles' ? selectedMobilesFile : selectedDriversFile;
     const endpoint = type === 'mobiles' ? '/admin/fleet/mobiles/upload' : '/admin/fleet/drivers/upload';
-    const successMessage = type === 'mobiles'
-      ? 'Lista de móviles actualizada exitosamente.'
-      : 'Lista de choferes actualizada exitosamente.';
 
     if (!fileToUpload) {
       setError('Por favor, seleccione un archivo para subir.');
@@ -84,13 +88,15 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
           body: { data: parsedData }
         });
 
-        showSuccess(successMessage);
+        showSuccess('Guardado');
+        if (type === 'mobiles') setMobilesOpen(false);
+        else setDriversOpen(false);
         await loadLists();
         setSelectedMobilesFile(null);
         setSelectedDriversFile(null);
       } catch (err) {
         console.error(`Error al procesar archivo de ${type}:`, err);
-        setError(err.message || `Error al procesar el archivo. Asegúrese de que el formato sea correcto (CSV/XLSX con una columna 'name').`);
+        setError(err.message || 'No pudimos leer la planilla. Revisá que tenga una columna con el nombre.');
       } finally {
         setPendingAction(null);
       }
@@ -105,103 +111,141 @@ function FleetAdminSection({ pendingAction, setPendingAction }) {
   if (!hasPermission(currentUser, 'fleet.upload')) return null;
 
   return (
-    <>
-      <AdminBlock
-        title={<><Upload size={18} /> Cargar listas de flota interna</>}
-        description="Subí planillas de móviles y choferes (CSV/XLSX con columna name)."
-      >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="uploadMobiles" className="block text-sm font-medium text-gray-700 mb-1">Subir móviles (CSV/XLSX)</label>
-            <input type="file" id="uploadMobiles" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'mobiles')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100" />
+    <PageContainer width="medium">
+    <div className="admin-simple">
+      <PageHeader
+        title="Flota interna"
+        purpose="Los móviles y los choferes de la empresa, para anotarlos cuando entran."
+        howTo={[
+          'Elegí la planilla de móviles o la de choferes.',
+          'Cargala.',
+          'Revisá que los nombres hayan quedado en la lista.'
+        ]}
+        action={(
+          <button type="button" className="btn btn-primary" onClick={() => setMobilesOpen(true)}>
+            <Upload size={20} /> Cargar móviles
+          </button>
+        )}
+      />
+
+      <div className="access-actions" style={{ marginBottom: '0.75rem' }}>
+        <button type="button" className="btn btn-secondary" onClick={() => setDriversOpen(true)}>
+          <Upload size={20} /> Cargar choferes
+        </button>
+      </div>
+
+      <Modal
+        open={mobilesOpen}
+        title="Cargar móviles"
+        description="Una planilla con un nombre por fila."
+        onClose={() => setMobilesOpen(false)}
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setMobilesOpen(false)}>Cancelar</button>
             <PendingButton
               type="button"
               actionId="upload-mobiles"
               pendingAction={pendingAction}
-              className="btn btn-secondary mt-2 w-full"
+              className="btn btn-primary"
               disabled={!selectedMobilesFile}
               pendingLabel="Subiendo..."
               onClick={() => handleUploadFleetData('mobiles')}
             >
-              <Upload size={20} /> Cargar móviles
+              Cargar
             </PendingButton>
-          </div>
-          <div>
-            <label htmlFor="uploadDrivers" className="block text-sm font-medium text-gray-700 mb-1">Subir choferes (CSV/XLSX)</label>
-            <input type="file" id="uploadDrivers" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'drivers')} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-red-50 file:text-red-700 hover:file:bg-red-100" />
+          </>
+        )}
+      >
+        <label htmlFor="uploadMobiles">
+          Planilla de móviles
+          <input type="file" id="uploadMobiles" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'mobiles')} className="input-field" />
+        </label>
+      </Modal>
+
+      <Modal
+        open={driversOpen}
+        title="Cargar choferes"
+        description="Una planilla con un nombre por fila."
+        onClose={() => setDriversOpen(false)}
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setDriversOpen(false)}>Cancelar</button>
             <PendingButton
               type="button"
               actionId="upload-drivers"
               pendingAction={pendingAction}
-              className="btn btn-secondary mt-2 w-full"
+              className="btn btn-primary"
               disabled={!selectedDriversFile}
               pendingLabel="Subiendo..."
               onClick={() => handleUploadFleetData('drivers')}
             >
-              <Upload size={20} /> Cargar choferes
+              Cargar
             </PendingButton>
-          </div>
-        </div>
-      </AdminBlock>
-
-      <AdminBlock title={`Móviles cargados (${movilesList.length})`}>
-        {loadingLists ? (
-          <AdminLoading label="Cargando móviles…" />
-        ) : movilesList.length === 0 ? (
-          <AdminEmpty
-            icon={Truck}
-            title="Todavía no hay móviles"
-            description="Subí un archivo con columna name para poblar esta lista."
-          />
-        ) : (
-          <AdminTable>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Nombre</th>
-              </tr>
-            </thead>
-            <tbody>
-              {movilesList.map((name, idx) => (
-                <tr key={`mobile-${name}-${idx}`}>
-                  <td>{idx + 1}</td>
-                  <td>{name}</td>
-                </tr>
-              ))}
-            </tbody>
-          </AdminTable>
+          </>
         )}
-      </AdminBlock>
+      >
+        <label htmlFor="uploadDrivers">
+          Planilla de choferes
+          <input type="file" id="uploadDrivers" accept=".csv, .xlsx" onChange={(e) => handleFileChange(e, 'drivers')} className="input-field" />
+        </label>
+      </Modal>
 
-      <AdminBlock title={`Choferes cargados (${driversList.length})`}>
-        {loadingLists ? (
-          <AdminLoading label="Cargando choferes…" />
-        ) : driversList.length === 0 ? (
-          <AdminEmpty
-            icon={User}
-            title="Todavía no hay choferes"
-            description="Subí un archivo con columna name para poblar esta lista."
-          />
-        ) : (
-          <AdminTable>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Nombre</th>
-              </tr>
-            </thead>
-            <tbody>
-              {driversList.map((name, idx) => (
-                <tr key={`driver-${name}-${idx}`}>
-                  <td>{idx + 1}</td>
-                  <td>{name}</td>
+      {loadingLists ? (
+        <AdminLoading label="Cargando la flota…" />
+      ) : (
+        <>
+          {movilesList.length === 0 ? (
+            <EmptyState
+              title="Todavía no cargaste móviles"
+              text="Un móvil es un vehículo de la empresa. La planilla trae un nombre por fila."
+            />
+          ) : (
+            <AdminTable>
+              <thead>
+                <tr>
+                  <th>Móvil</th>
                 </tr>
-              ))}
-            </tbody>
-          </AdminTable>
-        )}
-      </AdminBlock>
-    </>
+              </thead>
+              <tbody>
+                {movilesList.map((name, idx) => (
+                  <tr key={`mobile-${name}-${idx}`}>
+                    <td>{name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </AdminTable>
+          )}
+          {driversList.length === 0 ? (
+            <EmptyState
+              title="Todavía no cargaste choferes"
+              text="El chofer es quien maneja el móvil. Se carga con otra planilla."
+            />
+          ) : (
+            <AdminTable>
+              <thead>
+                <tr>
+                  <th>Chofer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {driversList.map((name, idx) => (
+                  <tr key={`driver-${name}-${idx}`}>
+                    <td>{name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </AdminTable>
+          )}
+        </>
+      )}
+
+      <AdvancedSection>
+        <p>La planilla tiene una columna llamada name, con un móvil o un chofer por fila.</p>
+      </AdvancedSection>
+    </div>
+    </PageContainer>
   );
 }
 

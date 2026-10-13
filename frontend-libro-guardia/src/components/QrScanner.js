@@ -91,6 +91,9 @@ function QrScanner({ onScan, onClose, title = 'Escanear DNI o QR' }) {
             className="input-field"
             placeholder="Ej: 12345678 o pegue datos del lector"
             autoFocus={useManual}
+            inputMode="numeric"
+            autoComplete="off"
+            pattern="[0-9A-Za-z@\\s._\\-]*"
           />
           <div className="flex gap-2">
             {!useManual && (

@@ -1,5 +1,6 @@
 const express = require('express');
 const { db, FieldValue } = require('../firestore');
+const { markDirty } = require('../lib/siteCompiler');
 const { normalizeIdNumber } = require('../permissions');
 const {
   buildAuthorizationRecord,
@@ -7,9 +8,13 @@ const {
   listAuthorizationsInRange,
   listPlannedCitacionDates,
   listExternalAuthorizations,
-  AUTHORIZATION_TYPES
+  AUTHORIZATION_TYPES,
+  normalizePersonName,
+  buildNameTokens
 } = require('../authorizations');
 const { listVisitasEsperadasForDate } = require('../lib/visitasAccess');
+const { resolveOrCreatePerson } = require('../people');
+const { logActivity } = require('../lib/activityLog');
 const { parseImportRows } = require('../citacionesImport');
 const {
   getCitacionesBridgeConfig,
@@ -34,7 +39,8 @@ const bumpAuthQuiet = () => bumpAuthorizationsVersion().catch((err) => {
   console.warn('[authorizations] bumpAuthorizationsVersion', err.message);
 });
 
-const todayDateString = () => new Date().toISOString().slice(0, 10);
+// Fecha "hoy" en Argentina (antes UTC: después de las 21:00 ART daba el día siguiente).
+const { todayDateString } = require('../authorizations');
 
 const listAuthorizationsHandler = async (req, res) => {
   try {
@@ -121,6 +127,7 @@ router.post('/api/admin/citaciones/relink-nomina', auth, requirePermission('mast
   try {
     const dateString = req.body?.date || req.query?.date || undefined;
     const result = await relinkCitacionesWithNomina({ dateString });
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -139,6 +146,7 @@ router.post('/api/admin/citaciones/sync-upload', auth, requirePermission('master
       force: force !== false,
       defaults: { importedBy: 'admin-upload' }
     });
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -151,6 +159,7 @@ router.post('/api/admin/citaciones/sync-upload', auth, requirePermission('master
 router.post('/api/admin/citaciones-imports/:id/reprocess', auth, requirePermission('master.citaciones.write'), async (req, res) => {
   try {
     const result = await reprocessImportBatch(req.params.id, { force: req.body?.force !== false });
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -160,13 +169,36 @@ router.post('/api/admin/citaciones-imports/:id/reprocess', auth, requirePermissi
   }
 });
 
+const existingPersonName = (person) => String(person?.nombre || person?.name || '').trim();
+
+/**
+ * Si el nombre tipeado no coincide (normalizado) con el de la persona ya cargada,
+ * la autorización guarda lo tipeado en nameTyped y el nombre existente en name.
+ * @returns {string|null} aviso para el admin, o null si no hay diferencia
+ */
+const keepExistingNameOnAuthorization = (data, person, typedName) => {
+  const existingName = existingPersonName(person);
+  const typed = String(typedName || '').trim();
+  if (!existingName || !typed) return null;
+  if (normalizePersonName(typed) === normalizePersonName(existingName)) return null;
+  const nameKey = buildNameTokens(existingName);
+  data.nameTyped = typed;
+  data.name = existingName;
+  data.nameLower = normalizePersonName(existingName);
+  data.nameKey = nameKey;
+  data.nameTokens = nameKey;
+  return `El DNI pertenece a ${existingName}; se mantuvo ese nombre.`;
+};
+
 router.post('/api/admin/authorizations', auth, requirePermission('master.citaciones.write'), async (req, res) => {
   try {
+    const typedName = String(req.body?.name || req.body?.nombre || '').trim();
     const data = buildAuthorizationRecord({ ...req.body, source: 'manual' });
     const person = await resolveOrCreatePerson(data, {
       origen: 'manual',
       tipo: req.body.personTipo || 'empleado'
     });
+    const warning = keepExistingNameOnAuthorization(data, person, typedName);
 
     const ref = await db.collection('authorizations').add({
       ...data,
@@ -179,6 +211,7 @@ router.post('/api/admin/authorizations', auth, requirePermission('master.citacio
     if (data.type === 'citacion') {
       await db.collection('citaciones').add({
         name: data.name,
+        ...(data.nameTyped ? { nameTyped: data.nameTyped } : {}),
         idNumber: data.idNumber,
         idNumberNormalized: data.idNumberNormalized,
         legajo: data.legajo,
@@ -193,9 +226,11 @@ router.post('/api/admin/authorizations', auth, requirePermission('master.citacio
 
     res.status(201).json({
       message: 'Autorización registrada',
+      ...(warning ? { warning } : {}),
       authorization: { id: ref.id, ...data, personId: person.id }
     });
     bumpAuthQuiet();
+    markDirty({ auths: [ref.id], people: [person.id] });
   } catch (err) {
     res.status(400).json({ message: err.message || 'Error al guardar autorización' });
   }
@@ -211,6 +246,7 @@ router.delete('/api/admin/authorizations/:id', auth, requirePermission('master.c
     const data = snap.data() || {};
     await ref.update({ active: false, updatedAt: FieldValue.serverTimestamp() });
     bumpAuthQuiet();
+    markDirty({ auths: [req.params.id], people: data.personId ? [data.personId] : [] });
     logActivity(db, FieldValue, {
       actorUsername: req.user.username || req.user.id,
       actorId: req.user.id,
@@ -247,6 +283,7 @@ router.post('/api/admin/authorizations/upload', auth, requirePermission('master.
 
     await batch.commit();
     bumpAuthQuiet();
+    markDirty({ full: true });
     res.status(200).json({
       message: `${parsed.length} autorizaciones cargadas exitosamente`,
       count: parsed.length,
@@ -257,10 +294,34 @@ router.post('/api/admin/authorizations/upload', auth, requirePermission('master.
   }
 });
 
+const SECRET_MASK_PREFIX = '••••';
+
+/** "••••" + últimos 2 caracteres. Nunca devolver el secreto en claro. */
+const maskSecret = (secret) => {
+  const value = String(secret || '');
+  if (!value) return '';
+  return `${SECRET_MASK_PREFIX}${value.length > 2 ? value.slice(-2) : ''}`;
+};
+
+const isMaskedSecret = (value) => typeof value === 'string' && value.startsWith(SECRET_MASK_PREFIX);
+
+const maskBridgeConfig = (config = {}) => ({
+  ...config,
+  bridgeSecret: maskSecret(config.bridgeSecret),
+  hasBridgeSecret: Boolean(config.bridgeSecret)
+});
+
+/** Salud pública (sin auth): solo lo mínimo; nada de nombres de archivo ni errores. */
+const publicCitacionesHealth = (config = {}) => ({
+  ok: true,
+  lastSyncAt: config.lastSyncAt || null,
+  hasSyncError: Boolean(config.lastSyncError)
+});
+
 router.get('/api/admin/citaciones-bridge', auth, requirePermission('master.citaciones.write'), async (_req, res) => {
   try {
     const config = await getCitacionesBridgeConfig();
-    res.json({ config });
+    res.json({ config: maskBridgeConfig(config) });
   } catch (err) {
     res.status(500).json({ message: 'Error al leer configuración del puente', error: err.message });
   }
@@ -273,8 +334,10 @@ router.put('/api/admin/citaciones-bridge', auth, requirePermission('master.citac
     allowed.forEach((key) => {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     });
+    // La UI recibe el secreto enmascarado: si lo devuelve tal cual, no se pisa el real.
+    if (isMaskedSecret(updates.bridgeSecret)) delete updates.bridgeSecret;
     const config = await saveCitacionesBridgeConfig(updates);
-    res.json({ message: 'Configuración del puente guardada', config });
+    res.json({ message: 'Configuración del puente guardada', config: maskBridgeConfig(config) });
   } catch (err) {
     res.status(500).json({ message: 'Error al guardar configuración del puente', error: err.message });
   }
@@ -283,18 +346,10 @@ router.put('/api/admin/citaciones-bridge', auth, requirePermission('master.citac
 router.get('/api/bridge/citaciones/health', async (_req, res) => {
   try {
     const config = await getCitacionesBridgeConfig();
-    res.json({
-      status: 'ok',
-      service: 'citaciones-folder-bridge',
-      enabled: config.enabled,
-      lastSyncAt: config.lastSyncAt,
-      lastHeartbeatAt: config.lastHeartbeatAt,
-      lastSyncFile: config.lastSyncFile,
-      lastSyncCount: config.lastSyncCount,
-      lastSyncError: config.lastSyncError
-    });
+    res.json(publicCitacionesHealth(config));
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error('[citaciones/health]', err.message);
+    res.status(500).json({ ok: false });
   }
 });
 
@@ -315,6 +370,7 @@ router.post('/api/bridge/citaciones/sync', async (req, res) => {
   try {
     await verifyCitacionesBridgeRequest(req);
     const result = await syncAuthorizationsFromBridge(req.body || {});
+    markDirty({ full: true });
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
@@ -359,6 +415,7 @@ router.post('/api/admin/citaciones/upload', auth, requirePermission('master.cita
 
     await batch.commit();
     bumpAuthQuiet();
+    markDirty({ full: true });
     res.status(200).json({ message: `${count} citaciones cargadas exitosamente`, count });
   } catch (err) {
     res.status(500).json({ message: 'Error al cargar citaciones', error: err.message });

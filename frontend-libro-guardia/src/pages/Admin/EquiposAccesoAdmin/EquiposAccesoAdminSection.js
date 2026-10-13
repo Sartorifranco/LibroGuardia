@@ -1,20 +1,27 @@
 import React, { useMemo, useState } from 'react';
-import { DoorOpen, ScanLine, Server, BookOpen, BadgeCheck, Package } from 'lucide-react';
+import { DoorOpen, Cpu, Archive, BookOpen, BadgeCheck, Package } from 'lucide-react';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import DoorsAdminSection from '../DoorsAdmin/DoorsAdminSection';
 import LectoresAdminSection from '../LectoresAdmin/LectoresAdminSection';
 import EstacionesAdminSection from '../EstacionesAdmin/EstacionesAdminSection';
+import EquiposAdminSection from '../EquiposAdmin/EquiposAdminSection';
 import { ACCESS_HARDWARE_BRANDS, ACCESS_COMMERCIAL_PROFILES } from '../accessHardwareBrands';
 
 const TABS = [
+  { id: 'equipos', label: 'Equipos', icon: Cpu },
   { id: 'guia', label: 'Cómo empezar', icon: BookOpen },
   { id: 'puertas', label: 'Puertas', icon: DoorOpen },
-  { id: 'lectores', label: 'Lectores', icon: ScanLine },
-  { id: 'estaciones', label: 'Estaciones', icon: Server },
+  { id: 'anterior', label: 'Equipos (modo anterior)', icon: Archive },
   { id: 'marcas', label: 'Marcas homologadas', icon: BadgeCheck },
   { id: 'paquetes', label: 'Paquetes de venta', icon: Package }
 ];
+
+function resolveInitialTab(initialTab, canLectores) {
+  if (initialTab === 'lectores' || initialTab === 'estaciones') return 'anterior';
+  if ((!initialTab || initialTab === 'guia') && canLectores) return 'equipos';
+  return initialTab || 'guia';
+}
 
 /**
  * Centro único de configuración de hardware de acceso.
@@ -24,24 +31,25 @@ function EquiposAccesoAdminSection({
   pendingAction,
   runAction,
   onAccessConfigSaved,
-  initialTab = 'guia'
+  initialTab = 'guia',
+  advancedOnly = false
 }) {
   const { currentUser } = useAuth();
-  const [tab, setTab] = useState(initialTab);
-
   const canDoors = hasPermission(currentUser, 'access.doors.manage')
     || hasPermission(currentUser, 'access.control');
   const canLectores = hasPermission(currentUser, 'lectores.manage');
+  const [tab, setTab] = useState(() => (advancedOnly ? 'anterior' : resolveInitialTab(initialTab, canLectores)));
 
   const visibleTabs = useMemo(
     () => TABS.filter((item) => {
+      if (advancedOnly) return item.id === 'anterior' || item.id === 'marcas' || item.id === 'paquetes';
       if (item.id === 'puertas' || item.id === 'guia' || item.id === 'marcas' || item.id === 'paquetes') {
         return canDoors || canLectores;
       }
-      if (item.id === 'lectores' || item.id === 'estaciones') return canLectores;
+      if (item.id === 'equipos' || item.id === 'anterior') return canLectores;
       return true;
     }),
-    [canDoors, canLectores]
+    [advancedOnly, canDoors, canLectores]
   );
 
   const activeTab = visibleTabs.some((t) => t.id === tab)
@@ -76,15 +84,21 @@ function EquiposAccesoAdminSection({
       </div>
 
       <div className="equipos-acceso-panel" role="tabpanel">
+        {activeTab === 'equipos' && canLectores && (
+          <EquiposAdminSection />
+        )}
+
         {activeTab === 'guia' && (
           <div className="equipos-acceso-guia">
+            <p className="equipos-acceso-hint">
+              Para instalar la central y los controladores, usá la pestaña Equipos.
+            </p>
             <h4>Configurá el acceso de la planta en 4 pasos</h4>
             <ol className="equipos-acceso-steps">
               <li>
                 <strong>Puertas</strong>
                 {' — '}
-                Creá cada puerta, indicá si abre en planta o a distancia, con placa SR201 o por URL,
-                y qué métodos acepta (DNI, tarjeta, biométrico).
+                Creá cada puerta e indicá desde dónde se llega y a qué lugar se entra.
               </li>
               <li>
                 <strong>Lectores</strong>
@@ -134,18 +148,22 @@ function EquiposAccesoAdminSection({
           />
         )}
 
-        {activeTab === 'lectores' && canLectores && (
-          <LectoresAdminSection
-            pendingAction={pendingAction}
-            runAction={runAction}
-          />
-        )}
-
-        {activeTab === 'estaciones' && canLectores && (
-          <EstacionesAdminSection
-            pendingAction={pendingAction}
-            runAction={runAction}
-          />
+        {activeTab === 'anterior' && canLectores && (
+          <div>
+            <p className="equipos-acceso-hint">
+              Esta es la forma anterior, hasta terminar la migración. Los equipos nuevos se cargan en Equipos.
+            </p>
+            <h4>Lectores</h4>
+            <LectoresAdminSection
+              pendingAction={pendingAction}
+              runAction={runAction}
+            />
+            <h4>Estaciones</h4>
+            <EstacionesAdminSection
+              pendingAction={pendingAction}
+              runAction={runAction}
+            />
+          </div>
         )}
 
         {activeTab === 'marcas' && (

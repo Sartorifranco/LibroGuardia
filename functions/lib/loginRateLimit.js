@@ -2,6 +2,12 @@
  * Rate limiting de login por usuario (bloqueo fuerte).
  * La IP NO bloquea el acceso: solo se usa como señal de alerta
  * cuando una misma IP prueba muchas cuentas distintas.
+ *
+ * Cuentas técnicas (lectores/estaciones: usuario kiosk.* o rol kiosk_puerta):
+ * el bloqueo es por usuario + IP. Un equipo viejo en otra red con la clave
+ * anterior no debe dejar afuera a la estación legítima (las claves técnicas son
+ * de 24 caracteres aleatorios: fuerza bruta inviable). Si fallan desde una IP
+ * distinta a la del último login correcto se registra una alerta en deviceAlerts.
  */
 
 const COLLECTION = 'loginRateLimits';
@@ -29,17 +35,50 @@ const sanitizeKeyPart = (value) => String(value || 'unknown')
 
 const userDocId = (username) => `user_${sanitizeKeyPart(username)}`;
 const ipDocId = (ip) => `ip_${sanitizeKeyPart(ip)}`;
+const userIpDocId = (username, ip) => `userip_${sanitizeKeyPart(username)}__${sanitizeKeyPart(ip)}`;
+const technicalDocId = (username) => `tech_${sanitizeKeyPart(username)}`;
 
-const getClientIp = (req) => {
-  const forwarded = req?.headers?.['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim()) {
-    return forwarded.split(',')[0].trim();
-  }
-  if (Array.isArray(forwarded) && forwarded[0]) {
-    return String(forwarded[0]).trim();
-  }
-  return req?.ip || req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown';
-};
+const TECHNICAL_USERNAME_PREFIX = 'kiosk.';
+const TECHNICAL_ROLE_IDS = ['kiosk_puerta'];
+const DEVICE_ALERTS_COLLECTION = 'deviceAlerts';
+
+/** Cuenta técnica de lector/estación (no humana). */
+const isTechnicalAccount = ({ username = '', role = '' } = {}) => (
+  String(username || '').trim().toLowerCase().startsWith(TECHNICAL_USERNAME_PREFIX)
+  || TECHNICAL_ROLE_IDS.includes(String(role || '').trim())
+);
+
+const resolveTechnical = ({ username, technical } = {}) => (
+  typeof technical === 'boolean' ? technical : isTechnicalAccount({ username })
+);
+
+/** Doc de bloqueo: por usuario (humanos) o por usuario+IP (técnicas). */
+const limitDocIdFor = ({ username, ip, technical } = {}) => (
+  resolveTechnical({ username, technical })
+    ? userIpDocId(username, ip || 'unknown')
+    : userDocId(username)
+);
+
+/**
+ * IP del cliente según Express (`req.ip`), que respeta `trust proxy` (ver app.js).
+ * No se lee X-Forwarded-For a mano: su primer valor lo controla el cliente
+ * y permitiría saltear el rate limit por IP.
+ */
+const getClientIp = (req) => (
+  req?.ip || req?.socket?.remoteAddress || req?.connection?.remoteAddress || 'unknown'
+);
+
+/**
+ * Read-modify-write atómico de un doc de rate limit (transacción Firestore).
+ * `compute(data)` devuelve { write, result }: `write` se guarda con merge.
+ */
+const runLimitTransaction = async (db, docRef, compute) => db.runTransaction(async (tx) => {
+  const snap = await tx.get(docRef);
+  const data = snap.exists ? snap.data() : null;
+  const { write, result } = compute(data);
+  tx.set(docRef, write, { merge: true });
+  return result;
+});
 
 /**
  * Evalúa el estado de un documento de rate limit (pura, testeable).
@@ -100,9 +139,9 @@ const readLimitDoc = async (db, docId) => {
   return snap.exists ? snap.data() : null;
 };
 
-/** Solo bloquea por usuario; la IP nunca cierra el login. */
-const checkLoginRateLimit = async (db, { username }, now = Date.now()) => {
-  const userData = await readLimitDoc(db, userDocId(username));
+/** Bloquea por usuario (o usuario+IP en cuentas técnicas); la IP sola nunca cierra el login. */
+const checkLoginRateLimit = async (db, { username, ip = null, technical } = {}, now = Date.now()) => {
+  const userData = await readLimitDoc(db, limitDocIdFor({ username, ip, technical }));
   const userState = evaluateRateLimitState(userData, now);
 
   if (!userState.blocked) {
@@ -117,16 +156,25 @@ const checkLoginRateLimit = async (db, { username }, now = Date.now()) => {
   };
 };
 
-const writeUserFailure = async (db, FieldValue, username, data, now) => {
-  const next = nextFailureState(data, now);
-  await db.collection(COLLECTION).doc(userDocId(username)).set({
-    failedAttempts: next.failedAttempts,
-    windowStartedAt: next.windowStartedAt,
-    blockedUntil: next.blockedUntil,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
-  return next;
-};
+/** Incrementa fallos del usuario en transacción (intentos concurrentes no se pisan). */
+const writeUserFailure = async (db, FieldValue, { username, ip, technical }, now) => runLimitTransaction(
+  db,
+  db.collection(COLLECTION).doc(limitDocIdFor({ username, ip, technical })),
+  (data) => {
+    const next = nextFailureState(data, now);
+    const isTech = resolveTechnical({ username, technical });
+    return {
+      write: {
+        ...(isTech ? { kind: 'user_ip', username: sanitizeKeyPart(username), ip: ip || 'unknown' } : {}),
+        failedAttempts: next.failedAttempts,
+        windowStartedAt: next.windowStartedAt,
+        blockedUntil: next.blockedUntil,
+        updatedAt: FieldValue.serverTimestamp()
+      },
+      result: next
+    };
+  }
+);
 
 /**
  * Registra actividad sospechosa por IP (cuentas distintas) sin bloquear.
@@ -134,34 +182,37 @@ const writeUserFailure = async (db, FieldValue, username, data, now) => {
  */
 const recordIpProbe = async (db, FieldValue, { username, ip }, now = Date.now()) => {
   const docRef = db.collection(COLLECTION).doc(ipDocId(ip));
-  const snap = await docRef.get();
-  const data = snap.exists ? snap.data() : null;
-  const windowStartedAt = toMillis(data?.windowStartedAt);
-  const windowExpired = !windowStartedAt || (now - windowStartedAt) > WINDOW_MS;
-
-  let attemptedUsers = Array.isArray(data?.attemptedUsers) ? [...data.attemptedUsers] : [];
-  if (windowExpired) {
-    attemptedUsers = [];
-  }
   const normalizedUser = sanitizeKeyPart(username);
-  if (!attemptedUsers.includes(normalizedUser)) {
-    attemptedUsers.push(normalizedUser);
-  }
-  // Mantener lista acotada
-  if (attemptedUsers.length > 50) {
-    attemptedUsers = attemptedUsers.slice(-50);
-  }
+  const { alert, attemptedUsers } = await runLimitTransaction(db, docRef, (data) => {
+    const windowStartedAt = toMillis(data?.windowStartedAt);
+    const windowExpired = !windowStartedAt || (now - windowStartedAt) > WINDOW_MS;
 
-  const alert = attemptedUsers.length >= IP_ALERT_DISTINCT_USERS;
-  await docRef.set({
-    kind: 'ip_probe',
-    attemptedUsers,
-    distinctUsers: attemptedUsers.length,
-    windowStartedAt: windowExpired ? now : (windowStartedAt || now),
-    alertActive: alert,
-    lastUsername: normalizedUser,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+    let users = Array.isArray(data?.attemptedUsers) ? [...data.attemptedUsers] : [];
+    if (windowExpired) {
+      users = [];
+    }
+    if (!users.includes(normalizedUser)) {
+      users.push(normalizedUser);
+    }
+    // Mantener lista acotada
+    if (users.length > 50) {
+      users = users.slice(-50);
+    }
+
+    const isAlert = users.length >= IP_ALERT_DISTINCT_USERS;
+    return {
+      write: {
+        kind: 'ip_probe',
+        attemptedUsers: users,
+        distinctUsers: users.length,
+        windowStartedAt: windowExpired ? now : (windowStartedAt || now),
+        alertActive: isAlert,
+        lastUsername: normalizedUser,
+        updatedAt: FieldValue.serverTimestamp()
+      },
+      result: { alert: isAlert, attemptedUsers: users }
+    };
+  });
 
   if (alert) {
     console.warn('[loginRateLimit] Posible sniffing de login', {
@@ -174,9 +225,41 @@ const recordIpProbe = async (db, FieldValue, { username, ip }, now = Date.now())
   return { alert, distinctUsers: attemptedUsers.length };
 };
 
-const recordFailedLogin = async (db, FieldValue, { username, ip }, now = Date.now()) => {
-  const userData = await readLimitDoc(db, userDocId(username));
-  const userNext = await writeUserFailure(db, FieldValue, username, userData, now);
+/**
+ * Cuenta técnica que falla desde una IP distinta a la del último login correcto:
+ * casi siempre un equipo viejo con credenciales anteriores. Alerta visible en
+ * deviceAlerts (un doc por usuario+IP, con contador).
+ */
+const recordTechnicalFailureAlert = async (db, FieldValue, { username, ip }, now = Date.now()) => {
+  const tech = await readLimitDoc(db, technicalDocId(username));
+  const lastSuccessIp = tech?.lastSuccessIp || null;
+  if (!lastSuccessIp || !ip || lastSuccessIp === ip) return { alert: false };
+  const user = sanitizeKeyPart(username);
+  const alertId = `credenciales_viejas__${user}__${sanitizeKeyPart(ip)}`;
+  await db.collection(DEVICE_ALERTS_COLLECTION).doc(alertId).set({
+    kind: 'credenciales_viejas',
+    username: user,
+    ip,
+    lastSuccessIp,
+    at: now,
+    count: FieldValue.increment(1),
+    resolved: false,
+    message: `La cuenta técnica ${user} falla el login desde ${ip} (último login correcto desde ${lastSuccessIp}). Probablemente un equipo viejo con la clave anterior.`,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
+  console.warn('[loginRateLimit] Cuenta técnica con credenciales viejas', { username: user, ip, lastSuccessIp });
+  return { alert: true, alertId };
+};
+
+const recordFailedLogin = async (db, FieldValue, { username, ip, technical }, now = Date.now()) => {
+  const isTech = resolveTechnical({ username, technical });
+  const userNext = await writeUserFailure(db, FieldValue, { username, ip, technical: isTech }, now);
+
+  if (isTech) {
+    await recordTechnicalFailureAlert(db, FieldValue, { username, ip }, now).catch((err) => {
+      console.warn('[loginRateLimit] No se pudo registrar alerta de cuenta técnica', err.message);
+    });
+  }
 
   // Señal adicional: no bloquea a otros usuarios de la misma IP
   if (ip) {
@@ -199,8 +282,40 @@ const recordFailedLogin = async (db, FieldValue, { username, ip }, now = Date.no
   return { blocked: false };
 };
 
-const clearLoginFailures = async (db, { username }) => {
+/**
+ * Limpia fallos. Humanos: doc por usuario. Técnicas: con ip, el doc de esa IP;
+ * sin ip (destrabe desde Admin), todos los docs usuario+IP de la cuenta.
+ */
+const clearLoginFailures = async (db, { username, ip = null, technical } = {}) => {
   await db.collection(COLLECTION).doc(userDocId(username)).delete().catch(() => {});
+  if (!resolveTechnical({ username, technical })) return;
+  if (ip) {
+    await db.collection(COLLECTION).doc(userIpDocId(username, ip)).delete().catch(() => {});
+    return;
+  }
+  try {
+    const snap = await db.collection(COLLECTION)
+      .where('username', '==', sanitizeKeyPart(username))
+      .limit(100)
+      .get();
+    await Promise.all(snap.docs
+      .filter((doc) => doc.id.startsWith('userip_'))
+      .map((doc) => doc.ref.delete().catch(() => {})));
+  } catch (err) {
+    console.warn('[loginRateLimit] No se pudieron limpiar bloqueos por IP', err.message);
+  }
+};
+
+/** Login correcto de cuenta técnica: recuerda la IP para detectar equipos viejos. */
+const recordSuccessfulLogin = async (db, FieldValue, { username, ip, technical } = {}, now = Date.now()) => {
+  if (!resolveTechnical({ username, technical }) || !ip) return;
+  await db.collection(COLLECTION).doc(technicalDocId(username)).set({
+    kind: 'technical_last_success',
+    username: sanitizeKeyPart(username),
+    lastSuccessIp: ip,
+    lastSuccessAt: now,
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true });
 };
 
 /** Rate limit del canje de pairing (por IP): mismo criterio de ventana/bloqueo que login. */
@@ -218,16 +333,20 @@ const checkPairingRateLimit = async (db, { ip }, now = Date.now()) => {
 };
 
 const recordPairingFailure = async (db, FieldValue, { ip }, now = Date.now()) => {
-  const docId = pairingIpDocId(ip);
-  const data = await readLimitDoc(db, docId);
-  const next = nextFailureState(data, now);
-  await db.collection(COLLECTION).doc(docId).set({
-    kind: 'pairing',
-    failedAttempts: next.failedAttempts,
-    windowStartedAt: next.windowStartedAt,
-    blockedUntil: next.blockedUntil,
-    updatedAt: FieldValue.serverTimestamp()
-  }, { merge: true });
+  const docRef = db.collection(COLLECTION).doc(pairingIpDocId(ip));
+  const next = await runLimitTransaction(db, docRef, (data) => {
+    const state = nextFailureState(data, now);
+    return {
+      write: {
+        kind: 'pairing',
+        failedAttempts: state.failedAttempts,
+        windowStartedAt: state.windowStartedAt,
+        blockedUntil: state.blockedUntil,
+        updatedAt: FieldValue.serverTimestamp()
+      },
+      result: state
+    };
+  });
   if (next.justBlocked || (next.blockedUntil && next.blockedUntil > now)) {
     return {
       blocked: true,
@@ -248,15 +367,22 @@ module.exports = {
   BLOCK_MS,
   IP_ALERT_DISTINCT_USERS,
   LOCKOUT_MESSAGE,
+  DEVICE_ALERTS_COLLECTION,
   getClientIp,
   userDocId,
   ipDocId,
+  userIpDocId,
+  technicalDocId,
+  isTechnicalAccount,
+  limitDocIdFor,
   pairingIpDocId,
   evaluateRateLimitState,
   nextFailureState,
   checkLoginRateLimit,
   recordFailedLogin,
   clearLoginFailures,
+  recordSuccessfulLogin,
+  recordTechnicalFailureAlert,
   recordIpProbe,
   checkPairingRateLimit,
   recordPairingFailure

@@ -8,7 +8,8 @@ import {
   ShieldCheck,
   CalendarCheck,
   DoorOpen,
-  BarChart3
+  BarChart3,
+  Bell
 } from 'lucide-react';
 import { canAccessAdmin, canAccessEmpleado, canAccessGuardia, hasPermission } from './permissions';
 
@@ -34,8 +35,10 @@ export const GUARDIA_TAB_SEGMENTS = {
   kiosk: 'kiosk',
   citados: 'citados',
   autorizados: 'autorizados',
+  autorizaciones: 'autorizaciones',
   vehiculosAutorizados: 'vehiculos-autorizados',
   botonera: 'botonera',
+  alarmas: 'alarmas',
   // Ventana dedicada (segundo monitor)
   'botonera-ventana': 'botonera-ventana',
   // Alias legados → misma botonera unificada
@@ -54,46 +57,80 @@ export const GUARDIA_SEGMENT_TO_TAB = Object.entries(GUARDIA_TAB_SEGMENTS).reduc
   'botonera-ventana': 'botonera-ventana'
 });
 
-/** adminSection id → segmento bajo /admin */
+/** adminSection id → segmento canónico bajo /admin */
 export const ADMIN_SECTION_SEGMENTS = {
+  primerosPasos: 'primeros-pasos',
   users: 'users',
-  roles: 'roles',
-  activity: 'activity',
-  audit: 'audit',
-  notifications: 'notifications',
-  // Centro único de hardware (Fase A). URLs viejas redirigen acá.
-  equiposAcceso: 'equipos-acceso',
-  doors: 'equipos-acceso',
+  rolesPermisos: 'roles-permisos',
   peopleAccess: 'personas',
-  access: 'access',
-  citaciones: 'citaciones',
   nomina: 'nomina',
-  vehicles: 'vehicles',
-  fleet: 'fleet',
   empresas: 'empresas',
-  destinos: 'destinos',
+  vehicles: 'vehiculos',
+  fleet: 'flota',
+  grupos: 'grupos',
+  horarios: 'horarios',
+  feriados: 'feriados',
+  puedePasar: 'puede-pasar',
+  destinos: 'recorridos',
+  citaciones: 'citaciones',
   visitas: 'visitas',
-  lectores: 'equipos-acceso',
-  estaciones: 'equipos-acceso',
-  permissions: 'permissions',
-  appearance: 'appearance'
+  mapa: 'mapa-predio',
+  lugares: 'lugares',
+  puertas: 'puertas',
+  estancos: 'estancos',
+  equipos: 'equipos',
+  sistemas: 'sistemas',
+  notifications: 'avisos',
+  access: 'gps',
+  huella: 'huella',
+  citacionesAuto: 'citaciones-automaticas',
+  registro: 'registro',
+  consumo: 'consumo',
+  appearance: 'datos-empresa',
+  // Ids viejos: adminPath sigue armando la URL nueva.
+  roles: 'roles-permisos',
+  permissions: 'roles-permisos',
+  activity: 'registro',
+  audit: 'registro',
+  equiposAcceso: 'sistemas',
+  doors: 'puertas',
+  lectores: 'sistemas',
+  estaciones: 'sistemas',
+  negocioAccesos: 'grupos'
 };
 
 export const ADMIN_SEGMENT_TO_SECTION = Object.entries(ADMIN_SECTION_SEGMENTS).reduce((acc, [section, seg]) => {
-  // Preferir el id canónico cuando varias secciones comparten segmento.
-  if (seg === 'equipos-acceso') {
-    acc[seg] = 'equiposAcceso';
-    return acc;
-  }
   if (!acc[seg]) acc[seg] = section;
   return acc;
 }, {
-  // URLs legadas siguen abriendo el centro único
-  doors: 'equiposAcceso',
-  lectores: 'equiposAcceso',
-  estaciones: 'equiposAcceso',
+  // URLs viejas abren la pantalla nueva (AdminLayout además redirige a la canónica).
+  roles: 'rolesPermisos',
+  permissions: 'rolesPermisos',
+  activity: 'registro',
+  audit: 'registro',
+  appearance: 'appearance',
+  'datos-empresa': 'appearance',
+  destinos: 'destinos',
+  recorridos: 'destinos',
+  accesos: 'grupos',
+  access: 'access',
+  gps: 'access',
+  notifications: 'notifications',
+  avisos: 'notifications',
+  vehicles: 'vehicles',
+  vehiculos: 'vehicles',
+  fleet: 'fleet',
+  flota: 'fleet',
+  doors: 'puertas',
+  puertas: 'puertas',
+  lectores: 'sistemas',
+  estaciones: 'sistemas',
+  'equipos-acceso': 'sistemas',
+  sistemas: 'sistemas',
   'people-access': 'peopleAccess',
-  personas: 'peopleAccess'
+  personas: 'peopleAccess',
+  autorizaciones: 'citaciones',
+  citaciones: 'citaciones'
 });
 
 export const guardiaPath = (tabId = 'inicio') => {
@@ -129,48 +166,16 @@ export const resolveHomePath = (user) => {
   return '/login';
 };
 
-/** Primera sección admin visible según permisos.
- * Orden = grupos de nav en AdminPage (Personas → Infra → Maestros → Supervisión).
- * Solo se usa cuando no hay segmento válido en la URL; deep-links (/admin/doors, etc.)
- * siguen resolviendo por sectionFromAdminSegment y no pasan por acá.
+/** Primera sección admin cuando la URL no trae segmento.
+ * El inicio es Primeros pasos. Los deep-links no pasan por acá.
  */
 const ADMIN_DEFAULT_SECTION_ORDER = [
+  { id: 'primerosPasos', match: (u) => canAccessAdmin(u) },
   { id: 'users', match: (u) => hasPermission(u, 'users.view') },
-  { id: 'roles', match: (u) => hasPermission(u, 'roles.view') || hasPermission(u, 'roles.manage') },
-  { id: 'permissions', match: (u) => hasPermission(u, 'settings.permissions') },
-  {
-    id: 'peopleAccess',
-    match: (u) =>
-      hasPermission(u, 'access.doors.manage')
-      || hasPermission(u, 'access.control')
-      || hasPermission(u, 'master.nomina.write')
-  },
-  {
-    id: 'equiposAcceso',
-    match: (u) =>
-      hasPermission(u, 'access.doors.manage')
-      || hasPermission(u, 'access.control')
-      || hasPermission(u, 'lectores.manage')
-  },
-  { id: 'notifications', match: (u) => hasPermission(u, 'notifications.config') },
-  { id: 'access', match: (u) => hasPermission(u, 'access.control') },
-  { id: 'nomina', match: (u) => hasPermission(u, 'master.nomina.write') },
-  { id: 'citaciones', match: (u) => hasPermission(u, 'master.citaciones.write') },
-  { id: 'vehicles', match: (u) => hasPermission(u, 'master.vehicles.write') },
+  { id: 'peopleAccess', match: (u) => hasPermission(u, 'master.nomina.write') || hasPermission(u, 'access.doors.manage') },
   { id: 'fleet', match: (u) => hasPermission(u, 'fleet.upload') },
-  { id: 'empresas', match: (u) => hasPermission(u, 'empresas.manage') },
-  { id: 'destinos', match: (u) => hasPermission(u, 'destinos.manage') },
-  { id: 'visitas', match: (u) => hasPermission(u, 'visitas.approve') },
-  { id: 'appearance', match: (u) => hasPermission(u, 'settings.permissions') },
-  {
-    id: 'activity',
-    match: (u) =>
-      hasPermission(u, 'users.view')
-      || hasPermission(u, 'roles.view')
-      || hasPermission(u, 'settings.permissions')
-      || hasPermission(u, 'audit.view')
-  },
-  { id: 'audit', match: (u) => hasPermission(u, 'audit.view') }
+  { id: 'grupos', match: (u) => hasPermission(u, 'access.groups.manage') || hasPermission(u, 'personas.puertas.asignar') },
+  { id: 'notifications', match: (u) => hasPermission(u, 'notifications.config') }
 ];
 
 export const getDefaultAdminSection = (user) => {
@@ -181,7 +186,30 @@ export const getDefaultAdminSection = (user) => {
   return 'users';
 };
 
-export const buildSidebarItems = (user) => {
+/**
+ * En modo planta solo se muestra lo que el hub declara en capabilities.
+ * Lo que no está (admin, reportes, flota, citaciones) no aparece en el menú.
+ * null = siempre visible en planta. Clave ausente = oculto.
+ */
+export const LAN_FEATURE_CAPABILITY = {
+  inicio: null,
+  botonera: 'doors',
+  'botonera-ventana': 'doors',
+  historial: 'entries',
+  allRecords: 'entries',
+  alarmas: 'alarms',
+  kiosk: 'scan',
+  autorizaciones: null
+};
+
+export function isLanFeatureAllowed(featureId, capabilities = []) {
+  if (!Object.prototype.hasOwnProperty.call(LAN_FEATURE_CAPABILITY, featureId)) return false;
+  const need = LAN_FEATURE_CAPABILITY[featureId];
+  if (need == null) return true;
+  return capabilities.includes(need);
+}
+
+export const buildSidebarItems = (user, runtime = null) => {
   if (!user) return [];
 
   const profile = user.dashboardProfile || user.role;
@@ -202,12 +230,12 @@ export const buildSidebarItems = (user) => {
     );
     addIf(canBotonera, {
       id: 'botonera',
-      label: 'Botonera',
+      label: 'Puertas',
       icon: DoorOpen
     });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
-      label: 'Cargar novedad',
+      label: 'Novedades',
       icon: ClipboardList
     });
   } else if (profile === 'guardia') {
@@ -252,7 +280,7 @@ export const buildSidebarItems = (user) => {
     addIf(hasPermission(user, 'entries.create'), { id: 'personal', label: 'Personal', icon: User });
     addIf(hasPermission(user, 'entries.create'), {
       id: 'vehiculo',
-      label: 'Vehículos externos',
+      label: 'Vehículos',
       icon: Car
     });
     addIf(
@@ -261,22 +289,34 @@ export const buildSidebarItems = (user) => {
     );
     addIf(hasPermission(user, 'fleet.gps.read') || hasPermission(user, 'entries.create'), {
       id: 'flota',
-      label: 'Flota / blindados',
+      label: 'Flota',
       icon: Truck
     });
     addIf(canBotonera, {
       id: 'botonera',
-      label: 'Botonera',
+      label: 'Puertas',
       icon: DoorOpen
     });
     // Molinete / Acceso: pantalla kiosk dedicada. Hoy el lector físico ya
     // registra vía door-reader-bridge; se oculta del menú para no duplicar.
     addIf(hasPermission(user, 'entries.create'), {
       id: 'novedad',
-      label: 'Cargar novedad',
+      label: 'Novedades',
       icon: ClipboardList
     });
   }
+
+  addIf(hasPermission(user, 'alarmas.ver'), {
+    id: 'alarmas',
+    label: 'Alarmas',
+    icon: Bell
+  });
+  addIf(
+    hasPermission(user, 'autorizaciones.solicitar')
+    || hasPermission(user, 'autorizaciones.aprobar')
+    || hasPermission(user, 'autorizaciones.aprobar_todas'),
+    { id: 'autorizaciones', label: 'Autorizaciones', icon: ShieldCheck }
+  );
 
   addIf(canAccessHistorial(user), {
     id: 'historial',
@@ -293,7 +333,15 @@ export const buildSidebarItems = (user) => {
     });
   }
 
-  return items;
+  if (!runtime || runtime.mode !== 'lan') return items;
+  const caps = Array.isArray(runtime.capabilities) ? runtime.capabilities : [];
+  const filtered = items.filter((item) => isLanFeatureAllowed(item.id, caps));
+  if (caps.includes('alarms') && !filtered.some((item) => item.id === 'alarmas')) {
+    const alarmItem = { id: 'alarmas', label: 'Alarmas', icon: Bell };
+    const at = filtered.findIndex((item) => item.id === 'botonera');
+    filtered.splice(at >= 0 ? at + 1 : filtered.length, 0, alarmItem);
+  }
+  return filtered;
 };
 
 export const getProfileKicker = (user) => {

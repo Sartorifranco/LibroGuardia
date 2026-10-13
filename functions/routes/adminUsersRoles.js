@@ -10,7 +10,8 @@ const {
   deleteRole,
   listValidRoleIds,
   getRoleTemplatesFromFirestore,
-  canManageTargetRole
+  canManageTargetRole,
+  isPermissionSubset
 } = require('../roles');
 const { logActivity } = require('../lib/activityLog');
 const { logAdminAction } = require('../lib/auditLog');
@@ -26,9 +27,11 @@ const {
   userToJSON,
   auth,
   requirePermission,
-  requireAnyPermission
+  requireAnyPermission,
+  sendServerError
 } = require('../middleware/auth');
-const { clearLoginFailures } = require('../lib/loginRateLimit');
+const { clearLoginFailures, isTechnicalAccount } = require('../lib/loginRateLimit');
+const { validateNewPassword } = require('../lib/changePassword');
 
 const router = express.Router();
 
@@ -37,7 +40,7 @@ router.get('/api/admin/permissions/roles', auth, requirePermission('settings.per
     const roles = await getRoleTemplates();
     res.json({ roles, permissionKeys: PERMISSION_KEYS });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener permisos por rol', error: err.message });
+    sendServerError(res, err, 'Error al obtener permisos por rol');
   }
 });
 
@@ -46,6 +49,16 @@ router.put('/api/admin/permissions/roles', auth, requirePermission('settings.per
     const { roles } = req.body;
     if (!roles || typeof roles !== 'object') {
       return res.status(400).json({ message: 'Formato inválido. Se espera { roles: { guardia: [...], ... } }' });
+    }
+
+    // No se crean roles "fantasma": solo roles existentes en la colección roles.
+    const validRoleIds = await listValidRoleIds();
+    const unknownRoles = Object.keys(roles).filter((roleId) => !validRoleIds.includes(roleId));
+    if (unknownRoles.length) {
+      return res.status(400).json({
+        message: `Rol inexistente: ${unknownRoles.join(', ')}. Creá el rol primero en Roles.`,
+        unknownRoles
+      });
     }
 
     const beforeTemplates = await getRoleTemplatesFromFirestore();
@@ -73,7 +86,7 @@ router.put('/api/admin/permissions/roles', auth, requirePermission('settings.per
     }).catch((err) => console.error('auditLog permissions.change:', err.message));
     res.json({ message: 'Permisos por rol actualizados', roles: sanitized });
   } catch (err) {
-    res.status(500).json({ message: 'Error al actualizar permisos por rol', error: err.message });
+    sendServerError(res, err, 'Error al actualizar permisos por rol');
   }
 });
 
@@ -84,7 +97,7 @@ router.get('/api/admin/roles', auth, requireAnyPermission(['roles.view', 'roles.
     const roles = await listRoles();
     res.json({ roles, permissionKeys: PERMISSION_KEYS });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener roles', error: err.message });
+    sendServerError(res, err, 'Error al obtener roles');
   }
 });
 
@@ -156,14 +169,27 @@ router.put('/api/admin/users/:id/permissions', auth, requirePermission('settings
       return res.status(400).json({ message: 'Se espera un array de permisos' });
     }
 
+    if (String(req.user.id) === String(id)) {
+      return res.status(403).json({ message: 'No podés modificar tus propios permisos. Pedíselo a otro administrador.' });
+    }
+
     const userRef = db.collection('users').doc(id);
     const snap = await userRef.get();
     if (!snap.exists) {
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
 
+    // Misma regla que la edición de usuarios: solo sobre roles que el actor puede gestionar.
+    if (!(await canManageTargetRole(req.user.role, snap.data().role, req.userPermissions))) {
+      return res.status(403).json({ message: 'Acceso denegado: no puede editar usuarios con ese rol.' });
+    }
+
     const beforePerms = Array.isArray(snap.data().permissions) ? snap.data().permissions : [];
     const customPermissions = permissions.filter((perm) => PERMISSION_KEYS.includes(perm));
+    // Un no-admin no puede otorgar permisos que él mismo no tiene.
+    if (req.user.role !== 'admin' && !isPermissionSubset(customPermissions, req.userPermissions)) {
+      return res.status(403).json({ message: 'No podés otorgar permisos que no tenés.' });
+    }
     await userRef.update({ permissions: customPermissions });
     const updated = await userRef.get();
     const resolved = await getUserPermissions(updated.data());
@@ -177,7 +203,7 @@ router.put('/api/admin/users/:id/permissions', auth, requirePermission('settings
     }).catch((err) => console.error('auditLog user.permissions.update:', err.message));
     res.json({ message: 'Permisos personalizados actualizados', user: userToJSON(updated, resolved) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al actualizar permisos del usuario', error: err.message });
+    sendServerError(res, err, 'Error al actualizar permisos del usuario');
   }
 });
 
@@ -187,13 +213,17 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
     if (!username?.trim() || !password) {
       return res.status(400).json({ message: 'Usuario y contraseña son obligatorios' });
     }
+    const passwordError = validateNewPassword(password, { username });
+    if (passwordError) {
+      return res.status(400).json({ message: passwordError.replace('La nueva contraseña', 'La contraseña') });
+    }
 
     const validRoles = await listValidRoleIds();
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: 'Rol inválido especificado.' });
     }
 
-    if (!(await canManageTargetRole(req.user.role, role))) {
+    if (!(await canManageTargetRole(req.user.role, role, req.userPermissions))) {
       return res.status(403).json({ message: 'No tiene permisos para asignar ese rol.' });
     }
 
@@ -204,6 +234,9 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
+    const empresaId = String(req.body?.empresaId || '').trim() || null;
+    const nombre = String(req.body?.nombre || '').trim();
+    const puesto = String(req.body?.puesto || '').trim();
     await userRef.set({
       username: normalizedUsername,
       password: passwordHash,
@@ -211,6 +244,9 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
       active: true,
       mustChangePassword: true,
       passwordVersion: 1,
+      empresaId,
+      ...(nombre ? { nombre } : {}),
+      ...(puesto ? { puesto } : {}),
       createdAt: FieldValue.serverTimestamp()
     });
 
@@ -235,7 +271,7 @@ router.post('/api/admin/users', auth, requirePermission('users.create'), async (
       user: created
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al crear usuario', error: err.message });
+    sendServerError(res, err, 'Error al crear usuario');
   }
 });
 
@@ -244,7 +280,7 @@ router.get('/api/admin/users', auth, requirePermission('users.view'), async (req
     const snap = await db.collection('users').orderBy('username').get();
     res.json({ users: snap.docs.map(userToJSON) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener usuarios', error: err.message });
+    sendServerError(res, err, 'Error al obtener usuarios');
   }
 });
 
@@ -260,7 +296,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
     }
 
     const userToUpdate = snap.data();
-    if (!(await canManageTargetRole(req.user.role, userToUpdate.role))) {
+    if (!(await canManageTargetRole(req.user.role, userToUpdate.role, req.userPermissions))) {
       return res.status(403).json({ message: 'Acceso denegado: no puede editar usuarios con ese rol.' });
     }
 
@@ -268,6 +304,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
       username: userToUpdate.username || id,
       role: userToUpdate.role,
       active: userToUpdate.active !== false,
+      empresaId: userToUpdate.empresaId || null,
       passwordChanged: false
     };
 
@@ -278,23 +315,42 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
       if (!validRoles.includes(role)) {
         return res.status(400).json({ message: 'Rol inválido' });
       }
-      if (!(await canManageTargetRole(req.user.role, role))) {
+      if (!(await canManageTargetRole(req.user.role, role, req.userPermissions))) {
         return res.status(403).json({ message: 'No tiene permisos para asignar ese rol.' });
       }
       updates.role = role;
     }
 
     if (password) {
+      const passwordError = validateNewPassword(password, { username: userToUpdate.username || id });
+      if (passwordError) {
+        return res.status(400).json({ message: passwordError });
+      }
       updates.password = await bcrypt.hash(password, 10);
       updates.mustChangePassword = true;
       updates.passwordVersion = nextPasswordVersion(userToUpdate);
     }
     if (typeof active === 'boolean' && req.user.id !== id) updates.active = active;
+    if (Object.prototype.hasOwnProperty.call(req.body, 'empresaId')) {
+      const empresaId = String(req.body.empresaId || '').trim();
+      updates.empresaId = empresaId || null;
+    }
+
+    // Desactivar o cambiar el rol invalida las sesiones abiertas (JWT con role/permisos viejos).
+    const deactivating = updates.active === false && userToUpdate.active !== false;
+    const roleChanged = updates.role !== undefined && updates.role !== userToUpdate.role;
+    if ((deactivating || roleChanged) && updates.passwordVersion === undefined) {
+      updates.passwordVersion = nextPasswordVersion(userToUpdate);
+    }
 
     await userRef.update(updates);
-    if (password) {
+    if (updates.passwordVersion !== undefined || updates.active !== undefined) {
       invalidatePasswordVersionCache(id);
-      setCachedPasswordVersion(id, updates.passwordVersion);
+      setCachedPasswordVersion(
+        id,
+        updates.passwordVersion !== undefined ? updates.passwordVersion : getPasswordVersion(userToUpdate),
+        updates.active !== undefined ? updates.active !== false : userToUpdate.active !== false
+      );
     }
     const updated = await userRef.get();
     const afterData = updated.data();
@@ -308,6 +364,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
         username: afterData.username || id,
         role: afterData.role,
         active: afterData.active !== false,
+        empresaId: afterData.empresaId || null,
         passwordChanged: Boolean(password),
         mustChangePassword: afterData.mustChangePassword === true,
         passwordVersion: getPasswordVersion(afterData)
@@ -315,7 +372,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
     }).catch((err) => console.error('auditLog user.update:', err.message));
     res.json({ message: 'Usuario actualizado', user: userToJSON(updated) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al actualizar el usuario', error: err.message });
+    sendServerError(res, err, 'Error al actualizar el usuario');
   }
 });
 
@@ -336,7 +393,11 @@ router.post(
         return res.status(404).json({ message: 'Usuario no encontrado' });
       }
       const username = String(snap.data()?.username || id).trim().toLowerCase();
-      await clearLoginFailures(db, { username });
+      // Cuentas técnicas: limpia también los bloqueos por usuario+IP.
+      await clearLoginFailures(db, {
+        username,
+        technical: isTechnicalAccount({ username, role: snap.data()?.role })
+      });
       logAdminAction({
         req,
         action: 'user.clear_login_failures',
@@ -370,11 +431,13 @@ router.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), a
     }
 
     const userToDelete = snap.data();
-    if (!(await canManageTargetRole(req.user.role, userToDelete.role))) {
+    if (!(await canManageTargetRole(req.user.role, userToDelete.role, req.userPermissions))) {
       return res.status(403).json({ message: 'Acceso denegado: no puede eliminar usuarios con ese rol.' });
     }
 
     await userRef.delete();
+    // Sin cache, el próximo request del token borrado no encuentra el doc → 401.
+    invalidatePasswordVersionCache(id);
     logActivity(db, FieldValue, {
       actorUsername: req.user.username || req.user.id,
       actorId: req.user.id,
@@ -396,7 +459,7 @@ router.delete('/api/admin/users/:id', auth, requirePermission('users.delete'), a
     }).catch((err) => console.error('auditLog user.delete:', err.message));
     res.json({ message: 'Usuario eliminado exitosamente' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al eliminar usuario', error: err.message });
+    sendServerError(res, err, 'Error al eliminar usuario');
   }
 });
 

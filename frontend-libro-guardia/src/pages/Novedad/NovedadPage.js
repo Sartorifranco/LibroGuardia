@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Save } from 'lucide-react';
 import { useClockPrefill } from '../../context/ClockPrefillContext';
-import { useEntries } from '../../context/EntriesContext';
+import { useEntries, wasEntryStored } from '../../context/EntriesContext';
 
 function NovedadPage() {
   const { addEntry, entriesLoading } = useEntries();
@@ -20,12 +20,14 @@ function NovedadPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      await addEntry('novedad', {
+      const outcome = await addEntry('novedad', {
         description: novedadDescription,
         eventTime: novedadEventTime,
       });
-      setNovedadDescription('');
-      setNovedadEventTime('');
+      if (wasEntryStored(outcome)) {
+        setNovedadDescription('');
+        setNovedadEventTime('');
+      }
     } finally {
       setLoading(false);
     }

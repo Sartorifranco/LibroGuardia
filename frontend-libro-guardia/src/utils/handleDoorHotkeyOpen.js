@@ -36,10 +36,10 @@ export async function handleDoorHotkeyOpen({
 
   if (!skipConfirm && typeof confirmFn === 'function') {
     const ok = await confirmFn({
-      title: 'Apertura por atajo',
-      message: `¿Abrir ${door.name || doorId} (Ctrl+Alt+${slot})?`,
+      title: 'Abrir puerta',
+      message: `¿Abrir la puerta ${door.name || doorId}?`,
       confirmLabel: 'Abrir puerta',
-      tone: 'default'
+      tone: 'danger'
     });
     if (!ok) return { handled: true, slot, doorId, cancelled: true };
   }

@@ -3,5 +3,7 @@
   "sr201Port": 6722,
   "bridgePort": 5022,
   "bridgeHost": "0.0.0.0",
-  "bridgeSecret": "CAMBIAR-SECRETO"
+  "bridgeSecret": "CAMBIAR-SECRETO",
+  "sr201Permitidos": ["192.168.0.38:6722"],
+  "sr201TemporizadorNativo": false
 }

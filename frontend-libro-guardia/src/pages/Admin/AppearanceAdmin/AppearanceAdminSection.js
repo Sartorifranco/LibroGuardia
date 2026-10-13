@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Loader2, Palette, RotateCcw, Sparkles } from 'lucide-react';
 import { AdminBlock } from '../../../components/admin/AdminUi';
+import PageHeader from '../../../components/admin-ui/PageHeader';
+import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
+import PageContainer from '../../../components/admin-ui/PageContainer';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -200,7 +203,7 @@ function AppearanceAdminSection() {
   const preview = () => applyLive(form);
 
   const handleSave = async (e) => {
-    e.preventDefault();
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
     setSaving(true);
     try {
       const body = {
@@ -263,19 +266,24 @@ function AppearanceAdminSection() {
   }
 
   return (
-    <div className="appearance-admin">
-      <aside className="destinos-admin__howto" aria-label="Ayuda">
-        <h4>Personalizador de apariencia</h4>
-        <p>
-          Como en Slack o Discord: elegí un <strong>tema listo</strong> o ajustá a mano
-          el color de marca, fondos, paneles y textos del modo claro y oscuro.
-        </p>
-        <p>
-          “Probar en pantalla” aplica al instante; “Guardar” lo deja fijo para toda la instalación.
-        </p>
-      </aside>
+    <PageContainer width="narrow">
+    <div className="appearance-admin admin-simple">
+      <PageHeader
+        title="Datos de la empresa"
+        purpose="El nombre que ven todos y los colores de esta instalación."
+        howTo={[
+          'Elegí un tema o escribí el nombre de la empresa.',
+          'Probá en pantalla si querés verlo antes de guardar.',
+          'Guardá para que quede en todos lados.'
+        ]}
+        action={(
+          <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Guardando…' : 'Guardar'}
+          </button>
+        )}
+      />
 
-      <AdminBlock title="Temas listos">
+      <AdminBlock title="Temas">
         <div className="appearance-admin__presets">
           {THEME_PRESETS.map((preset) => (
             <button
@@ -302,60 +310,28 @@ function AppearanceAdminSection() {
         </div>
       </AdminBlock>
 
-      <AdminBlock title="Marca y textos">
-        <form onSubmit={handleSave} className="appearance-admin__form">
-          <ColorField
-            label="Color principal (botones / acentos)"
-            value={form.primaryColor}
-            onChange={(v) => handleChange('primaryColor', v)}
-          />
-          <ColorField
-            label="Color al pasar el mouse"
-            value={form.primaryColorHover}
-            onChange={(v) => handleChange('primaryColorHover', v)}
-          />
+      <AdminBlock title="Nombre">
+        <div className="appearance-admin__form">
           <label className="field-label">
-            Título de la app
+            Título que se ve
             <input
               className="input-field"
+              aria-label="Título que se ve"
               value={form.appTitle || ''}
               onChange={(e) => handleChange('appTitle', e.target.value)}
               maxLength={80}
             />
           </label>
           <label className="field-label">
-            Nombre de empresa / marca
+            Nombre de la empresa
             <input
               className="input-field"
+              aria-label="Nombre de la empresa"
               value={form.companyName || ''}
               onChange={(e) => handleChange('companyName', e.target.value)}
               maxLength={120}
             />
           </label>
-        </form>
-      </AdminBlock>
-
-      <AdminBlock title="Modo oscuro">
-        <div className="appearance-admin__form">
-          <ColorField label="Fondo de página" value={form.darkBg} onChange={(v) => handleChange('darkBg', v)} />
-          <ColorField label="Superficie" value={form.darkSurface} onChange={(v) => handleChange('darkSurface', v)} />
-          <ColorField label="Tarjetas / paneles" value={form.darkCard} onChange={(v) => handleChange('darkCard', v)} />
-          <ColorField label="Barra lateral" value={form.darkSidebar} onChange={(v) => handleChange('darkSidebar', v)} />
-          <ColorField label="Texto" value={form.darkText} onChange={(v) => handleChange('darkText', v)} />
-          <ColorField label="Texto secundario" value={form.darkMuted} onChange={(v) => handleChange('darkMuted', v)} />
-          <ColorField label="Bordes" value={form.darkBorder} onChange={(v) => handleChange('darkBorder', v)} />
-        </div>
-      </AdminBlock>
-
-      <AdminBlock title="Modo claro">
-        <div className="appearance-admin__form">
-          <ColorField label="Fondo de página" value={form.lightBg} onChange={(v) => handleChange('lightBg', v)} />
-          <ColorField label="Superficie" value={form.lightSurface} onChange={(v) => handleChange('lightSurface', v)} />
-          <ColorField label="Tarjetas / paneles" value={form.lightCard} onChange={(v) => handleChange('lightCard', v)} />
-          <ColorField label="Barra lateral" value={form.lightSidebar} onChange={(v) => handleChange('lightSidebar', v)} />
-          <ColorField label="Texto" value={form.lightText} onChange={(v) => handleChange('lightText', v)} />
-          <ColorField label="Texto secundario" value={form.lightMuted} onChange={(v) => handleChange('lightMuted', v)} />
-          <ColorField label="Bordes" value={form.lightBorder} onChange={(v) => handleChange('lightBorder', v)} />
         </div>
       </AdminBlock>
 
@@ -366,13 +342,40 @@ function AppearanceAdminSection() {
         </button>
         <button type="button" className="btn btn-secondary" onClick={handleReset} disabled={saving}>
           <RotateCcw size={16} />
-          Restaurar MSS
-        </button>
-        <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? 'Guardando…' : 'Guardar apariencia'}
+          Volver al tema de siempre
         </button>
       </div>
+
+      <AdvancedSection>
+        <div className="appearance-admin__form">
+          <ColorField
+            label="Color principal"
+            value={form.primaryColor}
+            onChange={(v) => handleChange('primaryColor', v)}
+          />
+          <ColorField
+            label="Color al pasar el mouse"
+            value={form.primaryColorHover}
+            onChange={(v) => handleChange('primaryColorHover', v)}
+          />
+          <ColorField label="Fondo oscuro" value={form.darkBg} onChange={(v) => handleChange('darkBg', v)} />
+          <ColorField label="Paneles oscuros" value={form.darkSurface} onChange={(v) => handleChange('darkSurface', v)} />
+          <ColorField label="Tarjetas oscuras" value={form.darkCard} onChange={(v) => handleChange('darkCard', v)} />
+          <ColorField label="Barra lateral oscura" value={form.darkSidebar} onChange={(v) => handleChange('darkSidebar', v)} />
+          <ColorField label="Texto oscuro" value={form.darkText} onChange={(v) => handleChange('darkText', v)} />
+          <ColorField label="Texto suave oscuro" value={form.darkMuted} onChange={(v) => handleChange('darkMuted', v)} />
+          <ColorField label="Bordes oscuros" value={form.darkBorder} onChange={(v) => handleChange('darkBorder', v)} />
+          <ColorField label="Fondo claro" value={form.lightBg} onChange={(v) => handleChange('lightBg', v)} />
+          <ColorField label="Paneles claros" value={form.lightSurface} onChange={(v) => handleChange('lightSurface', v)} />
+          <ColorField label="Tarjetas claras" value={form.lightCard} onChange={(v) => handleChange('lightCard', v)} />
+          <ColorField label="Barra lateral clara" value={form.lightSidebar} onChange={(v) => handleChange('lightSidebar', v)} />
+          <ColorField label="Texto claro" value={form.lightText} onChange={(v) => handleChange('lightText', v)} />
+          <ColorField label="Texto suave claro" value={form.lightMuted} onChange={(v) => handleChange('lightMuted', v)} />
+          <ColorField label="Bordes claros" value={form.lightBorder} onChange={(v) => handleChange('lightBorder', v)} />
+        </div>
+      </AdvancedSection>
     </div>
+    </PageContainer>
   );
 }
 

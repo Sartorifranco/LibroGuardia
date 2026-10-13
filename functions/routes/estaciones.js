@@ -5,7 +5,12 @@
 const express = require('express');
 const { auth, requirePermission } = require('../middleware/auth');
 const { logAdminAction } = require('../lib/auditLog');
-const { resolveConnectionStatus, resolveAuthUsername, resolveApiBaseUrl } = require('../lib/lectores');
+const {
+  resolveConnectionStatus,
+  resolveAuthUsername,
+  resolveApiBaseUrl,
+  listLectores
+} = require('../lib/lectores');
 const {
   listEstaciones,
   getEstacionById,
@@ -17,22 +22,27 @@ const {
   buildStationConfigForDownload,
   touchEstacionHeartbeat
 } = require('../lib/estaciones');
+const { resolveEstacionHealth, resolveLectorHealth } = require('../lib/stationHealth');
 
 const router = express.Router();
 
 router.get('/api/admin/estaciones', auth, requirePermission('lectores.manage'), async (_req, res) => {
   try {
-    const estaciones = await listEstaciones();
-    const withCounts = await Promise.all(estaciones.map(async (e) => {
-      const lectores = await listLectoresDeEstacion(e.id);
-      return { ...e, lectoresCount: lectores.length, lectorIds: lectores.map((l) => l.id) };
-    }));
-    res.json({
-      estaciones: withCounts.map((e) => ({
+    const [estaciones, allLectores] = await Promise.all([listEstaciones(), listLectores()]);
+    const now = Date.now();
+    const withCounts = estaciones.map((e) => {
+      const lectores = allLectores.filter((l) => String(l.estacionId || '') === String(e.id));
+      // 'en línea' solo si la estación reporta y sus lectores/relés están bien.
+      const health = resolveEstacionHealth(e, lectores, now);
+      return {
         ...e,
-        connectionStatus: resolveConnectionStatus(e.ultimaConexion)
-      }))
+        lectoresCount: lectores.length,
+        lectorIds: lectores.map((l) => l.id),
+        connectionStatus: health.connectionStatus,
+        connectionReason: health.reason
+      };
     });
+    res.json({ estaciones: withCounts });
   } catch (err) {
     res.status(500).json({ message: err.message || 'Error al listar estaciones' });
   }
@@ -48,7 +58,10 @@ router.get('/api/admin/estaciones/:id', auth, requirePermission('lectores.manage
         lectoresCount: lectores.length,
         lectorIds: lectores.map((l) => l.id)
       },
-      lectores
+      lectores: lectores.map((l) => {
+        const health = resolveLectorHealth(l);
+        return { ...l, connectionStatus: health.connectionStatus, connectionReason: health.reason };
+      })
     });
   } catch (err) {
     res.status(err.status || 500).json({ message: err.message || 'Error al obtener estación' });
@@ -181,7 +194,8 @@ router.post('/api/estaciones/heartbeat', auth, async (req, res) => {
     const estacion = await touchEstacionHeartbeat({
       username,
       discoveredPorts: req.body?.discoveredPorts,
-      configVersionAck: req.body?.configVersionAck
+      configVersionAck: req.body?.configVersionAck,
+      readers: req.body?.readers || null
     });
     res.json({
       ok: true,

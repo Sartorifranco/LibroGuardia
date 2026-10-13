@@ -29,8 +29,8 @@ function MonitoreoDashboard({ currentUser, entries, onNavigate }) {
       ]}
       quickActions={[
         { id: 'vehiculosAutorizados', label: 'Autorizar vehículo', icon: Car },
-        { id: 'novedad', label: 'Cargar novedad', icon: ClipboardList },
-        { id: 'botonera', label: 'Botonera', icon: DoorOpen }
+        { id: 'novedad', label: 'Novedades', icon: ClipboardList },
+        { id: 'botonera', label: 'Puertas', icon: DoorOpen }
       ]}
       recentEntries={monitoreoEntries}
     />

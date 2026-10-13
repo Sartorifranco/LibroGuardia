@@ -11,7 +11,10 @@ import {
   BadgeCheck
 } from 'lucide-react';
 
-const STORAGE_KEY = 'onboardingDone';
+export function onboardingStorageKey(user) {
+  const id = user?.id || user?.uid || user?.username || '';
+  return id ? `onboardingDone:${id}` : 'onboardingDone';
+}
 
 const STEPS = [
   {
@@ -52,23 +55,23 @@ const STEPS = [
   }
 ];
 
-export function isOnboardingDone() {
+export function isOnboardingDone(user) {
   try {
-    return localStorage.getItem(STORAGE_KEY) === '1';
+    return localStorage.getItem(onboardingStorageKey(user)) === '1';
   } catch {
     return true;
   }
 }
 
-export function markOnboardingDone() {
+export function markOnboardingDone(user) {
   try {
-    localStorage.setItem(STORAGE_KEY, '1');
+    localStorage.setItem(onboardingStorageKey(user), '1');
   } catch {
     // ignore
   }
 }
 
-function OnboardingTour({ open, onClose, auto = false }) {
+function OnboardingTour({ open, onClose, auto = false, user = null }) {
   const [step, setStep] = useState(0);
 
   useEffect(() => {
@@ -76,9 +79,21 @@ function OnboardingTour({ open, onClose, auto = false }) {
   }, [open]);
 
   const finish = useCallback(() => {
-    markOnboardingDone();
+    markOnboardingDone(user);
     onClose?.();
-  }, [onClose]);
+  }, [onClose, user]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      finish();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, finish]);
 
   if (!open) return null;
 
@@ -107,15 +122,14 @@ function OnboardingTour({ open, onClose, auto = false }) {
           ))}
         </div>
         <div className="onboarding-modal__actions">
+          <button type="button" className="btn btn-secondary" onClick={finish}>
+            Omitir
+          </button>
           {step > 0 ? (
             <button type="button" className="btn btn-secondary" onClick={() => setStep((s) => s - 1)}>
               <ChevronLeft size={16} /> Anterior
             </button>
-          ) : (
-            <button type="button" className="btn btn-secondary" onClick={finish}>
-              Omitir
-            </button>
-          )}
+          ) : null}
           {isLast ? (
             <button type="button" className="btn btn-primary" onClick={finish}>
               Listo

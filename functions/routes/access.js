@@ -1,4 +1,5 @@
 const express = require('express');
+const { markDirty } = require('../lib/siteCompiler');
 const { db } = require('../firestore');
 const { parseScanData, normalizeIdNumber } = require('../permissions');
 const { resolveAuthorization } = require('../authorizations');
@@ -42,12 +43,30 @@ const {
 const { logAdminAction } = require('../lib/auditLog');
 const { notifySafe } = require('../lib/notifications');
 const {
+  maskDoors,
+  maskDoorsConfig,
+  maskAccessControlConfig,
+  restoreDoorSecrets,
+  restoreAccessControlSecret
+} = require('../lib/secretMask');
+const {
   auth,
   requirePermission,
-  requireAnyPermission
+  requireAnyPermission,
+  userHasAnyPermission,
+  sendServerError,
+  sendRouteError
 } = require('../middleware/auth');
+const { resolveAuthUsername } = require('../lib/lectores');
+const { cachedGuardHandler, invalidateGuardCache } = require('../lib/guardResponseCache');
 
 const router = express.Router();
+
+// Después de abrir una puerta, el panel de este mismo servidor ve el pulso nuevo al instante.
+router.use('/api/guard/open-door', (req, res, next) => {
+  res.on('finish', () => invalidateGuardCache('/api/guard/doors'));
+  next();
+});
 
 const buildResolvedName = (parsed) => {
   if (parsed.name) return parsed.name;
@@ -57,25 +76,27 @@ const buildResolvedName = (parsed) => {
 router.get('/api/admin/access-control', auth, requirePermission('access.control'), async (_req, res) => {
   try {
     const config = await getAccessControlConfig();
-    res.json({ config });
+    res.json({ config: maskAccessControlConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener configuración de acceso', error: err.message });
+    sendServerError(res, err, 'Error al obtener configuración de acceso');
   }
 });
 
 router.put('/api/admin/access-control', auth, requirePermission('access.control'), async (req, res) => {
   try {
     const allowedKeys = Object.keys(DEFAULT_ACCESS_CONTROL);
+    const before = await getAccessControlConfig();
+    const body = restoreAccessControlSecret(req.body || {}, before);
     const updates = {};
     allowedKeys.forEach((key) => {
-      if (req.body[key] !== undefined) updates[key] = req.body[key];
+      if (body[key] !== undefined) updates[key] = body[key];
     });
 
     await db.collection('settings').doc('accessControl').set(updates, { merge: true });
     const config = await getAccessControlConfig();
-    res.json({ message: 'Configuración de acceso actualizada', config });
+    res.json({ message: 'Configuración de acceso actualizada', config: maskAccessControlConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar configuración de acceso', error: err.message });
+    sendServerError(res, err, 'Error al guardar configuración de acceso');
   }
 });
 
@@ -91,8 +112,8 @@ router.post('/api/access/test-relay', auth, requireAnyPermission(['access.contro
     const result = await openDoor({
       doorId,
       username: req.user?.username,
+      // El pulso de prueba abre la puerta de verdad: respeta el estanco como cualquier apertura manual.
       manual: true,
-      bypassAirlock: true,
       force: true,
       reason: 'test_relay',
       pulseSeconds: Number.isFinite(pulseSeconds) && pulseSeconds > 0 ? pulseSeconds : null,
@@ -113,37 +134,74 @@ router.post('/api/access/test-relay', auth, requireAnyPermission(['access.contro
   }
 });
 
+const FORCE_AIRLOCK_PERMISSION = 'puertas.estanco.forzar';
+const MIN_FORCE_REASON_LENGTH = 5;
+
 router.post('/api/guard/open-door', auth, requirePermission('access.manual_open'), async (req, res) => {
   try {
+    // bypassAirlock del body ya no se acepta: la apertura manual respeta el estanco.
+    // Forzar requiere permiso puertas.estanco.forzar + motivo, y queda auditado.
+    const forceAirlock = req.body?.forceAirlock === true;
+    const forceReason = String(req.body?.forceReason || '').trim().slice(0, 500);
+    if (forceAirlock) {
+      if (!(await userHasAnyPermission(req, [FORCE_AIRLOCK_PERMISSION]))) {
+        return res.status(403).json({ message: 'No tenés permiso para forzar la apertura del estanco.' });
+      }
+      if (forceReason.length < MIN_FORCE_REASON_LENGTH) {
+        return res.status(400).json({ message: 'Indicá el motivo para forzar la apertura del estanco.' });
+      }
+    }
     const result = await manualOpenDoor({
       username: req.user?.username || req.user?.id,
       userId: req.user?.id || null,
-      reason: req.body?.reason || 'apertura_manual_guardia',
+      reason: forceAirlock
+        ? `estanco_forzado: ${forceReason}`
+        : (req.body?.reason || 'apertura_manual_guardia'),
       doorId: req.body?.doorId || null,
-      bypassAirlock: req.body?.bypassAirlock === true
+      forceAirlock
     });
+    if (result?.forcedAirlock) {
+      logAdminAction({
+        req,
+        action: 'door.airlock.force_open',
+        targetType: 'door',
+        targetId: result.door?.id || req.body?.doorId || null,
+        before: null,
+        after: {
+          forcedAirlock: true,
+          reason: forceReason,
+          doorName: result.door?.name || null,
+          airlockGroupId: result.airlock?.groupId || null,
+          phaseBefore: result.forcedAirlock.phase || null,
+          otherDoorName: result.forcedAirlock.otherDoorName || null
+        }
+      }).catch((err) => console.error('auditLog door.airlock.force_open:', err.message));
+    }
     res.json(result);
   } catch (err) {
     res.status(err.status || 500).json({
       message: err.message || 'Error al abrir la puerta',
       error: err.message,
+      ...(err.code ? { code: err.code } : {}),
       airlock: err.airlock || undefined
     });
   }
 });
 
-router.get('/api/guard/doors', auth, requirePermission('access.manual_open'), async (_req, res) => {
-  try {
+// Caché de 15 s por instancia: la respuesta no depende del usuario (mismo enmascarado para todos).
+router.get('/api/guard/doors', auth, requirePermission('access.manual_open'), cachedGuardHandler(
+  '/api/guard/doors',
+  async () => {
     const { enrichDoorsWithLastPulse } = require('../lib/doorLastPulse');
     const { enrichDoorsWithLocalStations } = require('../lib/guardLocalStations');
     const base = await listActiveDoors();
     const withPulse = await enrichDoorsWithLastPulse(base.doors || []);
     const doors = await enrichDoorsWithLocalStations(withPulse);
-    res.json({ ...base, doors });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
+    // Guardias no necesitan secretos del hardware.
+    return { ...base, doors: maskDoors(doors) };
+  },
+  { onError: (res, err) => sendServerError(res, err) }
+));
 
 router.get('/api/guard/door-names', auth, requireAnyPermission(['entries.view', 'reports.export', 'access.manual_open', 'access.doors.manage']), async (_req, res) => {
   try {
@@ -156,29 +214,27 @@ router.get('/api/guard/door-names', auth, requireAnyPermission(['entries.view', 
       }))
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
-router.get('/api/guard/live-alerts', auth, requireAnyPermission(['entries.view', 'entries.create', 'access.kiosk', 'access.manual_open', 'attendance.alerts.read']), async (_req, res) => {
-  try {
+router.get('/api/guard/live-alerts', auth, requireAnyPermission(['entries.view', 'entries.create', 'access.kiosk', 'access.manual_open', 'attendance.alerts.read']), cachedGuardHandler(
+  '/api/guard/live-alerts',
+  async () => {
     const { getLiveAlerts } = require('../lib/liveAlerts');
-    const result = await getLiveAlerts();
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ message: err.message || 'Error al obtener alertas en vivo' });
-  }
-});
+    return getLiveAlerts();
+  },
+  { onError: (res, err) => sendServerError(res, err, 'Error al obtener alertas en vivo') }
+));
 
-router.get('/api/guard/fleet-presence', auth, requireAnyPermission(['entries.view', 'entries.create', 'fleet.gps.read']), async (_req, res) => {
-  try {
+router.get('/api/guard/fleet-presence', auth, requireAnyPermission(['entries.view', 'entries.create', 'fleet.gps.read']), cachedGuardHandler(
+  '/api/guard/fleet-presence',
+  async () => {
     const { getFleetPresence } = require('../lib/getFleetPresence');
-    const presence = await getFleetPresence();
-    res.json(presence);
-  } catch (err) {
-    res.status(500).json({ message: err.message || 'Error al calcular presencia de flota' });
-  }
-});
+    return getFleetPresence();
+  },
+  { onError: (res, err) => sendServerError(res, err, 'Error al calcular presencia de flota') }
+));
 
 router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.manage', 'access.control']), async (_req, res) => {
   try {
@@ -189,9 +245,10 @@ router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       getDoorsConfigMeta()
     ]);
     const doors = await enrichDoorsWithLocalStations(config.doors || []);
+    // Secretos enmascarados ("••••" + 2 últimos) + hasBridgeSecret/hasHttpAuthToken.
     res.json({
-      config: { ...config, doors },
-      globalAccess,
+      config: maskDoorsConfig({ ...config, doors }),
+      globalAccess: maskAccessControlConfig(globalAccess),
       authMethods: AUTH_METHODS,
       meta: {
         ...meta,
@@ -199,7 +256,7 @@ router.get('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       }
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -215,13 +272,21 @@ router.get('/api/admin/doors/physical-status', auth, requireAnyPermission(['acce
 router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.manage', 'access.control']), async (req, res) => {
   try {
     const before = await getDoorsConfig();
-    const { globalAccess, ...doorsPayload } = req.body || {};
+    const { globalAccess: rawGlobalAccess, ...doorsPayload } = req.body || {};
+    // Si el admin guarda sin tocar el secreto, llega la máscara (o vacío): conservar el guardado.
+    if (Array.isArray(doorsPayload.doors)) {
+      doorsPayload.doors = restoreDoorSecrets(doorsPayload.doors, before.doors || []);
+    }
+    const globalAccess = rawGlobalAccess && typeof rawGlobalAccess === 'object'
+      ? restoreAccessControlSecret(rawGlobalAccess, await getAccessControlConfig())
+      : rawGlobalAccess;
     if (Array.isArray(doorsPayload.doors)) {
       const { assertDoorsCompatibleWithOfflineLectores } = require('../lib/accessHardwareCoherence');
       const { listLectores } = require('../lib/lectores');
       await assertDoorsCompatibleWithOfflineLectores(doorsPayload.doors, listLectores);
     }
     const config = await saveDoorsConfig(doorsPayload);
+    markDirty({ doors: true });
     let savedGlobalAccess = null;
     if (globalAccess && typeof globalAccess === 'object') {
       savedGlobalAccess = await saveGlobalAccessSettings(globalAccess);
@@ -232,12 +297,12 @@ router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
       targetType: 'doors_config',
       targetId: 'doorsConfig',
       before: {
-        doors: before.doors,
+        doors: maskDoors(before.doors),
         airlockGroups: before.airlockGroups,
         defaultDoorId: before.defaultDoorId
       },
       after: {
-        doors: config.doors,
+        doors: maskDoors(config.doors),
         airlockGroups: config.airlockGroups,
         defaultDoorId: config.defaultDoorId,
         globalAccessUpdated: Boolean(savedGlobalAccess)
@@ -245,14 +310,11 @@ router.put('/api/admin/doors-config', auth, requireAnyPermission(['access.doors.
     }).catch((err) => console.error('auditLog door.config.update:', err.message));
     res.json({
       message: 'Configuración de puertas y acceso guardada',
-      config,
-      globalAccess: savedGlobalAccess || await getAccessControlConfig()
+      config: maskDoorsConfig(config),
+      globalAccess: maskAccessControlConfig(savedGlobalAccess || await getAccessControlConfig())
     });
   } catch (err) {
-    res.status(err.status || 500).json({
-      message: err.message || 'Error al guardar puertas',
-      code: err.code
-    });
+    sendRouteError(res, err, 'Error al guardar puertas');
   }
 });
 
@@ -260,7 +322,7 @@ router.get('/api/guard/airlock/:groupId', auth, requirePermission('access.manual
   try {
     res.json({ state: await getAirlockState(req.params.groupId) });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
@@ -269,11 +331,11 @@ router.post('/api/guard/airlock/:groupId/reset', auth, requirePermission('access
     await resetAirlockState(req.params.groupId, req.body?.reason || 'manual_reset');
     res.json({ message: 'Estanco reiniciado', state: await getAirlockState(req.params.groupId) });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    sendServerError(res, err);
   }
 });
 
-router.post('/api/access/validar', auth, async (req, res) => {
+router.post('/api/access/validar', auth, requireAnyPermission(['access.kiosk', 'entries.create']), async (req, res) => {
   try {
     const {
       dni = '',
@@ -295,7 +357,7 @@ router.post('/api/access/validar', auth, async (req, res) => {
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al validar acceso', error: err.message });
+    sendServerError(res, err, 'Error al validar acceso');
   }
 });
 
@@ -307,17 +369,23 @@ router.get('/api/guard/access-status', auth, requirePermission('master.citacione
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al consultar acceso', error: err.message });
+    sendServerError(res, err, 'Error al consultar acceso');
   }
 });
 
 router.post('/api/guard/pre-register', auth, requirePermission('master.citaciones.preregister'), async (req, res) => {
   try {
-    const authorization = await preRegisterVisitor(req.body, {
+    const result = await preRegisterVisitor(req.body, {
       userId: req.user.id,
-      username: req.user.username
+      username: req.user.username,
+      req
     });
-    res.status(201).json({ message: 'Visita pre-registrada', authorization });
+    res.status(201).json({
+      message: result.message,
+      pending: true,
+      request: result.request,
+      authorization: null
+    });
   } catch (err) {
     res.status(err.status || 400).json({ message: err.message || 'Error al pre-registrar' });
   }
@@ -327,23 +395,19 @@ router.post('/api/guard/exceptional-entry', auth, requirePermission('access.exce
   try {
     const result = await registerExceptionalEntry(req.body, {
       userId: req.user.id,
-      username: req.user.username
-    });
-    notifySafe('exceptional_entry', {
-      name: req.body?.name,
-      idNumber: req.body?.idNumber,
-      reason: req.body?.reason,
-      entryId: result.entryId,
-      userId: req.user.id,
-      username: req.user.username || req.user.id
+      username: req.user.username,
+      role: req.user.role,
+      req
     });
     res.status(201).json(result);
   } catch (err) {
-    res.status(err.status || 400).json({ message: err.message || 'Error en ingreso excepcional' });
+    const body = { message: err.message || 'Error en ingreso de emergencia' };
+    if (err.status === 400) body.reasons = require('../lib/accessRequests').EMERGENCY_REASONS;
+    res.status(err.status || 400).json(body);
   }
 });
 
-router.post('/api/access/kiosk-scan', auth, async (req, res) => {
+router.post('/api/access/kiosk-scan', auth, requirePermission('access.kiosk'), async (req, res) => {
   const t0 = Date.now();
   try {
     const normalized = normalizeAccessIngestRequest({
@@ -371,7 +435,7 @@ router.post('/api/access/kiosk-scan', auth, async (req, res) => {
       wallMs: Date.now() - t0,
       error: err.message
     }));
-    res.status(500).json({ message: 'Error en control de acceso', error: err.message });
+    sendServerError(res, err, 'Error en control de acceso');
   }
 });
 
@@ -379,7 +443,7 @@ router.post('/api/access/kiosk-scan', auth, async (req, res) => {
  * Ingest unificado (Fase A): DNI, tarjeta, biométrico u otros hardwares.
  * Misma autorización/apertura que kiosk-scan; contrato estable para marcas.
  */
-router.post('/api/access/ingest', auth, async (req, res) => {
+router.post('/api/access/ingest', auth, requirePermission('access.kiosk'), async (req, res) => {
   const t0 = Date.now();
   try {
     const normalized = normalizeAccessIngestRequest(req.body || {}, req.user.id);
@@ -408,7 +472,7 @@ router.post('/api/access/ingest', auth, async (req, res) => {
       wallMs: Date.now() - t0,
       error: err.message
     }));
-    res.status(500).json({ message: 'Error en ingest de acceso', error: err.message });
+    sendServerError(res, err, 'Error en ingest de acceso');
   }
 });
 
@@ -441,7 +505,7 @@ router.post('/api/access/evaluate', auth, requirePermission('master.personal.rea
       }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al evaluar acceso', error: err.message });
+    sendServerError(res, err, 'Error al evaluar acceso');
   }
 });
 
@@ -510,7 +574,7 @@ router.post('/api/scan/resolve', auth, requirePermission('master.personal.read')
       }
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al resolver escaneo', error: err.message });
+    sendServerError(res, err, 'Error al resolver escaneo');
   }
 });
 
@@ -559,7 +623,8 @@ router.post(
     try {
       const events = req.body?.events || req.body?.entries || [];
       const result = await ingestOfflineEntries(events, {
-        actorId: req.user?.id || req.user?.username || null
+        actorId: req.user?.id || req.user?.username || null,
+        username: resolveAuthUsername(req.user)
       });
       res.json({
         ok: true,

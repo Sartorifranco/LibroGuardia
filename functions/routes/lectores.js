@@ -24,9 +24,50 @@ const {
   resolveAuthUsername,
   resolveApiBaseUrl,
   resolveConnectionStatus,
-  getLectorById
+  getLectorById,
+  listDoorIdsForKioskUser
 } = require('../lib/lectores');
 const { createPairingCode } = require('../lib/lectorPairing');
+const { resolveLectorHealth } = require('../lib/stationHealth');
+
+/** Estado para la UI: 'en línea' solo con heartbeat fresco y lector/relé OK. */
+const withHealth = (lector, now = Date.now()) => {
+  const health = resolveLectorHealth(lector, now);
+  return {
+    ...lector,
+    connectionStatus: health.connectionStatus,
+    connectionReason: health.reason
+  };
+};
+
+/**
+ * Si el lector ya está en una estación, avisar antes de instalarlo en otra:
+ * el canje regenera la contraseña y la estación anterior deja de funcionar.
+ */
+const describePairingRebind = async (lectorId) => {
+  try {
+    const lector = await getLectorById(lectorId);
+    const previousEstacionId = String(lector?.estacionId || '').trim();
+    if (!previousEstacionId) return null;
+    let nombre = previousEstacionId;
+    try {
+      const { getEstacionById } = require('../lib/estaciones');
+      const estacion = await getEstacionById(previousEstacionId);
+      if (estacion?.nombre) nombre = estacion.nombre;
+    } catch (_err) {
+      // sin nombre: se usa el id
+    }
+    return {
+      previousEstacionId,
+      previousEstacionNombre: nombre,
+      warning: `Esta puerta ya está instalada en la estación "${nombre}". `
+        + 'Si usás este código en otra PC, esa estación deja de abrir esta puerta.'
+    };
+  } catch (err) {
+    console.error('[lectores] No se pudo verificar la estación previa', err?.message || err);
+    return null;
+  }
+};
 
 const router = express.Router();
 
@@ -35,10 +76,7 @@ router.get('/api/admin/lectores', auth, requirePermission('lectores.manage'), as
     const lectores = await listLectores();
     const now = Date.now();
     res.json({
-      lectores: lectores.map((l) => ({
-        ...l,
-        connectionStatus: resolveConnectionStatus(l.ultimaConexion, now)
-      }))
+      lectores: lectores.map((l) => withHealth(l, now))
     });
   } catch (err) {
     res.status(500).json({ message: err.message || 'Error al listar lectores' });
@@ -75,7 +113,7 @@ router.post('/api/admin/lectores', auth, requirePermission('lectores.manage'), a
 
 router.put('/api/admin/lectores/:id', auth, requirePermission('lectores.manage'), async (req, res) => {
   try {
-    const { before, lector } = await updateLector(req.params.id, req.body || {});
+    const { before, lector, previousEstacionId, warning } = await updateLector(req.params.id, req.body || {});
     logAdminAction({
       req,
       action: 'lector.update',
@@ -86,10 +124,8 @@ router.put('/api/admin/lectores/:id', auth, requirePermission('lectores.manage')
     }).catch(() => {});
     res.json({
       message: 'Lector actualizado. Si cambiaste puerta/readerId, actualizá el JSON en la mini PC.',
-      lector: {
-        ...lector,
-        connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
-      }
+      lector: withHealth(lector),
+      ...(previousEstacionId ? { previousEstacionId, warning } : {})
     });
   } catch (err) {
     res.status(err.status || 500).json({
@@ -134,7 +170,10 @@ router.post(
         message: 'Credenciales regeneradas. La contraseña anterior ya no sirve. Guardá la nueva: no se volverá a mostrar.',
         lector: result.lector,
         password: result.password,
-        config: result.config
+        config: result.config,
+        ...(result.previousEstacionId
+          ? { previousEstacionId: result.previousEstacionId, warning: result.warning }
+          : {})
       });
     } catch (err) {
       res.status(err.status || 500).json({ message: err.message || 'Error al regenerar credenciales' });
@@ -167,6 +206,7 @@ router.post(
   async (req, res) => {
     try {
       const result = await createPairingCode(req.params.id);
+      const rebind = await describePairingRebind(req.params.id);
       logAdminAction({
         req,
         action: 'lector.pairing_code',
@@ -176,7 +216,8 @@ router.post(
       }).catch(() => {});
       res.json({
         message: 'Código generado. Válido 10 minutos, un solo uso.',
-        ...result
+        ...result,
+        ...(rebind || {})
       });
     } catch (err) {
       res.status(err.status || 500).json({
@@ -243,10 +284,7 @@ router.post(
       }).catch(() => {});
       res.json({
         message: 'Resincronización pedida. La mini PC la aplica en unos segundos (poll ~2 s) y reporta la lista al instante.',
-        lector: {
-          ...lector,
-          connectionStatus: resolveConnectionStatus(lector.ultimaConexion)
-        }
+        lector: withHealth(lector)
       });
     } catch (err) {
       res.status(err.status || 500).json({
@@ -274,17 +312,22 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       serialPort: req.body?.serialPort || req.body?.puertoDetectado || null,
       inputMode: req.body?.inputMode || req.body?.inputModeDetectado || null,
       allowlistGeneratedAt: req.body?.allowlistGeneratedAt,
-      allowlistEntryCount: req.body?.allowlistEntryCount
+      allowlistEntryCount: req.body?.allowlistEntryCount,
+      healthReport: req.body || null
     });
 
     let pendingOpens = [];
+    let pendingOpensError = null;
     const doorId = String(req.body?.doorId || lector.doorId || '').trim();
     if (doorId && req.body?.claimPendingOpens !== false) {
       try {
+        // Solo puertas vinculadas a ESTE usuario (si no, 403 en la lib y la cola queda intacta).
+        const allowedDoorIds = await listDoorIdsForKioskUser(username);
         const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
-        const claimed = await claimPendingLocalOpens(doorId);
+        const claimed = await claimPendingLocalOpens(doorId, { allowedDoorIds });
         pendingOpens = claimed.opens || [];
       } catch (claimErr) {
+        if (claimErr.status === 403) pendingOpensError = 'puerta_no_vinculada';
         console.warn('[lectores/heartbeat] claimPendingLocalOpens', claimErr.message);
       }
     }
@@ -302,7 +345,8 @@ router.post('/api/lectores/heartbeat', auth, async (req, res) => {
       offlineCacheMaxAgeHours: lector.offlineCacheMaxAgeHours ?? null,
       puertoDetectado: lector.puertoDetectado || null,
       inputModeDetectado: lector.inputModeDetectado || null,
-      pendingOpens
+      pendingOpens,
+      ...(pendingOpensError ? { pendingOpensError } : {})
     });
   } catch (err) {
     res.status(err.status || 500).json({
@@ -326,8 +370,10 @@ router.post('/api/lectores/claim-pending-opens', auth, async (req, res) => {
     if (!doorId) {
       return res.status(400).json({ message: 'doorId requerido' });
     }
+    // La estación solo reclama aperturas de SUS puertas: si no, 403 y la cola no se toca.
+    const allowedDoorIds = await listDoorIdsForKioskUser(username);
     const { claimPendingLocalOpens } = require('../lib/pendingLocalOpens');
-    const claimed = await claimPendingLocalOpens(doorId);
+    const claimed = await claimPendingLocalOpens(doorId, { allowedDoorIds });
 
     let forceResync = false;
     let offlineCache = false;

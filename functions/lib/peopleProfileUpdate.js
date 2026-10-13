@@ -53,7 +53,11 @@ const personToAdminJSON = (doc) => {
     mergedIntoId: data.mergedIntoId || null,
     category: resolveCategory(data),
     nameKey: data.nameKey || '',
-    allowedDoorIds: normalizeAllowedDoorIds(data.allowedDoorIds)
+    allowedDoorIds: normalizeAllowedDoorIds(data.allowedDoorIds),
+    accessLevels: Array.isArray(data.accessLevels)
+      ? data.accessLevels.map((id) => String(id || '').trim()).filter(Boolean)
+      : [],
+    accessAll: data.accessAll === true
   };
 };
 

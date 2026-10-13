@@ -37,15 +37,16 @@ const buildLiveAlertsFromDocs = ({
   const alerts = [];
   const sinceMs = nowMs - Math.max(30, denialWindowMinutes) * 60 * 1000;
 
-  for (const entry of exceptionalEntries) {
+    for (const entry of exceptionalEntries) {
     const at = toIso(entry.timestamp) || toIso(entry.createdAt);
     const atMs = toMs(entry.timestamp) || toMs(entry.createdAt);
     if (atMs && atMs < nowMs - 5 * 60 * 1000) continue;
+    const isEmergency = entry.emergency === true || entry.alarmType === 'ingreso_emergencia';
     alerts.push({
-      id: `exceptional:${entry.id}`,
-      type: 'exceptional_entry',
-      severity: 'warn',
-      title: 'Ingreso excepcional',
+      id: isEmergency ? `ingreso_emergencia:${entry.id}` : `exceptional:${entry.id}`,
+      type: isEmergency ? 'ingreso_emergencia' : 'exceptional_entry',
+      severity: isEmergency ? 'critical' : 'warn',
+      title: isEmergency ? 'Ingreso de emergencia' : 'Ingreso excepcional',
       message: `${entry.name || 'Persona'}${entry.idNumber ? ` (${entry.idNumber})` : ''}: ${entry.exceptionalReason || entry.notes || 'sin motivo'}`,
       at,
       meta: { entryId: entry.id }
@@ -157,6 +158,7 @@ const buildLiveAlertsFromDocs = ({
   // Denegados: mismo umbral que email; un alerta por clave (dni|puerta) por ventana.
   const denials = accessEvents.filter((ev) => {
     if (ev.type !== 'denied') return false;
+    if (ev.denialReason === 'lectura_repetida' || ev.reason === 'lectura_repetida') return false;
     const atMs = toMs(ev.createdAt);
     return !atMs || atMs >= sinceMs;
   });

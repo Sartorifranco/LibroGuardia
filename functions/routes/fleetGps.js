@@ -1,21 +1,27 @@
 const express = require('express');
 const { db, FieldValue } = require('../firestore');
 const { normalizePlate } = require('../permissions');
+const { getGpsProvider } = require('../lib/gpsProviders');
 const {
   getFleetGpsConfig,
   publicFleetGpsConfig,
   saveFleetGpsConfig,
   saveFleetGpsGeofence,
   fetchNearbyFleetAlerts,
-  fetchFleetLiveSnapshot
+  fetchFleetLiveSnapshot,
+  invalidateFleetLookupCache
 } = require('../fleetGps');
 const {
   auth,
-  authorize,
-  requirePermission
+  requirePermission,
+  requireAnyPermission,
+  sendServerError
 } = require('../middleware/auth');
 
 const router = express.Router();
+
+/** Listas de móviles/choferes: carga de flota (guardia), admin de flota o GPS. */
+const FLEET_LIST_PERMISSIONS = ['entries.create', 'entries.view', 'fleet.upload', 'fleet.gps.read'];
 
 const deleteCollection = async (collectionName, batchSize = 100) => {
   const collectionRef = db.collection(collectionName);
@@ -31,7 +37,7 @@ const deleteCollection = async (collectionName, batchSize = 100) => {
   }
 };
 
-router.post('/api/admin/fleet/mobiles/upload', auth, authorize(['admin', 'supervisor']), async (req, res) => {
+router.post('/api/admin/fleet/mobiles/upload', auth, requirePermission('fleet.upload'), async (req, res) => {
   try {
     const { data } = req.body;
     if (!Array.isArray(data) || data.length === 0 || data.some((item) => typeof item.name !== 'string' || !item.name.trim())) {
@@ -45,14 +51,15 @@ router.post('/api/admin/fleet/mobiles/upload', auth, authorize(['admin', 'superv
       batch.set(ref, { name: item.name.trim() });
     });
     await batch.commit();
+    invalidateFleetLookupCache();
 
     res.status(200).json({ message: 'Lista de móviles actualizada exitosamente.' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al subir la lista de móviles', error: err.message });
+    sendServerError(res, err, 'Error al subir la lista de móviles');
   }
 });
 
-router.post('/api/admin/fleet/drivers/upload', auth, authorize(['admin', 'supervisor']), async (req, res) => {
+router.post('/api/admin/fleet/drivers/upload', auth, requirePermission('fleet.upload'), async (req, res) => {
   try {
     const { data } = req.body;
     if (!Array.isArray(data) || data.length === 0 || data.some((item) => typeof item.name !== 'string' || !item.name.trim())) {
@@ -69,25 +76,25 @@ router.post('/api/admin/fleet/drivers/upload', auth, authorize(['admin', 'superv
 
     res.status(200).json({ message: 'Lista de choferes actualizada exitosamente.' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al subir la lista de choferes', error: err.message });
+    sendServerError(res, err, 'Error al subir la lista de choferes');
   }
 });
 
-router.get('/api/fleet/mobiles', auth, async (_req, res) => {
+router.get('/api/fleet/mobiles', auth, requireAnyPermission(FLEET_LIST_PERMISSIONS), async (_req, res) => {
   try {
     const snap = await db.collection('mobiles').orderBy('name').get();
     res.json({ mobiles: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener móviles', error: err.message });
+    sendServerError(res, err, 'Error al obtener móviles');
   }
 });
 
-router.get('/api/fleet/drivers', auth, async (_req, res) => {
+router.get('/api/fleet/drivers', auth, requireAnyPermission(FLEET_LIST_PERMISSIONS), async (_req, res) => {
   try {
     const snap = await db.collection('drivers').orderBy('name').get();
     res.json({ drivers: snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener choferes', error: err.message });
+    sendServerError(res, err, 'Error al obtener choferes');
   }
 });
 
@@ -101,7 +108,7 @@ router.get('/api/guard/fleet-gps/alerts', auth, requirePermission('fleet.gps.rea
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al consultar GPS de flota', error: err.message });
+    sendServerError(res, err, 'Error al consultar GPS de flota');
   }
 });
 
@@ -110,7 +117,7 @@ router.get('/api/admin/fleet-gps', auth, requirePermission('access.control'), as
     const config = await getFleetGpsConfig(db);
     res.json({ config: publicFleetGpsConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener config GPS', error: err.message });
+    sendServerError(res, err, 'Error al obtener config GPS');
   }
 });
 
@@ -120,7 +127,7 @@ router.put('/api/admin/fleet-gps', auth, requirePermission('access.control'), as
     const providerName = getGpsProvider(config.provider).displayName;
     res.json({ message: `Configuración GPS ${providerName} guardada`, config: publicFleetGpsConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar config GPS', error: err.message });
+    sendServerError(res, err, 'Error al guardar config GPS');
   }
 });
 
@@ -129,7 +136,7 @@ router.put('/api/admin/fleet-gps/geofence', auth, requirePermission('access.cont
     const config = await saveFleetGpsGeofence(db, FieldValue, req.body || {});
     res.json({ message: 'Geocercas del mapa guardadas', config: publicFleetGpsConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar geocercas', error: err.message });
+    sendServerError(res, err, 'Error al guardar geocercas');
   }
 });
 
@@ -146,7 +153,7 @@ router.post('/api/admin/fleet-gps/test', auth, requirePermission('access.control
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al probar GPS de flota', error: err.message });
+    sendServerError(res, err, 'Error al probar GPS de flota');
   }
 });
 
@@ -184,7 +191,7 @@ router.get('/api/admin/fleet-gps/live', auth, requirePermission('access.control'
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener mapa GPS', error: err.message });
+    sendServerError(res, err, 'Error al obtener mapa GPS');
   }
 });
 
@@ -212,9 +219,10 @@ router.post('/api/admin/fleet/vehicles/upload', auth, requirePermission('master.
       });
     });
     await batch.commit();
+    invalidateFleetLookupCache();
     res.status(200).json({ message: 'Vehículos autorizados cargados exitosamente.' });
   } catch (err) {
-    res.status(500).json({ message: 'Error al cargar vehículos autorizados', error: err.message });
+    sendServerError(res, err, 'Error al cargar vehículos autorizados');
   }
 });
 

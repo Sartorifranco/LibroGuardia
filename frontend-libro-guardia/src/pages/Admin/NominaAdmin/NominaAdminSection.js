@@ -1,19 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import * as XLSX from 'xlsx';
 import {
-  ClipboardList,
   Download,
   Pencil,
   Plus,
-  Trash2,
-  Upload,
-  X
+  Trash2
 } from 'lucide-react';
 import PendingButton from '../../../components/PendingButton';
 import {
   AdminBlock,
-  AdminEmpty,
   AdminLoading,
   AdminTable
 } from '../../../components/admin/AdminUi';
@@ -23,6 +18,11 @@ import { useToast } from '../../../context/ToastContext';
 import { useConfirm } from '../../../context/ConfirmContext';
 import { apiFetch } from '../../../services/api';
 import { parseTurnoPreview } from '../../../utils/parseTurnoPreview';
+import PageHeader from '../../../components/admin-ui/PageHeader';
+import EmptyState from '../../../components/admin-ui/EmptyState';
+import AdvancedSection from '../../../components/admin-ui/AdvancedSection';
+import { Modal, WizardModal, PageContainer } from '../../../components/admin-ui';
+import { summarizeNominaChange } from './nominaDiff';
 
 const AUTH_POLICY_OPTIONS = [
   { value: 'permanent_shift', label: 'Permanente dentro del turno' },
@@ -99,6 +99,8 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
   const [nominaData, setNominaData] = useState([]);
   const [query, setQuery] = useState('');
   const [showInactive, setShowInactive] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [preview, setPreview] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -227,14 +229,14 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
             token: authToken,
             body
           });
-          showSuccess('Empleado actualizado');
+          showSuccess('Guardado');
         } else {
           await apiFetch('/admin/nomina', {
             method: 'POST',
             token: authToken,
             body
           });
-          showSuccess('Empleado agregado a la nómina');
+          showSuccess('Guardado');
         }
         resetForm();
         await refreshList();
@@ -266,6 +268,47 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
 
   const handleFileChange = (e) => {
     setSelectedNominaFile(e.target.files[0]);
+    setPreview(null);
+    setPreview(null);
+  };
+
+  const downloadTemplate = () => {
+    downloadNominaXlsx(
+      [{
+        Usuario: 'Ana Pérez',
+        DNI: '30111222',
+        Legajo: '10',
+        Rol: 'Operario',
+        'C. Costo': '',
+        Turno: 'Lu a Vi 08:00 a 17:00',
+        'Con citacion': 'NO',
+        'Tipo de autorizacion': 'PERMANENTE'
+      }],
+      'planilla-modelo-nomina.xlsx'
+    );
+  };
+
+  const reviewFile = async () => {
+    if (!selectedNominaFile) {
+      setError('Elegí el archivo de la nómina.');
+      return false;
+    }
+    try {
+      const buffer = await selectedNominaFile.arrayBuffer();
+      const workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const parsed = parseNominaWorksheet(worksheet);
+      if (!parsed.length) {
+        setError('La planilla no tiene filas. Revisá que tenga la columna DNI.');
+        return false;
+      }
+      setPreview(summarizeNominaChange(nominaData, parsed));
+      setError(null);
+      return true;
+    } catch (err) {
+      setError(err.message || 'No pudimos leer el archivo. Usá la planilla modelo.');
+      return false;
+    }
   };
 
   const parseNominaWorksheet = (worksheet) => {
@@ -397,6 +440,8 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
           showSuccess(msg);
         }
         setSelectedNominaFile(null);
+        setImportOpen(false);
+        setPreview(null);
         await refreshList();
       } catch (err) {
         setError(err.message || 'Error al procesar nómina');
@@ -420,11 +465,111 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
 
   if (!canWrite && !canRead) return null;
   if (!canWrite) {
-    return <p className="theme-section-desc">Sin permiso master.nomina.write para gestionar la nómina.</p>;
+    return <p className="theme-section-desc">No tenés permiso para cargar la nómina.</p>;
   }
 
   return (
-    <div className="nomina-admin">
+    <PageContainer width="wide">
+    <div className="nomina-admin admin-simple">
+      <PageHeader
+        title="Importar nómina"
+        purpose="Cargá quiénes trabajan acá para que el sistema sepa quién puede entrar."
+        howTo={[
+          'Elegí el archivo o descargá la planilla modelo.',
+          'Revisá altas, bajas y cambios.',
+          'Confirmá. Si marcaste reemplazar, quien no esté en el archivo queda dado de baja.'
+        ]}
+        action={(
+          <button type="button" className="btn btn-primary" onClick={() => setImportOpen(true)}>
+            Importar planilla
+          </button>
+        )}
+      />
+
+      <WizardModal
+        open={importOpen}
+        title="Importar planilla"
+        onClose={() => setImportOpen(false)}
+        onFinish={handleUploadNomina}
+        finishLabel={String(pendingAction || '').startsWith('upload-nomina') ? 'Importando…' : 'Confirmar'}
+        steps={[
+          {
+            id: 'archivo',
+            title: 'Elegí el archivo',
+            canContinue: Boolean(selectedNominaFile),
+            onContinue: reviewFile,
+            content: (
+              <div className="nomina-admin__import">
+                <label className="nomina-admin__field" htmlFor="nomina-file">
+                  <span>Archivo de la nómina</span>
+                  <input
+                    id="nomina-file"
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={handleFileChange}
+                    className="input-field"
+                  />
+                </label>
+                <button type="button" className="btn btn-secondary" onClick={downloadTemplate}>
+                  <Download size={16} />
+                  Descargar planilla modelo
+                </button>
+              </div>
+            )
+          },
+          {
+            id: 'revisar',
+            title: 'Revisá lo que va a cambiar',
+            canContinue: Boolean(preview),
+            content: preview ? (
+              <div className="admin-simple-cards" style={{ display: 'grid' }}>
+                <p>Altas: {preview.altas}</p>
+                <p>Bajas: {preview.bajas}</p>
+                <p>Cambios: {preview.cambios}</p>
+                {preview.sinDni > 0 ? (
+                  <p>Hay {preview.sinDni} filas sin DNI. Completá el DNI o no se van a importar.</p>
+                ) : null}
+              </div>
+            ) : <p>Elegí un archivo en el paso anterior.</p>
+          },
+          {
+            id: 'confirmar',
+            title: 'Confirmar',
+            content: (
+              <>
+                <p>
+                  Vas a cargar {preview?.altas || 0} altas, {preview?.cambios || 0} cambios
+                  {replaceOnImport ? ` y ${preview?.bajas || 0} bajas` : ''}.
+                </p>
+                <label className="nomina-admin__check">
+                  <input
+                    type="checkbox"
+                    checked={replaceOnImport}
+                    onChange={(e) => setReplaceOnImport(e.target.checked)}
+                  />
+                  Reemplazar la nómina anterior (quien no esté en el archivo queda dado de baja)
+                </label>
+              </>
+            )
+          }
+        ]}
+      />
+
+      <AdvancedSection>
+        <p className="historial-meta">
+          La planilla puede ser la de Legajos o la clásica. Solo se leen las filas visibles. No se tocan las huellas.
+        </p>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={handleExportNomina}
+          disabled={loading || (!filtered.length && !nominaData.length)}
+        >
+          <Download size={16} />
+          Exportar la nómina actual
+        </button>
+      </AdvancedSection>
+
       <div className="nomina-admin__stats" aria-label="Resumen de nómina">
         <div className="nomina-admin__stat">
           <span className="nomina-admin__stat-label">Total</span>
@@ -441,60 +586,12 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
       </div>
 
       <AdminBlock
-        title="Importar / exportar nómina"
-        description="Soporta Legajos Online (Apellido, Nombre, DNI, CUIL, Áreas, Puestos…) y el formato clásico. Solo importa filas visibles del Excel. Con “Reemplazar” da de baja la nómina vieja; no toca BioStar."
-      >
-        <div className="nomina-admin__import">
-          <label className="nomina-admin__field">
-            <span>Archivo XLSX</span>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleFileChange}
-              className="input-field"
-            />
-          </label>
-          <label className="nomina-admin__check" style={{ alignSelf: 'end', marginBottom: '0.5rem' }}>
-            <input
-              type="checkbox"
-              checked={replaceOnImport}
-              onChange={(e) => setReplaceOnImport(e.target.checked)}
-            />
-            Reemplazar nómina anterior (recomendado)
-          </label>
-          <div className="nomina-admin__import-actions">
-            <PendingButton
-              type="button"
-              actionId="upload-nomina"
-              pendingAction={pendingAction}
-              className="btn btn-primary"
-              disabled={!selectedNominaFile}
-              pendingLabel="Importando…"
-              onClick={handleUploadNomina}
-            >
-              <Upload size={16} />
-              Importar nómina
-            </PendingButton>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleExportNomina}
-              disabled={loading || (!filtered.length && !nominaData.length)}
-            >
-              <Download size={16} />
-              Exportar Excel
-            </button>
-          </div>
-        </div>
-      </AdminBlock>
-
-      <AdminBlock
         title={`Empleados (${filtered.length}${query || showInactive ? ` / ${stats.total}` : ''})`}
-        description="Alta y edición individual. La baja deja el registro inactivo."
+        description="Alta y edición de a una persona. La baja deja el registro inactivo."
         action={(
-          <button type="button" className="btn btn-primary" onClick={openCreate}>
+          <button type="button" className="btn btn-secondary" onClick={openCreate}>
             <Plus size={16} />
-            Agregar empleado
+            Agregar una persona
           </button>
         )}
       >
@@ -506,7 +603,7 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar por nombre, DNI, legajo, rol o c. costo…"
+              placeholder="Buscar por nombre, DNI o legajo"
             />
           </label>
           <label className="nomina-admin__check">
@@ -522,14 +619,15 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
         {loading ? (
           <AdminLoading label="Cargando nómina…" />
         ) : filtered.length === 0 ? (
-          <AdminEmpty
-            icon={ClipboardList}
-            title={nominaData.length === 0 ? 'Sin empleados' : 'Sin resultados'}
-            description={
+          <EmptyState
+            title={nominaData.length === 0 ? 'Todavía no cargaste la nómina' : 'Nadie coincide con la búsqueda'}
+            text={
               nominaData.length === 0
-                ? 'Importá la planilla o agregá un empleado manualmente.'
-                : 'Probá otro término o incluí inactivos.'
+                ? 'Una nómina dice quién trabaja acá. Empezá con la planilla modelo o agregá una persona.'
+                : 'Probá otro nombre o DNI, o incluí a quienes están dados de baja.'
             }
+            actionLabel={nominaData.length === 0 ? 'Descargar planilla modelo' : undefined}
+            onAction={nominaData.length === 0 ? downloadTemplate : undefined}
           />
         ) : (
           <AdminTable className="nomina-admin__table">
@@ -598,30 +696,30 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
         )}
       </AdminBlock>
 
-      {formOpen && createPortal(
-        <div className="admin-modal-backdrop" role="presentation" onClick={resetForm}>
-          <div
-            className="admin-modal admin-modal--wide nomina-admin__modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={editingId ? 'Editar empleado' : 'Agregar empleado'}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <header className="nomina-admin__modal-head">
-              <div>
-                <h3 className="admin-modal-title">
-                  {editingId ? 'Editar empleado' : 'Agregar empleado'}
-                </h3>
-                <p className="theme-section-desc">
-                  Se sincroniza con la ficha de persona y, si corresponde, con la autorización permanente.
-                </p>
-              </div>
-              <button type="button" className="nomina-admin__icon-btn" onClick={resetForm} aria-label="Cerrar">
-                <X size={16} />
-              </button>
-            </header>
-
-            <form onSubmit={handleSubmit} className="nomina-admin__form">
+      <Modal
+        open={formOpen}
+        title={editingId ? 'Editar empleado' : 'Agregar empleado'}
+        description="Queda en la nómina y en la ficha de la persona."
+        onClose={resetForm}
+        size="lg"
+        dirty={Boolean(form.name || form.idNumber)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={resetForm}>Cancelar</button>
+            <PendingButton
+              type="submit"
+              form="nomina-person-form"
+              className="btn btn-primary"
+              actionId={editingId ? `update-nomina-${editingId}` : 'create-nomina'}
+              pendingAction={pendingAction}
+              pendingLabel="Guardando…"
+            >
+              {editingId ? 'Guardar cambios' : 'Agregar empleado'}
+            </PendingButton>
+          </>
+        )}
+      >
+            <form id="nomina-person-form" onSubmit={handleSubmit} className="nomina-admin__form">
               <label className="nomina-admin__field">
                 <span>Nombre</span>
                 <input
@@ -639,6 +737,9 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
                     className="input-field"
                     value={form.idNumber}
                     onChange={(e) => setForm((f) => ({ ...f, idNumber: e.target.value }))}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    pattern="[0-9]*"
                   />
                 </label>
                 <label className="nomina-admin__field">
@@ -797,26 +898,10 @@ function NominaAdminSection({ pendingAction, setPendingAction, runAction }) {
                   Empleado activo en nómina
                 </label>
               )}
-              <div className="estaciones-admin__modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={resetForm}>
-                  Cancelar
-                </button>
-                <PendingButton
-                  type="submit"
-                  className="btn btn-primary"
-                  actionId={editingId ? `update-nomina-${editingId}` : 'create-nomina'}
-                  pendingAction={pendingAction}
-                  pendingLabel="Guardando…"
-                >
-                  {editingId ? 'Guardar cambios' : 'Agregar empleado'}
-                </PendingButton>
-              </div>
             </form>
-          </div>
-        </div>,
-        document.body
-      )}
+      </Modal>
     </div>
+    </PageContainer>
   );
 }
 

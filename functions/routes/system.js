@@ -7,7 +7,7 @@ const express = require('express');
 const { db } = require('../firestore');
 const { normalizeIdNumber, normalizePlate } = require('../permissions');
 const { getAuthorizationLabel } = require('../authorizations');
-const { listAuditLog } = require('../lib/auditLog');
+const { listAuditLog, logAdminAction } = require('../lib/auditLog');
 const { getArgentinaDateString } = require('../lib/normalize');
 const { buildReportsSummary, REPORTS_PERMISSION } = require('../reports');
 const {
@@ -15,6 +15,7 @@ const {
   publicNotificationsConfig,
   saveNotificationsConfig
 } = require('../lib/notifications');
+const { sendNotification } = require('../lib/notifications/email');
 const {
   evaluateExpiry,
   buildExpiryMessage,
@@ -25,7 +26,8 @@ const {
   auth,
   requirePermission,
   requireAnyPermission,
-  getUserPermissions
+  getUserPermissions,
+  sendServerError
 } = require('../middleware/auth');
 
 const router = express.Router();
@@ -36,18 +38,26 @@ const addDaysToYmd = (ymd, days) => {
   return getArgentinaDateString(d);
 };
 
-router.get('/api/search', auth, async (req, res) => {
+// Cada sección solo se incluye si el usuario tiene el permiso de lectura correspondiente.
+const SEARCH_PERMISSIONS = ['master.personal.read', 'master.vehicles.read', 'entries.view'];
+
+router.get('/api/search', auth, requireAnyPermission(SEARCH_PERMISSIONS), async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     if (q.length < 2) {
       return res.json({ results: [] });
     }
+    const isAdmin = req.user.role === 'admin';
+    const perms = Array.isArray(req.userPermissions) ? req.userPermissions : [];
+    const can = (permission) => isAdmin || perms.includes(permission);
     const needle = q.toLowerCase();
     const idNeedle = normalizeIdNumber(q) || needle;
     const plateNeedle = normalizePlate(q) || needle.replace(/\s+/g, '');
     const results = [];
 
-    const personalSnap = await db.collection('personalMaster').orderBy('name').limit(200).get();
+    const personalSnap = can('master.personal.read')
+      ? await db.collection('personalMaster').orderBy('name').limit(200).get()
+      : { docs: [] };
     personalSnap.docs.forEach((doc) => {
       if (results.filter((r) => r.kind === 'personal').length >= 8) return;
       const data = doc.data() || {};
@@ -64,7 +74,9 @@ router.get('/api/search', auth, async (req, res) => {
       });
     });
 
-    const vehiclesSnap = await db.collection('vehiclesMaster').orderBy('plate').limit(200).get();
+    const vehiclesSnap = can('master.vehicles.read')
+      ? await db.collection('vehiclesMaster').orderBy('plate').limit(200).get()
+      : { docs: [] };
     vehiclesSnap.docs.forEach((doc) => {
       if (results.filter((r) => r.kind === 'vehicle').length >= 8) return;
       const data = doc.data() || {};
@@ -86,13 +98,15 @@ router.get('/api/search', auth, async (req, res) => {
     const { queryEntriesPage, matchesSearch } = require('../lib/entriesQuery');
     const endDate = getArgentinaDateString();
     const startDate = addDaysToYmd(endDate, -30);
-    const page = await queryEntriesPage(db, {
-      startDate,
-      endDate,
-      limit: 80,
-      type: 'todos',
-      q
-    });
+    const page = can('entries.view')
+      ? await queryEntriesPage(db, {
+        startDate,
+        endDate,
+        limit: 80,
+        type: 'todos',
+        q
+      })
+      : { docs: [] };
     let entryCount = 0;
     for (const doc of page.docs) {
       if (entryCount >= 8) break;
@@ -117,7 +131,7 @@ router.get('/api/search', auth, async (req, res) => {
 
     res.json({ results });
   } catch (err) {
-    res.status(500).json({ message: 'Error en la búsqueda', error: err.message });
+    sendServerError(res, err, 'Error en la búsqueda');
   }
 });
 
@@ -187,7 +201,7 @@ router.get(
 
       res.json({ activity: merged });
     } catch (err) {
-      res.status(500).json({ message: 'Error al obtener actividad', error: err.message });
+      sendServerError(res, err, 'Error al obtener actividad');
     }
   }
 );
@@ -204,7 +218,7 @@ router.get('/api/admin/audit-log', auth, requirePermission('audit.view'), async 
     });
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener auditoría', error: err.message });
+    sendServerError(res, err, 'Error al obtener auditoría');
   }
 });
 
@@ -217,9 +231,11 @@ router.get('/api/reports/summary', auth, requirePermission(REPORTS_PERMISSION), 
     res.json(summary);
   } catch (err) {
     const status = err.status || 500;
+    if (status >= 500) {
+      return sendServerError(res, err, 'Error al generar el resumen de reportes');
+    }
     res.status(status).json({
-      message: err.message || 'Error al generar el resumen de reportes',
-      ...(status === 500 ? { error: err.message } : {})
+      message: err.message || 'Error al generar el resumen de reportes'
     });
   }
 });
@@ -229,19 +245,56 @@ router.get('/api/admin/notifications-config', auth, requirePermission('notificat
     const config = await getNotificationsConfig();
     res.json({ config: publicNotificationsConfig(config) });
   } catch (err) {
-    res.status(500).json({ message: 'Error al obtener notificaciones', error: err.message });
+    sendServerError(res, err, 'Error al obtener notificaciones');
   }
 });
 
 router.put('/api/admin/notifications-config', auth, requirePermission('notifications.config'), async (req, res) => {
   try {
     const saved = await saveNotificationsConfig(req.body || {});
+    logAdminAction({
+      req,
+      action: 'notifications.update',
+      targetType: 'notifications',
+      targetId: 'notificationsConfig',
+      after: { enabled: saved.enabled === true }
+    }).catch((err) => console.error('auditLog notifications.update:', err.message));
     res.json({
       message: 'Configuración de notificaciones guardada',
       config: publicNotificationsConfig(saved)
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al guardar notificaciones', error: err.message });
+    sendServerError(res, err, 'Error al guardar notificaciones');
+  }
+});
+
+router.post('/api/admin/notifications-config/test', auth, requirePermission('notifications.config'), async (req, res) => {
+  try {
+    const to = String(req.body?.to || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return res.status(400).json({ message: 'Escribí un mail válido para la prueba.' });
+    }
+    const config = await getNotificationsConfig();
+    const result = await sendNotification({
+      to: [to],
+      subject: 'Prueba de avisos',
+      text: 'Este es un aviso de prueba. Si lo recibiste, el correo está bien configurado.'
+    }, { smtp: config.smtp });
+    logAdminAction({
+      req,
+      action: 'notifications.test',
+      targetType: 'notifications',
+      targetId: 'notificationsConfig',
+      after: { to, sent: result.sent === true }
+    }).catch((err) => console.error('auditLog notifications.test:', err.message));
+    if (!result.sent) {
+      return res.status(400).json({
+        message: 'No se pudo enviar. Completá el correo en Opciones avanzadas y guardá antes de probar.'
+      });
+    }
+    res.json({ message: 'Prueba enviada. Revisá la bandeja de entrada.' });
+  } catch (err) {
+    sendServerError(res, err, 'Error al enviar la prueba');
   }
 });
 
@@ -411,7 +464,7 @@ router.get(
         endingIn30: buckets.endingIn30
       });
     } catch (err) {
-      res.status(500).json({ message: 'Error al obtener alertas de vencimiento', error: err.message });
+      sendServerError(res, err, 'Error al obtener alertas de vencimiento');
     }
   }
 );

@@ -9,6 +9,11 @@ const { db, FieldValue } = require('../firestore');
 const { getDoorsConfig, findDoorById } = require('./doorsConfig');
 const { getRoleById, createRole, updateRole } = require('../roles');
 const { PERMISSION_KEYS } = require('../permissions');
+const {
+  sanitizeHeartbeatChecks,
+  mergeChecks,
+  recordCheckTransitions
+} = require('./stationHealth');
 
 const LECTORES = 'lectores';
 /** ID legado en Firestore; el label visible es “Estación de acceso”. */
@@ -124,6 +129,7 @@ const toLectorJson = (doc) => {
     allowlistReportedAt: data.allowlistReportedAt || null,
     puertoDetectado: data.puertoDetectado || null,
     inputModeDetectado: data.inputModeDetectado || null,
+    checks: data.checks && typeof data.checks === 'object' ? data.checks : null,
     createdAt: data.createdAt || null,
     updatedAt: data.updatedAt || null
   };
@@ -337,6 +343,7 @@ const getLectorById = async (id) => {
 };
 
 const createLector = async (body, { apiBaseUrl } = {}) => {
+  kioskDoorsCache.clear();
   const fields = sanitizeLectorFields(body);
   const { door } = await validateDoorAndReader(fields);
   await assertEstacionExistsIfSet(fields.estacionId);
@@ -383,6 +390,7 @@ const createLector = async (body, { apiBaseUrl } = {}) => {
 };
 
 const updateLector = async (id, body) => {
+  kioskDoorsCache.clear();
   const ref = db.collection(LECTORES).doc(id);
   const beforeSnap = await ref.get();
   if (!beforeSnap.exists) throw httpError(404, 'Lector no encontrado');
@@ -400,13 +408,16 @@ const updateLector = async (id, body) => {
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
   const afterSnap = await ref.get();
+  const rebind = describeEstacionRebind(before.estacionId, fields.estacionId, { doorId: fields.doorId });
   return {
     before: toLectorJson(beforeSnap),
-    lector: toLectorJson(afterSnap)
+    lector: toLectorJson(afterSnap),
+    ...(rebind || {})
   };
 };
 
 const deleteLector = async (id) => {
+  kioskDoorsCache.clear();
   const ref = db.collection(LECTORES).doc(id);
   const snap = await ref.get();
   if (!snap.exists) throw httpError(404, 'Lector no encontrado');
@@ -416,8 +427,29 @@ const deleteLector = async (id) => {
   return before;
 };
 
+/**
+ * Aviso explícito cuando un lector (y su puerta) pasa a otra estación o se le
+ * regeneran credenciales estando vinculado a una: la estación anterior deja de
+ * funcionar (incidente real en banco de pruebas).
+ * @param {string} previousEstacionId
+ * @param {string|null} nextEstacionId  null = se desconoce la nueva (p. ej. pairing/regenerar)
+ * @returns {null | { previousEstacionId: string, warning: string }}
+ */
+const describeEstacionRebind = (previousEstacionId, nextEstacionId = null, { doorId = '' } = {}) => {
+  const prev = String(previousEstacionId || '').trim();
+  if (!prev) return null;
+  const next = nextEstacionId == null ? null : String(nextEstacionId || '').trim();
+  if (next !== null && next === prev) return null;
+  const warning = `Esta puerta${doorId ? ` (${doorId})` : ''} estaba vinculada a la estación ${prev}; `
+    + 'esa estación dejará de funcionar para este lector'
+    + (next === null ? ' hasta que cargue el nuevo JSON.' : '.');
+  console.warn('[lectores] Re-vinculación de estación', { previousEstacionId: prev, nextEstacionId: next, doorId });
+  return { previousEstacionId: prev, warning };
+};
+
 const regenerateCredentials = async (id, { apiBaseUrl } = {}) => {
   const lector = await getLectorById(id);
+  const rebind = describeEstacionRebind(lector.estacionId, null, { doorId: lector.doorId });
   if (!lector.usuarioSistemaId) {
     throw httpError(400, 'El lector no tiene usuario de sistema asociado');
   }
@@ -442,7 +474,7 @@ const regenerateCredentials = async (id, { apiBaseUrl } = {}) => {
   const { enrichConfigWithEstacion } = require('./estaciones');
   config = await enrichConfigWithEstacion(config, lector.estacionId);
 
-  return { lector, password, config };
+  return { lector, password, config, ...(rebind || {}) };
 };
 
 const buildConfigForDownload = async (id, { apiBaseUrl, includePassword = false, password = '' } = {}) => {
@@ -474,6 +506,33 @@ const resolveAuthUsername = (user) => {
   if (fromUsername) return fromUsername.toLowerCase();
   return String(user?.id || '').trim().toLowerCase();
 };
+
+/**
+ * Puertas vinculadas al usuario kiosk/estación (lectores con usuarioSistemaId = username).
+ * Es la única fuente para decidir qué puertas puede operar ese usuario
+ * (reclamar aperturas en cola, declarar eventos offline).
+ * @returns {Promise<Set<string>>}
+ */
+// Las estaciones consultan cada pocos segundos: cachear evita una lectura por poll.
+const KIOSK_DOORS_CACHE_TTL_MS = 60 * 1000;
+const kioskDoorsCache = new Map();
+
+const listDoorIdsForKioskUser = async (username, { nowMs = Date.now(), bypassCache = false } = {}) => {
+  const uid = String(username || '').trim().toLowerCase();
+  if (!uid) return new Set();
+  const cached = kioskDoorsCache.get(uid);
+  if (!bypassCache && cached && nowMs - cached.at < KIOSK_DOORS_CACHE_TTL_MS) {
+    return new Set(cached.doorIds);
+  }
+  const snap = await db.collection(LECTORES).where('usuarioSistemaId', '==', uid).limit(50).get();
+  const doorIds = snap.docs
+    .map((doc) => String((doc.data() || {}).doorId || '').trim())
+    .filter(Boolean);
+  kioskDoorsCache.set(uid, { at: nowMs, doorIds });
+  return new Set(doorIds);
+};
+
+const clearKioskDoorsCache = () => kioskDoorsCache.clear();
 
 /**
  * Resuelve el doc del lector vinculado al usuario kiosk (mismo criterio que heartbeat).
@@ -592,7 +651,9 @@ const touchHeartbeat = async ({
   serialPort = null,
   inputMode = null,
   allowlistGeneratedAt = undefined,
-  allowlistEntryCount = undefined
+  allowlistEntryCount = undefined,
+  healthReport = null,
+  nowMs = Date.now()
 } = {}) => {
   const { ref, beforeData } = await resolveLectorDocForKiosk({
     username,
@@ -632,7 +693,26 @@ const touchHeartbeat = async ({
     }
   }
 
+  // Chequeos de salud (lector serie, relé, cola, login…): antes se descartaban.
+  let transitions = [];
+  if (healthReport && typeof healthReport === 'object') {
+    const incoming = sanitizeHeartbeatChecks(healthReport, nowMs);
+    if (Object.keys(incoming).length) {
+      const merged = mergeChecks(beforeData.checks, incoming, new Date(nowMs).toISOString());
+      patch.checks = { ...(beforeData.checks || {}), ...merged.checks };
+      transitions = merged.transitions;
+    }
+  }
+
   await ref.set(patch, { merge: true });
+  if (transitions.length) {
+    await recordCheckTransitions({
+      lectorId: ref.id,
+      doorId: beforeData.doorId || doorId || null,
+      readerId: beforeData.readerId || readerId || null,
+      transitions
+    });
+  }
 
   const after = await ref.get();
   return {
@@ -682,6 +762,9 @@ module.exports = {
   regenerateCredentials,
   buildConfigForDownload,
   resolveAuthUsername,
+  listDoorIdsForKioskUser,
+  describeEstacionRebind,
+  clearKioskDoorsCache,
   touchHeartbeat,
   claimForceResync,
   requestForceResync,

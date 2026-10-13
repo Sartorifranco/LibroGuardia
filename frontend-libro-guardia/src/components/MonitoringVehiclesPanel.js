@@ -130,7 +130,7 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
           <input className="input-field" placeholder="Marca / modelo" value={brand} onChange={(e) => setBrand(e.target.value)} />
           <input className="input-field" placeholder="Empresa / cliente" value={company} onChange={(e) => setCompany(e.target.value)} />
           <input className="input-field" placeholder="Chofer *" value={driver} onChange={(e) => setDriver(e.target.value)} required />
-          <input className="input-field" placeholder="DNI chofer" value={driverDni} onChange={(e) => setDriverDni(e.target.value)} />
+          <input className="input-field" placeholder="DNI chofer" value={driverDni} onChange={(e) => setDriverDni(e.target.value)} inputMode="numeric" autoComplete="off" pattern="[0-9]*" />
           <label className="text-sm text-gray-600">
             Venc. seguro (opcional)
             <input type="date" className="input-field mt-1" value={insuranceExpiryDate} onChange={(e) => setInsuranceExpiryDate(e.target.value)} />
@@ -145,7 +145,7 @@ function MonitoringVehiclesPanel({ authToken, onSuccess, onError, onMovementRegi
             <p className="text-sm font-medium mb-2 flex items-center gap-2"><UserPlus size={16} /> Acompañantes</p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <input className="input-field" placeholder="Nombre acompañante" value={companionName} onChange={(e) => setCompanionName(e.target.value)} />
-              <input className="input-field" placeholder="DNI acompañante" value={companionDni} onChange={(e) => setCompanionDni(e.target.value)} />
+              <input className="input-field" placeholder="DNI acompañante" value={companionDni} onChange={(e) => setCompanionDni(e.target.value)} inputMode="numeric" autoComplete="off" pattern="[0-9]*" />
               <button type="button" className="btn btn-secondary" onClick={addCompanion}>
                 <PlusCircle size={16} /> Agregar
               </button>

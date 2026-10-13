@@ -9,6 +9,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { useLiveClock } from '../hooks/useLiveClock';
+import { displayRoleLabel } from '../utils/permissions';
 import { getDashboardStats, formatEntryRow } from '../utils/dashboardStats';
 import FleetGatePanel from './FleetGatePanel';
 import AttendanceMissingPanel from './AttendanceMissingPanel';
@@ -18,7 +19,7 @@ const QUICK_ACTIONS = [
   { id: 'personal', label: 'Registrar personal', icon: User },
   { id: 'vehiculo', label: 'Registrar vehículo', icon: Car },
   { id: 'flota', label: 'Registrar flota', icon: Truck },
-  { id: 'novedad', label: 'Cargar novedad', icon: ClipboardList },
+  { id: 'novedad', label: 'Novedades', icon: ClipboardList },
 ];
 
 function HomeDashboard({
@@ -72,7 +73,7 @@ function HomeDashboard({
         <div>
           <p className="home-hero-kicker">Turno de guardia</p>
           <h2 className="home-hero-title">Hola, {currentUser.username}</h2>
-          <p className="home-hero-subtitle capitalize">{currentUser.role} · {dateDisplay}</p>
+          <p className="home-hero-subtitle">{displayRoleLabel(currentUser)} · {dateDisplay}</p>
         </div>
         <div className="home-hero-clock">
           <div className="home-hero-clock-time" aria-live="polite">{timeDisplay}</div>

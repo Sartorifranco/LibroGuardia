@@ -64,9 +64,64 @@ test('nextFailureState: ventana nueva tras expirar no arrastra intentos viejos',
   assert.equal(next.justBlocked, false);
 });
 
-test('getClientIp usa x-forwarded-for', () => {
-  assert.equal(getClientIp({ headers: { 'x-forwarded-for': '10.0.0.8, 10.0.0.1' } }), '10.0.0.8');
+test('getClientIp usa req.ip (trust proxy) e ignora X-Forwarded-For controlado por el cliente', () => {
+  assert.equal(
+    getClientIp({ headers: { 'x-forwarded-for': '6.6.6.6, 10.0.0.1' }, ip: '10.0.0.1' }),
+    '10.0.0.1'
+  );
   assert.equal(getClientIp({ headers: {}, ip: '127.0.0.1' }), '127.0.0.1');
+  assert.equal(getClientIp({ headers: {}, socket: { remoteAddress: '::1' } }), '::1');
+});
+
+const makeTxDb = (store) => {
+  const ref = (id) => ({
+    id,
+    async get() {
+      const data = store.get(id);
+      return { exists: Boolean(data), data: () => (data ? { ...data } : undefined) };
+    },
+    async set(payload, opts = {}) {
+      store.set(id, opts.merge ? { ...(store.get(id) || {}), ...payload } : { ...payload });
+    }
+  });
+  let transactions = 0;
+  const db = {
+    collection: () => ({ doc: ref }),
+    async runTransaction(fn) {
+      transactions += 1;
+      const writes = [];
+      const tx = {
+        get: (r) => r.get(),
+        set: (r, payload, opts) => writes.push(() => r.set(payload, opts))
+      };
+      const result = await fn(tx);
+      for (const w of writes) await w();
+      return result;
+    }
+  };
+  return { db, get transactions() { return transactions; } };
+};
+
+test('recordFailedLogin / recordPairingFailure escriben dentro de una transacción', async () => {
+  const { recordFailedLogin, recordPairingFailure, userDocId, pairingIpDocId } = require('../lib/loginRateLimit');
+  const store = new Map();
+  const bag = makeTxDb(store);
+  const FieldValue = { serverTimestamp: () => 'TS' };
+  const now = 5_000_000;
+
+  for (let i = 1; i < MAX_FAILED_ATTEMPTS; i += 1) {
+    const r = await recordFailedLogin(bag.db, FieldValue, { username: 'guardia', ip: '10.0.0.9' }, now + i);
+    assert.equal(r.blocked, false);
+  }
+  const blocked = await recordFailedLogin(bag.db, FieldValue, { username: 'guardia', ip: '10.0.0.9' }, now + 10);
+  assert.equal(blocked.blocked, true);
+  assert.equal(store.get(userDocId('guardia')).failedAttempts, MAX_FAILED_ATTEMPTS);
+  // usuario + sonda IP por cada intento
+  assert.equal(bag.transactions, MAX_FAILED_ATTEMPTS * 2);
+
+  const pairing = await recordPairingFailure(bag.db, FieldValue, { ip: '10.0.0.9' }, now);
+  assert.equal(pairing.blocked, false);
+  assert.equal(store.get(pairingIpDocId('10.0.0.9')).failedAttempts, 1);
 });
 
 test('mensaje de bloqueo es el acordado', () => {
@@ -114,7 +169,7 @@ test('clearLoginFailures elimina el doc y deja de bloquear', async () => {
   } = require('../lib/loginRateLimit');
   const now = Date.now();
   const store = new Map();
-  store.set(userDocId('kiosk.puerta'), {
+  store.set(userDocId('operador'), {
     failedAttempts: 5,
     windowStartedAt: now - 1000,
     blockedUntil: now + 60_000
@@ -137,12 +192,12 @@ test('clearLoginFailures elimina el doc y deja de bloquear', async () => {
     }
   };
 
-  const before = await checkLoginRateLimit(db, { username: 'kiosk.puerta' }, now);
+  const before = await checkLoginRateLimit(db, { username: 'operador' }, now);
   assert.equal(before.blocked, true);
 
-  await clearLoginFailures(db, { username: 'kiosk.puerta' });
-  assert.equal(store.has(userDocId('kiosk.puerta')), false);
+  await clearLoginFailures(db, { username: 'operador' });
+  assert.equal(store.has(userDocId('operador')), false);
 
-  const after = await checkLoginRateLimit(db, { username: 'kiosk.puerta' }, now);
+  const after = await checkLoginRateLimit(db, { username: 'operador' }, now);
   assert.equal(after.blocked, false);
 });

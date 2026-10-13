@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import {
   BrowserRouter,
   Routes,
@@ -7,9 +7,11 @@ import {
   Outlet,
   useNavigate,
   useParams,
+  useLocation,
+  useSearchParams,
   Link
 } from 'react-router-dom';
-import { Settings, LogOut, Sun, Moon, ArrowLeft, CloudOff, CircleHelp, KeyRound } from 'lucide-react';
+import { Settings, LogOut, Sun, Moon, ArrowLeft, CloudOff, CircleHelp, KeyRound, Menu, X } from 'lucide-react';
 import AccessKiosk from './components/AccessKiosk';
 import ToastStack from './components/ToastStack';
 import AppSidebar from './components/AppSidebar';
@@ -25,7 +27,7 @@ import ForceChangePasswordModal from './components/ForceChangePasswordModal';
 import ChangePasswordForm from './components/ChangePasswordForm';
 import BotoneraPopupPage from './pages/Guardia/BotoneraPopupPage';
 import { openBotoneraWindow } from './utils/openBotoneraWindow';
-import { hasPermission, canAccessAdmin, canAccessGuardia, canAccessEmpleado } from './utils/permissions';
+import { hasPermission, canAccessAdmin, canAccessGuardia, canAccessEmpleado, displayRoleLabel } from './utils/permissions';
 import {
   guardiaPath,
   adminPath,
@@ -33,31 +35,40 @@ import {
   sectionFromAdminSegment,
   getDefaultAdminSection,
   resolveHomePath,
-  GUARDIA_SEGMENT_TO_TAB
+  GUARDIA_SEGMENT_TO_TAB,
+  isLanFeatureAllowed
 } from './utils/navigation';
+import { adminSegmentQuery, legacyAdminRedirect } from './utils/adminNav';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { useOfflineQueue } from './context/OfflineQueueContext';
 import { ToastProvider } from './context/ToastContext';
 import { ConfirmProvider } from './context/ConfirmContext';
 import { OfflineQueueProvider } from './context/OfflineQueueContext';
 import { EntriesProvider } from './context/EntriesContext';
 import { ClockPrefillProvider } from './context/ClockPrefillContext';
+import { RuntimeProvider, useRuntime } from './context/RuntimeContext';
+import { HubLiveProvider } from './context/HubLiveContext';
+import { GuardAlarmsProvider } from './context/GuardAlarmsContext';
 import brand from './config/brand';
 import LoginPage from './pages/Login/LoginPage';
 import HomePage from './pages/Home/HomePage';
 import PersonalPage from './pages/Personal/PersonalPage';
+import AutorizacionesPage from './pages/Autorizaciones/AutorizacionesPage';
 import VehiculosExternosPage from './pages/VehiculosExternos/VehiculosExternosPage';
 import FlotaInternaPage from './pages/FlotaInterna/FlotaInternaPage';
 import NovedadPage from './pages/Novedad/NovedadPage';
 import HistorialPage from './pages/Historial/HistorialPage';
-import ReportesPage from './pages/Reportes/ReportesPage';
-import AdminPage from './pages/Admin/AdminPage';
+import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
 import ModeSelectPage from './pages/ModeSelect/ModeSelectPage';
 import EmpleadoRegistroPage from './pages/Empleado/EmpleadoRegistroPage';
 import EmpleadoVisitasPage from './pages/Empleado/EmpleadoVisitasPage';
 import VisitaInvitacionPage from './pages/Empleado/VisitaInvitacionPage';
-import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
 import LiveAlertsToaster from './components/LiveAlertsToaster';
+import RuntimeModeBadge from './components/RuntimeModeBadge';
+import LanUnavailable from './components/LanUnavailable';
+import CriticalAlarmBanner from './components/CriticalAlarmBanner';
+import GuardAlarmsPanel from './components/GuardAlarmsPanel';
 import {
   RequireAuth,
   RequireGuardia,
@@ -66,12 +77,22 @@ import {
   AuthLoadingScreen
 } from './routing/RouteGuards';
 import { AppChromeProvider, useAppChrome } from './routing/AppChromeContext';
+import ConnectivityChrome from './components/ConnectivityChrome';
 
 import './App.css';
 import './pages/Empleado/empleado.css';
 
+const AdminPage = React.lazy(() => import('./pages/Admin/AdminPage'));
+const ReportesPage = React.lazy(() => import('./pages/Reportes/ReportesPage'));
+
+function RouteFallback() {
+  return <p className="route-fallback" role="status">Cargando…</p>;
+}
+
 function AppHeader({ isAdminMode, activeAdminMeta }) {
   const chrome = useAppChrome();
+  const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
   const {
     currentUser,
     pendingCount,
@@ -84,15 +105,111 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
     setTourOpen,
     setTourAuto,
     setChangePasswordOpen,
-    mustChangePassword
+    mustChangePassword,
+    sidebarItems
   } = chrome;
+  const { rejectedItems, isOnline } = useOfflineQueue();
+  const { mode: runtimeMode } = useRuntime();
+  const rejectedCount = rejectedItems.length;
+  const activeTab = location.pathname.startsWith('/guardia/')
+    ? tabFromGuardiaSegment(location.pathname.split('/')[2])
+    : '';
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
+  const closeMenu = () => setMenuOpen(false);
+
+  const accountControls = (extraClass) => (
+    <div className={extraClass}>
+      <button
+        type="button"
+        className="theme-toggle-btn"
+        onClick={toggleTheme}
+        aria-label={isDark ? 'Activar modo claro' : 'Activar modo oscuro'}
+        title={isDark ? 'Modo claro' : 'Modo oscuro'}
+      >
+        {isDark ? <Sun size={18} /> : <Moon size={18} />}
+        <span className="header-drawer-label">{isDark ? 'Modo claro' : 'Modo oscuro'}</span>
+      </button>
+      <button
+        type="button"
+        className="btn-onboarding-link"
+        onClick={() => {
+          setTourAuto(false);
+          setTourOpen(true);
+          closeMenu();
+        }}
+        title="Ver tutorial"
+        aria-label="Ver tutorial"
+      >
+        <CircleHelp size={16} />
+        <span className="btn-onboarding-link__label">Ver tutorial</span>
+      </button>
+      <span className="user-info-tag">
+        {currentUser.username} · {displayRoleLabel(currentUser)}
+      </span>
+      <button
+        type="button"
+        className="btn-onboarding-link"
+        onClick={() => {
+          setChangePasswordOpen(true);
+          closeMenu();
+        }}
+        title="Cambiar mi contraseña"
+        aria-label="Cambiar mi contraseña"
+        disabled={mustChangePassword}
+      >
+        <KeyRound size={16} />
+        <span className="btn-onboarding-link__label">Mi contraseña</span>
+      </button>
+      {runtimeMode !== 'lan' && canAccessAdmin(currentUser) && (
+        isAdminMode ? (
+          <button
+            type="button"
+            className="btn-admin-panel is-active"
+            onClick={() => {
+              exitAdminPanel();
+              closeMenu();
+            }}
+          >
+            <ArrowLeft size={16} /> Volver a operación
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-admin-panel"
+            onClick={() => {
+              enterAdminPanel();
+              closeMenu();
+            }}
+          >
+            <Settings size={16} /> Panel admin
+          </button>
+        )
+      )}
+      {canAccessGuardia(currentUser) && canAccessAdmin(currentUser) && (
+        <Link to="/" className="btn-onboarding-link" title="Cambiar de área" onClick={closeMenu}>
+          Áreas
+        </Link>
+      )}
+      <button
+        type="button"
+        onClick={handleLogout}
+        className="btn-logout-link"
+      >
+        <LogOut size={16} /> Salir
+      </button>
+    </div>
+  );
 
   return (
-    <header className="app-header app-header-modern">
+    <header className={`app-header app-header-modern${isAdminMode ? ' app-header--admin' : ''}`}>
       <div className="app-header-content">
         <div className="app-header-brand">
           <img src={brand.logoPath} alt={brand.logoAlt} className="auth-logo" />
-          <div>
+          <div className="app-header-brand__text">
             <h1>{brand.appTitle}</h1>
             <p className="header-subtitle">
               {isAdminMode
@@ -103,8 +220,17 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
         </div>
         <div className="app-header-actions">
           {!isAdminMode && (
-            <GlobalSearch onNavigate={navigateToTab} />
+            <div className="app-header-search">
+              <GlobalSearch onNavigate={navigateToTab} />
+            </div>
           )}
+          <RuntimeModeBadge />
+          <span
+            className={`conn-pill${isOnline ? ' conn-pill--on' : ' conn-pill--off'}`}
+            role="status"
+          >
+            {isOnline ? 'En línea' : 'Sin conexión'}
+          </span>
           {pendingCount > 0 && (
             <span
               className="offline-badge"
@@ -114,75 +240,62 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
               <span className="offline-badge__count">{pendingCount}</span>
             </span>
           )}
-          <button
-            type="button"
-            className="theme-toggle-btn"
-            onClick={toggleTheme}
-            aria-label={isDark ? 'Activar modo claro' : 'Activar modo oscuro'}
-            title={isDark ? 'Modo claro' : 'Modo oscuro'}
-          >
-            {isDark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <button
-            type="button"
-            className="btn-onboarding-link"
-            onClick={() => {
-              setTourAuto(false);
-              setTourOpen(true);
-            }}
-            title="Ver tutorial"
-            aria-label="Ver tutorial"
-          >
-            <CircleHelp size={16} />
-            <span className="btn-onboarding-link__label">Ver tutorial</span>
-          </button>
-          <span className="user-info-tag">
-            {currentUser.username} · {currentUser.roleLabel || currentUser.role}
-          </span>
-          <button
-            type="button"
-            className="btn-onboarding-link"
-            onClick={() => setChangePasswordOpen(true)}
-            title="Cambiar mi contraseña"
-            aria-label="Cambiar mi contraseña"
-            disabled={mustChangePassword}
-          >
-            <KeyRound size={16} />
-            <span className="btn-onboarding-link__label">Mi contraseña</span>
-          </button>
-          {canAccessAdmin(currentUser) && (
-            isAdminMode ? (
-              <button
-                type="button"
-                className="btn-admin-panel is-active"
-                onClick={exitAdminPanel}
-              >
-                <ArrowLeft size={16} /> Volver a operación
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn-admin-panel"
-                onClick={enterAdminPanel}
-              >
-                <Settings size={16} /> Panel admin
-              </button>
-            )
-          )}
-          {canAccessGuardia(currentUser) && canAccessAdmin(currentUser) && (
-            <Link to="/" className="btn-onboarding-link" title="Cambiar de área">
-              Áreas
-            </Link>
+          {rejectedCount > 0 && (
+            <button
+              type="button"
+              className="offline-badge offline-badge--rejected"
+              title="Hay registros que no se pudieron enviar"
+              onClick={() => {
+                closeMenu();
+                document.getElementById('rejected-queue-panel')?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'start'
+                });
+              }}
+            >
+              <CloudOff size={16} aria-hidden />
+              <span className="offline-badge__count">{rejectedCount}</span>
+            </button>
           )}
           <button
             type="button"
-            onClick={handleLogout}
-            className="btn-logout-link"
+            className="header-menu-btn"
+            aria-expanded={menuOpen}
+            aria-controls="app-header-drawer"
+            onClick={() => setMenuOpen((open) => !open)}
           >
-            <LogOut size={16} /> Salir
+            {menuOpen ? <X size={20} /> : <Menu size={20} />}
+            <span>Menú</span>
           </button>
+          {accountControls('app-header-actions__bar')}
         </div>
       </div>
+      {menuOpen && (
+        <div id="app-header-drawer" className="app-header-drawer">
+          {!isAdminMode && (
+            <nav aria-label="Secciones">
+              <ul className="app-sidebar-list">
+                {sidebarItems.map(({ id, label, icon: Icon }) => (
+                  <li key={id}>
+                    <button
+                      type="button"
+                      className={`app-sidebar-link${activeTab === id ? ' active' : ''}`}
+                      onClick={() => {
+                        closeMenu();
+                        navigateToTab(id);
+                      }}
+                    >
+                      <Icon size={18} aria-hidden />
+                      <span>{label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
+          {accountControls('app-header-drawer__account')}
+        </div>
+      )}
       {isAdminMode && activeAdminMeta ? (
         <span className="sr-only">{activeAdminMeta.title}</span>
       ) : null}
@@ -236,9 +349,20 @@ function ForcePasswordGate({ children }) {
 
 function GuardiaLayout() {
   const chrome = useAppChrome();
+  const runtime = useRuntime();
   const { tabSegment } = useParams();
+  const lanBlocked = (featureId) => runtime.status === 'ready'
+    && runtime.mode === 'lan'
+    && !isLanFeatureAllowed(featureId, runtime.capabilities);
 
   if (tabSegment === 'botonera-ventana') {
+    if (lanBlocked('botonera')) {
+      return (
+        <ForcePasswordGate>
+          <LanUnavailable title="Puertas" />
+        </ForcePasswordGate>
+      );
+    }
     return (
       <ForcePasswordGate>
         <BotoneraPopupPage />
@@ -280,6 +404,13 @@ function GuardiaLayout() {
   } = chrome;
 
   if (activeTab === 'kiosk') {
+    if (lanBlocked('kiosk')) {
+      return (
+        <ForcePasswordGate>
+          <LanUnavailable title="Acceso" />
+        </ForcePasswordGate>
+      );
+    }
     return (
       <ForcePasswordGate>
         <AccessScanProvider
@@ -321,6 +452,7 @@ function GuardiaLayout() {
           <OnboardingTour
             open={tourOpen}
             auto={tourAuto}
+            user={currentUser}
             onClose={() => {
               setTourOpen(false);
               setTourAuto(false);
@@ -336,8 +468,8 @@ function GuardiaLayout() {
                 showAdmin={false}
                 items={sidebarItems}
               />
-              <div className="app-content">
-                {activeTab !== 'inicio' && hasPermission(currentUser, 'fleet.gps.read') && (
+              <div className={`app-content${activeTab === 'botonera' ? ' app-content--puertas' : ''}`}>
+                {activeTab !== 'inicio' && runtime.mode !== 'lan' && hasPermission(currentUser, 'fleet.gps.read') && (
                   <FleetGatePanel
                     authToken={authToken}
                     enabled
@@ -346,7 +478,7 @@ function GuardiaLayout() {
                     onMovementRegistered={handleGpsMovementsRegistered}
                   />
                 )}
-                {['personal', 'vehiculo', 'flota', 'novedad'].includes(activeTab) && (
+                {['personal', 'vehiculo', 'flota', 'novedad'].includes(activeTab) && !lanBlocked(activeTab) && (
                   <LiveClockBar
                     activeTab={activeTab}
                     onApplyTime={(timeValue) => applyCurrentTime(timeValue, activeTab)}
@@ -354,6 +486,10 @@ function GuardiaLayout() {
                   />
                 )}
                 <main className="app-main-inner">
+                  {lanBlocked(activeTab) ? (
+                    <LanUnavailable title="Esta pantalla" />
+                  ) : (
+                  <>
                   {activeTab === 'inicio' && (
                     <HomePage onNavigate={navigateToTab} onEnterAdmin={enterAdminPanel} />
                   )}
@@ -378,8 +514,8 @@ function GuardiaLayout() {
                     <div className="form-section botonera-inline-fallback">
                       <div className="botonera-inline-fallback__banner">
                         <p>
-                          La botonera está pensada para una <strong>ventana aparte</strong>
-                          {' '}(otro monitor). Podés seguir usándola acá si el navegador bloqueó el popup.
+                          En una computadora de escritorio, las puertas también pueden ir en una
+                          <strong> ventana aparte</strong> (otro monitor).
                         </p>
                         <button
                           type="button"
@@ -417,11 +553,23 @@ function GuardiaLayout() {
                     </div>
                   )}
                   {activeTab === 'personal' && <PersonalPage key={personalPrefillKey} />}
+                  {activeTab === 'autorizaciones' && <AutorizacionesPage />}
                   {activeTab === 'vehiculo' && <VehiculosExternosPage />}
                   {activeTab === 'flota' && <FlotaInternaPage />}
                   {activeTab === 'novedad' && <NovedadPage />}
                   {(activeTab === 'historial' || activeTab === 'allRecords') && <HistorialPage />}
-                  {activeTab === 'reportes' && <ReportesPage />}
+                  {activeTab === 'alarmas' && (
+                    (hasPermission(currentUser, 'alarmas.ver') || runtime.mode === 'lan')
+                      ? <GuardAlarmsPanel />
+                      : <p className="theme-section-desc">No tenés permiso para ver las alarmas.</p>
+                  )}
+                  {activeTab === 'reportes' && (
+                    <Suspense fallback={<RouteFallback />}>
+                      <ReportesPage />
+                    </Suspense>
+                  )}
+                  </>
+                  )}
                 </main>
               </div>
             </div>
@@ -441,6 +589,7 @@ function AdminLayout() {
   const chrome = useAppChrome();
   const navigate = useNavigate();
   const { sectionSegment } = useParams();
+  const [searchParams] = useSearchParams();
   const {
     authToken,
     currentUser,
@@ -464,12 +613,24 @@ function AdminLayout() {
   const resolvedSection = sectionFromAdminSegment(sectionSegment);
   const adminSection = resolvedSection || getDefaultAdminSection(currentUser);
   const activeAdminMeta = ADMIN_SECTION_META[adminSection] || { title: 'Administración', description: '' };
+  const runtime = useRuntime();
+  const legacyTarget = legacyAdminRedirect(sectionSegment);
+  const segmentQuery = adminSegmentQuery(sectionSegment);
+  const adminQuery = {
+    tab: searchParams.get('tab') || segmentQuery.tab || '',
+    tipo: searchParams.get('tipo') || segmentQuery.tipo || ''
+  };
 
   useEffect(() => {
+    if (runtime.mode === 'lan') return;
+    if (legacyTarget) {
+      navigate(legacyTarget, { replace: true });
+      return;
+    }
     if (!resolvedSection) {
       navigate(adminPath(getDefaultAdminSection(currentUser)), { replace: true });
     }
-  }, [resolvedSection, currentUser, navigate]);
+  }, [legacyTarget, resolvedSection, currentUser, navigate, runtime.mode]);
 
   return (
     <ForcePasswordGate>
@@ -490,6 +651,7 @@ function AdminLayout() {
           <OnboardingTour
             open={tourOpen}
             auto={tourAuto}
+            user={currentUser}
             onClose={() => {
               setTourOpen(false);
               setTourAuto(false);
@@ -512,13 +674,18 @@ function AdminLayout() {
                   </div>
                 </div>
                 <main className="app-main-inner">
-                  {resolvedSection && (
-                    <AdminPage
-                      adminSection={adminSection}
-                      onSectionChange={(id) => navigate(adminPath(id))}
-                      onExit={exitAdminPanel}
-                      authPrefillKey={authPrefillKey}
-                    />
+                  {runtime.mode === 'lan' ? (
+                    <LanUnavailable title="Administración" />
+                  ) : resolvedSection && (
+                    <Suspense fallback={<RouteFallback />}>
+                      <AdminPage
+                        adminSection={adminSection}
+                        adminQuery={adminQuery}
+                        onSectionChange={(id) => navigate(adminPath(id))}
+                        onExit={exitAdminPanel}
+                        authPrefillKey={authPrefillKey}
+                      />
+                    </Suspense>
                   )}
                 </main>
               </div>
@@ -563,15 +730,31 @@ function EmpleadoLoginRoute() {
 }
 
 function EmpleadoIndexRedirect() {
+  const { currentUser } = useAuth();
+  const visitas = hasPermission(currentUser, 'visitas.view.own')
+    || hasPermission(currentUser, 'visitas.create')
+    || hasPermission(currentUser, 'visitas.request');
+  if (!visitas && hasPermission(currentUser, 'autorizaciones.solicitar')) {
+    return <Navigate to="/empleado/autorizaciones" replace />;
+  }
   return <Navigate to="/empleado/visitas" replace />;
 }
 
 function ModeSelectRoute() {
   const { currentUser } = useAuth();
+  const runtime = useRuntime();
   const guardia = canAccessGuardia(currentUser);
   const admin = canAccessAdmin(currentUser);
   if (canAccessEmpleado(currentUser) && !guardia && !admin) {
     return <Navigate to="/empleado" replace />;
+  }
+  if (runtime.mode === 'lan') {
+    if (guardia) return <Navigate to={guardiaPath('inicio')} replace />;
+    return (
+      <div className="app-shell" style={{ padding: '1rem' }}>
+        <LanUnavailable title="Administración" />
+      </div>
+    );
   }
   if (guardia && admin) return <ModeSelectPage />;
   return <Navigate to={resolveHomePath(currentUser)} replace />;
@@ -580,6 +763,8 @@ function ModeSelectRoute() {
 function AuthenticatedShell() {
   return (
     <AppChromeProvider>
+      <CriticalAlarmBanner />
+      <ConnectivityChrome />
       <Outlet />
     </AppChromeProvider>
   );
@@ -606,6 +791,14 @@ function AppRoutes() {
           element={(
             <RequireEmpleado>
               <EmpleadoVisitasPage />
+            </RequireEmpleado>
+          )}
+        />
+        <Route
+          path="autorizaciones"
+          element={(
+            <RequireEmpleado>
+              <AutorizacionesPage />
             </RequireEmpleado>
           )}
         />
@@ -653,13 +846,19 @@ function App() {
       <ToastProvider>
         <ConfirmProvider>
           <AuthProvider>
-            <OfflineQueueProvider>
-              <EntriesProvider>
-                <ClockPrefillProvider>
-                  <AppRoutes />
-                </ClockPrefillProvider>
-              </EntriesProvider>
-            </OfflineQueueProvider>
+            <RuntimeProvider>
+              <HubLiveProvider>
+                <GuardAlarmsProvider>
+                  <OfflineQueueProvider>
+                    <EntriesProvider>
+                      <ClockPrefillProvider>
+                        <AppRoutes />
+                      </ClockPrefillProvider>
+                    </EntriesProvider>
+                  </OfflineQueueProvider>
+                </GuardAlarmsProvider>
+              </HubLiveProvider>
+            </RuntimeProvider>
           </AuthProvider>
         </ConfirmProvider>
       </ToastProvider>

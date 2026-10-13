@@ -63,3 +63,9 @@ scripts/_archivo/sr201-bridge.config.json
 scripts/_archivo/citaciones-bridge.config.json
 scripts/tools/nssm/
 
+
+# Backups locales de configuración de estación (contienen credenciales)
+scripts/configuracion-estacion.backup-*.json
+
+# Worktrees y config local de Claude Code
+.claude/

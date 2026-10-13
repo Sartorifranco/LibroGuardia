@@ -5,6 +5,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { db, FieldValue } = require('../firestore');
+const { markDirty } = require('../lib/siteCompiler');
 const { auth, requirePermission } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { logAdminAction } = require('../lib/auditLog');
@@ -69,6 +70,7 @@ router.post('/api/admin/visitas/:id/approve', auth, requirePermission('visitas.a
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
 
+    markDirty({ visitas: [req.params.id] });
     const updated = await ref.get();
     const visita = serializeVisita({ id: updated.id, ...updated.data() });
     const summary = `${aprobadoPor} aprobó la visita de “${data.nombreVisitante || data.dniVisitante || req.params.id}”`;
@@ -115,6 +117,7 @@ router.post('/api/admin/visitas/:id/reject', auth, requirePermission('visitas.ap
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
 
+    markDirty({ visitas: [req.params.id] });
     const updated = await ref.get();
     const summary = `${aprobadoPor} rechazó la visita de “${data.nombreVisitante || data.dniVisitante || req.params.id}”`;
     logActivity(db, FieldValue, {

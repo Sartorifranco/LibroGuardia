@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { LogOut, QrCode } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
 import brand from '../../config/brand';
+import ConnectivityChrome from '../../components/ConnectivityChrome';
 import ToastStack from '../../components/ToastStack';
 import VisitaInviteQrModal from '../../components/VisitaInviteQrModal';
 import PersonPhotoField from '../../components/PersonPhotoField';
@@ -132,6 +134,7 @@ function EmpleadoVisitasPage() {
 
   return (
     <div className="empleado-shell">
+      <ConnectivityChrome />
       <ToastStack
         error={error}
         successMessage={successMessage}
@@ -151,6 +154,11 @@ function EmpleadoVisitasPage() {
           <button type="button" className="btn btn-secondary btn-sm" onClick={logout}>
             <LogOut size={16} /> Salir
           </button>
+          {hasPermission(currentUser, 'autorizaciones.solicitar') && (
+            <Link to="/empleado/autorizaciones" className="btn btn-secondary btn-sm">
+              Autorizaciones
+            </Link>
+          )}
         </div>
       </header>
 
@@ -203,6 +211,9 @@ function EmpleadoVisitasPage() {
                   onChange={(e) => setDniVisitante(e.target.value)}
                   required
                   disabled={!destinos.length}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  pattern="[0-9]*"
                 />
               </label>
               <label>

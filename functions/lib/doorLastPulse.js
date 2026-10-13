@@ -71,7 +71,10 @@ const enrichDoorsWithLastPulse = async (doors = [], { limit = 200 } = {}) => {
       at: createdAt ? createdAt.toISOString() : null,
       ok: isRelayPulseOk(data),
       type: data.type || null,
-      message: data.message || data.error || data.relayError || null
+      message: data.message || data.error || data.relayError || null,
+      relayVia: data.relayVia || null,
+      relayStatus: data.relayStatus || null,
+      relayConfirmed: typeof data.relayConfirmed === 'boolean' ? data.relayConfirmed : null
     });
   }
 

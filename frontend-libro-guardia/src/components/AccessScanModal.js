@@ -88,7 +88,7 @@ function AccessScanModal({
               )}
               {canExceptionalEntry && !canAuthorizeManual && (
                 <button type="button" className="btn btn-primary" onClick={onExceptionalEntry}>
-                  <LogIn size={18} /> Ingreso excepcional
+                  <LogIn size={18} /> Emergencia
                 </button>
               )}
               <button type="button" className="btn btn-secondary" onClick={onClose}>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   Truck,
   ClipboardList,
@@ -12,6 +12,8 @@ import {
 import { hasPermission } from '../utils/permissions';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
+import { argentinaYmd } from '../utils/argentinaDate';
 import DigitalDoorPanel from './DigitalDoorPanel';
 import NovedadPage from '../pages/Novedad/NovedadPage';
 
@@ -62,7 +64,8 @@ function GuardiaControlCenter({
 
   const reloadKpis = useCallback(async () => {
     if (!authToken) return;
-    const today = new Date().toISOString().slice(0, 10);
+    // Fecha de Argentina: con toISOString después de las 21 h pedía las autorizaciones de mañana.
+    const today = argentinaYmd();
     const tasks = [];
 
     if (canFleet) {
@@ -106,11 +109,8 @@ function GuardiaControlCenter({
     }
   }, [authToken, canFleet, canAttendance, canAuthToday]);
 
-  useEffect(() => {
-    reloadKpis();
-    const id = setInterval(reloadKpis, 15000);
-    return () => clearInterval(id);
-  }, [reloadKpis]);
+  // Se pausa con la pestaña oculta y refresca una vez al volver.
+  usePolling(reloadKpis, 15000, { enabled: Boolean(authToken) });
 
   if (!canFleet && !canDoors && !canNovedad && !canAttendance) return null;
 
@@ -130,7 +130,7 @@ function GuardiaControlCenter({
           {canNovedad && (
             <button type="button" className="btn btn-primary guard-ops__novedad-btn" onClick={() => setNovedadOpen(true)}>
               <ClipboardList size={18} />
-              Cargar novedad
+              Novedades
             </button>
           )}
           {typeof onNavigate === 'function' && canDoors && (

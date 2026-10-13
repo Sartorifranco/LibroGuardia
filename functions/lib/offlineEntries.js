@@ -35,26 +35,74 @@ const parseEventTime = (value) => {
   return Number.isNaN(d.getTime()) ? null : d;
 };
 
+/** Eventos offline más viejos que esto se rechazan (la estación los descarta). */
+const MAX_EVENT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Tolerancia de reloj de la mini PC hacia el futuro. */
+const MAX_EVENT_FUTURE_MS = 5 * 60 * 1000;
+
 /**
+ * Puertas que el usuario que sincroniza puede declarar (lectores vinculados).
+ * Se prueba con username y con actorId (hoy el id del usuario = username).
+ */
+const resolveAllowedDoorIds = async ({ allowedDoorIds, username, actorId }) => {
+  if (allowedDoorIds != null) {
+    return new Set([...(allowedDoorIds instanceof Set ? allowedDoorIds : allowedDoorIds)]
+      .map((d) => String(d || '').trim())
+      .filter(Boolean));
+  }
+  const { listDoorIdsForKioskUser } = require('./lectores');
+  const candidates = [...new Set([username, actorId]
+    .map((v) => String(v || '').trim().toLowerCase())
+    .filter(Boolean))];
+  const result = new Set();
+  for (const candidate of candidates) {
+    const doors = await listDoorIdsForKioskUser(candidate);
+    doors.forEach((d) => result.add(d));
+  }
+  return result;
+};
+
+/**
+ * Los eventos offline son DECLARADOS por la estación (la nube no decidió):
+ * - `authorized` ausente → false (fail-closed).
+ * - timestamp > 7 días atrás o > 5 min en el futuro → rechazado.
+ * - doorId no vinculado al usuario que sincroniza → rechazado.
+ * - se marcan source:'offline_kiosk' / declaredByKiosk:true para reportes.
+ * Los rechazos permanentes vuelven con status 'rejected' (la estación no los
+ * reintenta); 'error' queda para fallas que sí conviene reintentar.
+ *
  * @param {object[]} events
- * @param {{ actorId?: string|null }} [options]
- * @returns {Promise<{ accepted: number, skipped: number, results: object[] }>}
+ * @param {{ actorId?: string|null, username?: string|null, allowedDoorIds?: string[]|Set<string>, nowMs?: number }} [options]
+ * @returns {Promise<{ accepted: number, skipped: number, rejected: number, results: object[] }>}
  */
 const ingestOfflineEntries = async (events = [], options = {}) => {
   if (!Array.isArray(events)) {
     throw httpError(400, 'events debe ser un array');
   }
   if (events.length === 0) {
-    return { accepted: 0, skipped: 0, results: [] };
+    return { accepted: 0, skipped: 0, rejected: 0, results: [] };
   }
   if (events.length > 500) {
     throw httpError(400, 'Máximo 500 eventos por lote');
   }
 
   const actorId = options.actorId || null;
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const allowedDoors = await resolveAllowedDoorIds({
+    allowedDoorIds: options.allowedDoorIds,
+    username: options.username,
+    actorId
+  });
   const results = [];
   let accepted = 0;
   let skipped = 0;
+  let rejected = 0;
+
+  const reject = (offlineLocalId, message, extra = {}) => {
+    rejected += 1;
+    console.warn('[offlineEntries] Evento offline rechazado', { offlineLocalId, actorId, message, ...extra });
+    results.push({ offlineLocalId, status: 'rejected', message });
+  };
 
   for (const raw of events) {
     const offlineLocalId = sanitizeOfflineLocalId(raw?.offlineLocalId || raw?.localId);
@@ -71,7 +119,21 @@ const ingestOfflineEntries = async (events = [], options = {}) => {
 
     const eventDate = parseEventTime(raw?.timestamp || raw?.scannedAt);
     if (!eventDate) {
-      results.push({ offlineLocalId, status: 'error', message: 'timestamp inválido' });
+      reject(offlineLocalId, 'timestamp inválido');
+      continue;
+    }
+    const ageMs = nowMs - eventDate.getTime();
+    if (ageMs > MAX_EVENT_AGE_MS) {
+      reject(offlineLocalId, 'evento offline demasiado viejo (más de 7 días)', { timestamp: eventDate.toISOString() });
+      continue;
+    }
+    if (-ageMs > MAX_EVENT_FUTURE_MS) {
+      reject(offlineLocalId, 'timestamp en el futuro (revisar hora de la mini PC)', { timestamp: eventDate.toISOString() });
+      continue;
+    }
+
+    if (!allowedDoors.has(doorId)) {
+      reject(offlineLocalId, 'la puerta no está vinculada a esta estación', { doorId });
       continue;
     }
 
@@ -88,7 +150,8 @@ const ingestOfflineEntries = async (events = [], options = {}) => {
     const legajo = raw?.legajoNormalized || raw?.legajo || null;
     const nameSnapshot = String(raw?.nombre || raw?.name || '').trim();
     const movementType = raw?.movementType === 'egreso' ? 'egreso' : 'ingreso';
-    const authorized = raw?.authorized !== false;
+    // Fail-closed: solo cuenta como autorizado si la estación lo declara explícitamente.
+    const authorized = raw?.authorized === true;
     const readerId = String(raw?.readerId || '').trim() || null;
     const arParts = getArgentinaDateParts(eventDate);
 
@@ -122,7 +185,10 @@ const ingestOfflineEntries = async (events = [], options = {}) => {
       offlineLocalId,
       offlineSyncedAt: FieldValue.serverTimestamp(),
       relayMode: 'local',
-      relayTriggered: Boolean(raw?.relayTriggered)
+      relayTriggered: Boolean(raw?.relayTriggered),
+      // Decisión tomada por la estación sin la nube: distinguible en reportes.
+      source: 'offline_kiosk',
+      declaredByKiosk: true
     };
 
     await ref.set(payload);
@@ -130,10 +196,12 @@ const ingestOfflineEntries = async (events = [], options = {}) => {
     results.push({ offlineLocalId, entryId: docId, status: 'created' });
   }
 
-  return { accepted, skipped, results };
+  return { accepted, skipped, rejected, results };
 };
 
 module.exports = {
+  MAX_EVENT_AGE_MS,
+  MAX_EVENT_FUTURE_MS,
   ingestOfflineEntries,
   offlineEntryDocId,
   sanitizeOfflineLocalId,

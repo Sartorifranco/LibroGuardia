@@ -87,16 +87,25 @@ describe('doorController airlock', () => {
     assert.equal(result.allowed, false);
   });
 
-  it('manual bypass permite abrir interior', async () => {
+  it('manual NO abre el interior con el exterior abierto (sin bypass por ser manual)', async () => {
     const { evaluateAirlockForOpen } = loadDoorControllerWithAirlock({
-      'estanco-1': { phase: 'outer_open' }
+      'estanco-1': { phase: 'outer_open', outerOpenedAtMs: Date.now() }
     });
     const result = await evaluateAirlockForOpen({
       door: innerDoor,
       group,
       bypassAirlock: false,
-      manual: true
+      manual: true,
+      otherDoorName: 'Exterior'
     });
+    assert.equal(result.allowed, false);
+    assert.equal(result.code, 'AIRLOCK_OTHER_OPEN');
+    assert.match(result.message, /la otra puerta del estanco \(Exterior\) está abierta/);
+  });
+
+  it('manual abre el interior con el estanco quieto (salida sin secuencia)', async () => {
+    const { evaluateAirlockForOpen } = loadDoorControllerWithAirlock({});
+    const result = await evaluateAirlockForOpen({ door: innerDoor, group, manual: true });
     assert.equal(result.allowed, true);
   });
 });

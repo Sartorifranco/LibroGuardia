@@ -1,36 +1,38 @@
-import { DEFAULT_GPS_PROVIDER_DISPLAY_NAME } from '../../utils/gpsProviderLabel';
-
 export const ADMIN_SECTION_META = {
-  users: { title: 'Usuarios', description: 'Crear cuentas, editar roles y estado de guardias.' },
-  access: { title: `GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`, description: 'Conexión, reglas de tránsito y geocercas del mapa en vivo.' },
+  users: { title: 'Usuarios del sistema', description: 'Quién entra, qué hace y cuándo ingresó por última vez.' },
+  access: { title: 'GPS de vehículos', description: 'Mapa del portón y de la planta, y cuándo se avisa al guardia.' },
   equiposAcceso: {
-    title: 'Equipos de acceso',
-    description: 'Un solo lugar para puertas, lectores, estaciones y marcas homologadas.'
+    title: 'Sistemas',
+    description: 'Equipos del sitio, puertas y la forma anterior de instalar.'
   },
   doors: { title: 'Equipos de acceso', description: 'Puertas, lectores y estaciones en un solo lugar.' },
   peopleAccess: {
     title: 'Personas',
-    description: 'Directorio único: empleados, terceros, clientes y credenciales de acceso.'
+    description: 'Ficha de cada persona: datos, credenciales, accesos y los últimos pasos.'
+  },
+  negocioAccesos: {
+    title: 'Accesos',
+    description: 'Grupos de puertas, horarios y feriados. También podés probar si una persona puede pasar.'
   },
   citaciones: { title: 'Autorizaciones', description: 'Citados de transporte, carga manual y listado de autorizados.' },
-  nomina: { title: 'Nómina de personal', description: 'Importar, buscar y editar empleados, turnos y tipo de autorización.' },
-  vehicles: { title: 'Vehículos autorizados', description: 'Precarga de patentes y carga masiva.' },
-  fleet: { title: 'Flota interna', description: 'Listas de móviles y choferes.' },
+  nomina: { title: 'Importar nómina', description: 'Cargá quiénes trabajan acá, revisá altas y bajas, y confirmá.' },
+  vehicles: { title: 'Vehículos', description: 'Patentes que pueden entrar, con empresa y conductor.' },
+  fleet: { title: 'Flota interna', description: 'Móviles y choferes de la empresa.' },
   empresas: {
-    title: 'Empresas del predio',
-    description: 'Dominios de email para autoregistro de empleados que luego cargan visitas/autorizados.'
+    title: 'Empresas y responsables',
+    description: 'Las empresas del predio y los mails con los que su gente pide visitas.'
   },
   destinos: {
-    title: 'Destinos',
-    description: 'Lugares del predio con la secuencia de puertas necesarias para llegar.'
+    title: 'Recorridos de visita',
+    description: 'Qué puertas hay que pasar para llegar a un lugar del predio.'
   },
   visitas: {
     title: 'Aprobar visitas',
     description: 'Solicitudes de empleados que no pueden autorizar visitas por sí mismos.'
   },
   appearance: {
-    title: 'Apariencia',
-    description: 'Colores de marca y textos visibles de esta instalación.'
+    title: 'Datos de la empresa',
+    description: 'Nombre, logo y colores que se ven en el sistema.'
   },
   lectores: {
     title: 'Equipos de acceso',
@@ -42,9 +44,25 @@ export const ADMIN_SECTION_META = {
   },
   permissions: { title: 'Permisos por rol', description: 'Matriz granular de capacidades del sistema.' },
   roles: { title: 'Roles', description: 'Crear, editar y eliminar roles con permisos y pantalla de inicio.' },
-  activity: { title: 'Actividad', description: 'Auditoría reciente de eliminaciones y cambios administrativos.' },
-  audit: { title: 'Auditoría', description: 'Trazabilidad de cambios administrativos (usuarios, roles, permisos, puertas).' },
-  notifications: { title: 'Notificaciones', description: 'Alertas SMTP ante ingresos excepcionales, denegados repetidos y fallas de puerta.' },
+  activity: { title: 'Registro de cambios', description: 'Resumen de altas, cambios y bajas.' },
+  audit: { title: 'Registro de cambios', description: 'Quién cambió qué, y qué quedó distinto.' },
+  notifications: { title: 'Avisos por mail', description: 'Quién recibe cada aviso y cómo se envía el correo.' },
+  primerosPasos: { title: 'Primeros pasos', description: 'Lo que falta para dejar el predio funcionando.' },
+  mapa: { title: 'Mapa del predio', description: 'Todos los lugares y puertas de un vistazo.' },
+  lugares: { title: 'Lugares', description: 'Zonas del predio que conecta cada puerta.' },
+  puertas: { title: 'Puertas', description: 'Cada puerta, qué lugares conecta y cuánto queda abierta.' },
+  estancos: { title: 'Estancos', description: 'Puertas que nunca se abren a la vez.' },
+  equipos: { title: 'Equipos', description: 'La cajita que abre las puertas.' },
+  sistemas: { title: 'Sistemas', description: 'Opciones para el instalador.' },
+  grupos: { title: 'Grupos de acceso', description: 'Puertas y horario que comparten las mismas personas.' },
+  horarios: { title: 'Horarios', description: 'Días y horas en que vale un permiso.' },
+  feriados: { title: 'Feriados', description: 'Días del año en que el horario cambia.' },
+  puedePasar: { title: '¿Puede pasar?', description: 'Probar si una persona entra por una puerta.' },
+  rolesPermisos: { title: 'Roles y permisos', description: 'Qué puede hacer cada tipo de usuario.' },
+  registro: { title: 'Registro de cambios', description: 'Quién modificó qué, y cuándo.' },
+  consumo: { title: 'Consumo', description: 'Cuánto gasta el sistema por mes y aviso si se pasa del tope.' },
+  huella: { title: 'Huella', description: 'Lectores de huella del predio.' },
+  citacionesAuto: { title: 'Citaciones automáticas', description: 'Recibir citados desde la carpeta de la empresa.' }
 };
 
 export const AUTH_WEEKDAYS = [

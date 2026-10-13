@@ -25,7 +25,8 @@ function ModeSelectPage() {
           <div>
             <h1 className="auth-title" style={{ fontSize: '1.35rem' }}>{brand.appTitle}</h1>
             <p className="auth-subtitle">
-              Hola {currentUser?.username}. Elegí el área con la que vas a trabajar.
+              Hola <span className="auth-user-name">{currentUser?.username}</span>.
+              Elegí el área con la que vas a trabajar.
             </p>
           </div>
         </div>
@@ -33,7 +34,7 @@ function ModeSelectPage() {
         <div className="space-y-3" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <Link to="/guardia" className="btn-admin-panel" style={{ justifyContent: 'flex-start', textDecoration: 'none' }}>
             <Shield size={18} />
-            Operación de guardia
+            Operación
           </Link>
           <Link to="/admin" className="btn-admin-panel" style={{ justifyContent: 'flex-start', textDecoration: 'none' }}>
             <Settings size={18} />

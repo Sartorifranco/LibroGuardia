@@ -1,0 +1,250 @@
+.site-map__review {
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--panel, transparent);
+  color: var(--text);
+}
+
+.site-map__review.has-problems {
+  border-color: var(--warn-border, var(--border));
+  background: var(--warn-soft-bg, var(--panel));
+}
+
+.site-map__review p {
+  margin: 4px 0 0;
+}
+
+.site-map__problems {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.site-map__problems li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.site-map__actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.site-map__hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.site-map__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--panel-muted, transparent);
+  padding: 8px;
+}
+
+.site-map__svg {
+  display: block;
+  font-family: inherit;
+}
+
+.site-map__col-title {
+  fill: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.site-map__line {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 2;
+}
+
+.site-map__line--gate {
+  stroke: var(--info-text, var(--text-muted));
+  stroke-width: 4;
+  stroke-dasharray: 10 5;
+}
+
+.site-map__line.is-off {
+  opacity: 0.45;
+  stroke-dasharray: 3 5;
+}
+
+.site-map__place,
+.site-map__door {
+  cursor: pointer;
+  outline: none;
+}
+
+.site-map__place rect {
+  fill: var(--panel, #fff);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.site-map__place.is-exterior rect {
+  stroke-dasharray: 6 4;
+  stroke: var(--text-muted);
+}
+
+.site-map__place.is-airlock rect {
+  fill: var(--accent-soft, var(--panel));
+  stroke: var(--accent, var(--border));
+  stroke-width: 2;
+}
+
+.site-map__place.is-alone rect {
+  stroke: var(--warn-text, var(--border));
+  stroke-width: 2;
+}
+
+.site-map__place:hover rect,
+.site-map__place:focus-visible rect,
+.site-map__door:hover rect,
+.site-map__door:focus-visible rect {
+  stroke: var(--accent, var(--text));
+  stroke-width: 2.5;
+}
+
+.site-map__place-name {
+  fill: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.site-map__place-tag {
+  fill: var(--accent, var(--text-muted));
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.site-map__door rect {
+  fill: var(--panel, #fff);
+  stroke: var(--border);
+}
+
+.site-map__door text {
+  fill: var(--text);
+  font-size: 11px;
+}
+
+.site-map__door.is-off text {
+  fill: var(--text-muted);
+}
+
+.site-map__legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 8px 0 0;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.site-map__legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.site-map__swatch {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.5px solid var(--border);
+  background: var(--panel, #fff);
+}
+
+.site-map__swatch.is-airlock {
+  border-color: var(--accent, var(--border));
+  background: var(--accent-soft, var(--panel));
+}
+
+.site-map__stroke {
+  display: inline-block;
+  width: 26px;
+  border-top: 2px solid var(--text-muted);
+}
+
+.site-map__stroke.is-gate {
+  border-top: 4px dashed var(--info-text, var(--text-muted));
+}
+
+.site-map__stroke.is-off {
+  border-top: 2px dotted var(--text-muted);
+  opacity: 0.6;
+}
+
+.site-tree {
+  color: var(--text);
+}
+
+.site-tree__list {
+  list-style: none;
+  margin: 4px 0 0 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+.site-tree__list li {
+  margin: 6px 0;
+}
+
+.site-tree__node > summary {
+  cursor: pointer;
+}
+
+.site-tree__place,
+.site-tree__door {
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.site-tree__place {
+  font-weight: 600;
+}
+
+.site-tree__door {
+  color: var(--text-muted);
+}
+
+.site-tree__tag {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent, var(--text));
+  background: var(--accent-soft, transparent);
+}
+
+.site-tree__repeat {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.site-tree__alone {
+  margin-top: 16px;
+}

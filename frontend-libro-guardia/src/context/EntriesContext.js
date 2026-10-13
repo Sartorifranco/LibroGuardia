@@ -4,28 +4,48 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from 'react';
 import { apiFetch } from '../services/api';
 import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { useOfflineQueue } from './OfflineQueueContext';
+import { useHubLive } from './HubLiveContext';
 import { toLocalYmd } from '../utils/historialFilters';
+import { entryIdentity, normalizeAccessEntry } from '../utils/accessEventText';
+import usePolling from '../hooks/usePolling';
 
 const EntriesContext = createContext(null);
+const POLL_MIN_MS = 15000;
+const POLL_MAX_MS = 60000;
+/** Varias pantallas llaman reloadEntries tras cada registro: como mucho 1 request cada 3 s. */
+export const RELOAD_MIN_INTERVAL_MS = 3000;
+
+/** true si el registro quedó guardado o encolado para enviar después. */
+export function wasEntryStored(outcome) {
+  return outcome?.status === 'saved' || outcome?.status === 'queued';
+}
 
 export function EntriesProvider({ children }) {
   const { authToken, currentUser } = useAuth();
   const { showSuccess, showError } = useToast();
   const { enqueueEntry } = useOfflineQueue();
+  const { subscribe } = useHubLive();
   const [entries, setEntries] = useState([]);
   const [entriesLoading, setEntriesLoading] = useState(false);
+  const [entriesRefreshFailed, setEntriesRefreshFailed] = useState(false);
+  const [entriesUpdatedAt, setEntriesUpdatedAt] = useState(null);
+  // /auth/me devuelve un objeto nuevo en cada refresco: depender del id, no de la identidad.
+  const userKey = currentUser ? String(currentUser.id || currentUser.username || 'user') : null;
 
   /** Home / KPIs: solo el día local actual (no el histórico completo). */
-  const reloadEntries = useCallback(async (silent = true) => {
-    if (!currentUser || !authToken) {
+  const fetchEntries = useCallback(async (silent = true) => {
+    if (!userKey || !authToken) {
       setEntries([]);
-      return [];
+      setEntriesRefreshFailed(false);
+      setEntriesUpdatedAt(null);
+      return false;
     }
     try {
       if (!silent) setEntriesLoading(true);
@@ -36,34 +56,95 @@ export function EntriesProvider({ children }) {
         limit: '200'
       });
       const data = await apiFetch(`/entries?${params.toString()}`, { token: authToken });
-      const next = data.entries || [];
+      const next = (data.entries || []).map(normalizeAccessEntry);
       setEntries(next);
-      return next;
+      setEntriesUpdatedAt(new Date());
+      setEntriesRefreshFailed(false);
+      return true;
     } catch (err) {
       console.error('Error al cargar registros:', err);
-      if (!silent && !err.isSessionExpired) {
-        showError(err.message || 'Error al cargar registros');
+      if (!err.isSessionExpired) {
+        setEntriesRefreshFailed(true);
+        if (!silent) {
+          showError(err.message || 'Error al cargar registros');
+        }
       }
-      return [];
+      return false;
     } finally {
       if (!silent) setEntriesLoading(false);
     }
-  }, [authToken, currentUser, showError]);
+  }, [authToken, userKey, showError]);
+
+  const fetchEntriesRef = useRef(fetchEntries);
+  fetchEntriesRef.current = fetchEntries;
+  const throttleRef = useRef({ lastAt: 0, inflight: null, trailing: null });
+
+  /**
+   * Recarga con throttle: si hubo una hace menos de 3 s (o hay una en curso),
+   * programa UNA sola al final de la ventana para que lo recién registrado aparezca igual.
+   */
+  const reloadEntries = useCallback((silent = true) => {
+    const st = throttleRef.current;
+    const start = () => {
+      st.lastAt = Date.now();
+      const promise = fetchEntriesRef.current(silent).finally(() => {
+        if (st.inflight === promise) st.inflight = null;
+      });
+      st.inflight = promise;
+      return promise;
+    };
+    const wait = st.lastAt + RELOAD_MIN_INTERVAL_MS - Date.now();
+    if (!st.inflight && wait <= 0) return start();
+    if (!st.trailing) {
+      st.trailing = setTimeout(() => {
+        st.trailing = null;
+        if (st.inflight) st.inflight.finally(start);
+        else start();
+      }, Math.max(wait, 0));
+    }
+    return st.inflight || Promise.resolve(true);
+  }, []);
 
   useEffect(() => {
-    if (!currentUser || !authToken) {
+    // Cambio de usuario / token: la próxima recarga no espera el throttle.
+    throttleRef.current.lastAt = 0;
+    if (!userKey || !authToken) {
       setEntries([]);
-      return undefined;
+      setEntriesRefreshFailed(false);
+      setEntriesUpdatedAt(null);
     }
-    reloadEntries(true);
-    const timer = setInterval(() => reloadEntries(true), 15000);
-    return () => clearInterval(timer);
-  }, [currentUser, authToken, reloadEntries]);
+  }, [userKey, authToken]);
+
+  useEffect(() => () => {
+    const st = throttleRef.current;
+    if (st.trailing) clearTimeout(st.trailing);
+    st.trailing = null;
+  }, []);
+
+  useEffect(() => subscribe((event) => {
+    if (event.type !== 'access' || !event.data) return;
+    const entry = normalizeAccessEntry(event.data.entry || event.data);
+    const key = entryIdentity(entry);
+    setEntries((prev) => {
+      if (prev.some((item) => entryIdentity(item) === key)) return prev;
+      return [entry, ...prev].slice(0, 200);
+    });
+    setEntriesUpdatedAt(new Date());
+    setEntriesRefreshFailed(false);
+  }), [subscribe]);
+
+  const pollEntries = useCallback(() => reloadEntries(true), [reloadEntries]);
+  // Pausa con la pestaña oculta; backoff 15 s → 60 s si falla.
+  usePolling(pollEntries, POLL_MIN_MS, {
+    enabled: Boolean(userKey && authToken),
+    maxBackoffMs: POLL_MAX_MS,
+    resetKey: `${userKey}|${authToken}`
+  });
 
   const addEntry = useCallback(async (type, data) => {
-    if (!currentUser || !authToken) {
+    if (!userKey || !authToken) {
       showError('Debe iniciar sesión para registrar movimientos.');
-      return null;
+      return { status: 'error' };
     }
     try {
       setEntriesLoading(true);
@@ -74,40 +155,44 @@ export function EntriesProvider({ children }) {
       });
 
       if (result.access) {
-        if (result.access.authorized && result.access.relay?.triggered) {
-          showSuccess('Registro guardado y acceso habilitado (relevador SR201 activado).');
+        const relay = result.access.relay || {};
+        const queued = relay.via === 'local-queue' || relay.command === 'queued';
+        if (result.access.authorized && queued) {
+          showSuccess('Se registró el ingreso. Enviado, esperando confirmación.');
+        } else if (result.access.authorized && relay.triggered) {
+          showSuccess('Se registró el ingreso. La puerta se abrió.');
         } else if (result.access.authorized) {
-          showSuccess(`Registro guardado. ${result.access.relay?.message || 'Acceso autorizado.'}`);
+          showSuccess('Se registró el ingreso.');
         } else {
-          showError(result.access.message || 'Registro guardado, pero acceso denegado.');
+          showError(result.access.message || 'Se registró, pero el ingreso no está autorizado.');
         }
       } else {
-        showSuccess('Registro guardado exitosamente.');
+        showSuccess('Se registró el ingreso.');
       }
 
       await reloadEntries(true);
-      return result;
+      return { status: 'saved', result };
     } catch (e) {
       console.error('Error al añadir documento: ', e);
       if (e.isNetworkError || e.status === 0) {
         try {
           await enqueueEntry(type, data);
           showSuccess('Sin conexión — guardado localmente, se enviará solo cuando vuelva internet');
-          return { offlineQueued: true };
+          return { status: 'queued' };
         } catch (queueErr) {
           console.error('Error al encolar offline:', queueErr);
           showError('Sin conexión y no se pudo guardar localmente.');
-          return null;
+          return { status: 'error' };
         }
       }
       if (!e.isSessionExpired) {
         showError(e.message || 'Error al guardar el registro. Por favor, inténtelo de nuevo.');
       }
-      return null;
+      return { status: 'error' };
     } finally {
       setEntriesLoading(false);
     }
-  }, [authToken, currentUser, enqueueEntry, reloadEntries, showError, showSuccess]);
+  }, [authToken, userKey, enqueueEntry, reloadEntries, showError, showSuccess]);
 
   const clearEntries = useCallback(() => setEntries([]), []);
 
@@ -115,10 +200,20 @@ export function EntriesProvider({ children }) {
     entries,
     setEntries,
     entriesLoading,
+    entriesRefreshFailed,
+    entriesUpdatedAt,
     reloadEntries,
     addEntry,
     clearEntries
-  }), [entries, entriesLoading, reloadEntries, addEntry, clearEntries]);
+  }), [
+    entries,
+    entriesLoading,
+    entriesRefreshFailed,
+    entriesUpdatedAt,
+    reloadEntries,
+    addEntry,
+    clearEntries
+  ]);
 
   return (
     <EntriesContext.Provider value={value}>

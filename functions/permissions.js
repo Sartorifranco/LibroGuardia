@@ -19,6 +19,7 @@ const PERMISSION_KEYS = [
   'roles.view',
   'roles.manage',
   'settings.permissions',
+  'consumo.ver',
   'audit.view',
   'notifications.config',
   'access.control',
@@ -27,6 +28,8 @@ const PERMISSION_KEYS = [
   'access.manual_override',
   'access.exceptional_entry',
   'access.kiosk',
+  // Forzar apertura manual con la otra puerta del estanco abierta (motivo obligatorio, auditado).
+  'puertas.estanco.forzar',
   'master.citaciones.preregister',
   'fleet.gps.read',
   'master.nomina.read',
@@ -41,7 +44,16 @@ const PERMISSION_KEYS = [
   'visitas.create',
   'visitas.request',
   'visitas.approve',
-  'visitas.view.own'
+  'visitas.view.own',
+  'alarmas.ver',
+  'alarmas.reconocer',
+  // Grupos, horarios y feriados (jefe y Sistemas).
+  'access.groups.manage',
+  // Asignar grupos y acceso total a una persona (D3: jefe y Sistemas).
+  'personas.puertas.asignar',
+  'autorizaciones.solicitar',
+  'autorizaciones.aprobar',
+  'autorizaciones.aprobar_todas'
 ];
 
 const TECHNICAL_PERMISSIONS = [
@@ -73,9 +85,14 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'access.kiosk',
     'access.manual_open',
     'access.exceptional_entry',
+    // D4: el guardia puede forzar el estanco con motivo obligatorio (queda auditado).
+    'puertas.estanco.forzar',
     'fleet.gps.read',
     'attendance.alerts.read',
-    'guard.doors.panel'
+    'guard.doors.panel',
+    'alarmas.ver',
+    'alarmas.reconocer',
+    'autorizaciones.solicitar'
   ],
   supervisor: [
     'entries.create',
@@ -99,22 +116,36 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'users.view',
     'users.create',
     'users.edit',
-    'users.delete',
+    // D12: borrar usuarios queda solo para Sistemas (admin); el supervisor desactiva.
     'roles.view',
     'access.manual_override',
     'access.manual_open',
+    'puertas.estanco.forzar',
     'access.kiosk',
     'access.exceptional_entry',
     'attendance.alerts.read',
-    'visitas.approve'
+    'visitas.approve',
+    'alarmas.ver',
+    'alarmas.reconocer',
+    'access.groups.manage',
+    'personas.puertas.asignar',
+    'autorizaciones.solicitar',
+    'autorizaciones.aprobar_todas',
+    'consumo.ver'
   ],
   'empleado-visitas': [
     'visitas.create',
-    'visitas.view.own'
+    'visitas.view.own',
+    'autorizaciones.solicitar'
   ],
   'empleado-solicitar-visitas': [
     'visitas.request',
-    'visitas.view.own'
+    'visitas.view.own',
+    'autorizaciones.solicitar'
+  ],
+  responsable: [
+    'autorizaciones.aprobar',
+    'autorizaciones.solicitar'
   ],
   admin: PERMISSION_KEYS.slice()
 };
@@ -123,7 +154,13 @@ const normalizePlate = (value = '') => String(value).replace(/[\s-]/g, '').toUpp
 
 const resolvePermissions = (role, customPermissions = [], roleTemplates = null) => {
   const templates = roleTemplates || DEFAULT_ROLE_PERMISSIONS;
-  const rolePerms = templates[role] || templates.guardia || [];
+  // Fail-closed: un rol desconocido (sin plantilla en Firestore ni default) no hereda
+  // permisos de otro rol. Solo cuenta lo explícito del usuario (customPermissions).
+  const roleKey = String(role || '');
+  const rolePerms = Object.prototype.hasOwnProperty.call(templates, roleKey)
+    && Array.isArray(templates[roleKey])
+    ? templates[roleKey]
+    : [];
   const merged = new Set([...rolePerms, ...(Array.isArray(customPermissions) ? customPermissions : [])]);
   return [...merged];
 };

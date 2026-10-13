@@ -14,10 +14,11 @@ No hace falta otra mini PC para probar.
 
 | Archivo | Cuándo usarlo |
 |---------|----------------|
-| **01-instalar-estacion.cmd** | Primera vez en la PC. Pedí un código de 6 dígitos en Admin → Lectores → Generar código. Ejecutá como Administrador y pegá el código. |
+| **01-instalar-estacion.cmd** | Primera vez en la PC. Pedí un código de 6 dígitos en Admin → Lectores → Generar código. Ejecutá como Administrador y pegá el código. También deja un control: si el programa queda colgado y `http://127.0.0.1:<puerto>/status` no responde 3 veces seguidas, reinicia el servicio. Si la estación ya estaba instalada antes de ese control, corré **01b** una vez. |
 | **01b-reinstalar-servicio-estacion.cmd** | Ya instalaste alguna vez y solo querés volver a registrar el servicio (sin pedir código de nuevo). |
 | **02-reiniciar-estacion.cmd** | Después de actualizar el programa o si “no abre” / “no lee”. Reinicia el servicio y te manda a Admin. |
-| **03-arrancar-apertura-por-internet.cmd** | Solo si las puertas abren **a distancia** (desde internet) con túnel Cloudflare. Si abrís **en planta**, no lo necesitás. |
+| **03-arrancar-apertura-por-internet.cmd** | Solo si las puertas abren **a distancia** (desde internet) con túnel Cloudflare. Si abrís **en planta**, no lo necesitás. La primera vez deja la tarea `BacarGuard-SR201-Bridge`. |
+| **03b-reiniciar-apertura-por-internet.cmd** | Reinicia esa apertura a distancia (después de cambiar `configuracion-apertura-internet.json` o actualizar el `.js`). Equivale a `05b`, pero para este puente. |
 | **04-arrancar-puente-biostar.cmd** | Prueba manual del puente BioStar (ventana abierta). Solo para probar. |
 | **05-instalar-servicio-biostar.cmd** | **Producción:** deja el puente BioStar permanente (arranca al encender la PC). Ejecutar como Admin. |
 | **05b-reiniciar-servicio-biostar.cmd** | Reinicia el servicio BioStar (después de cambiar `configuracion-biostar.json` o actualizar el `.js`). |
@@ -104,6 +105,39 @@ El lector sigue abriendo con su relé. BioStar manda; MSS ve autorizados y event
 Si cambiás la config o actualizás `programa-biostar.js`, corré **05b-reiniciar-servicio-biostar.cmd**.
 
 Swagger Local API: `http://127.0.0.1:5001/swagger/index.html` (HTTP :5001). La sesión `bs-session-id` caduca; el puente re-loguea solo.
+
+### Opciones nuevas de `configuracion-biostar.json` (todas opcionales)
+
+| Campo | Para qué sirve | Si no lo ponés |
+|-------|----------------|----------------|
+| `eventsBatchSize` | Cuántos pases manda a MSS por vez. Tiene que ser chico: cada envío debe terminar en menos de 60 segundos. | 50 |
+| `eventsFetchLimit` | Cuántos pases le pide a BioStar por vez. | 200 |
+| `eventsMaxRounds` | Cuántas tandas seguidas hace si hay atraso, antes de esperar el próximo ciclo. | 20 |
+| `usersBatchSize` | Cuántas personas manda a MSS por vez. | 50 |
+| `devices` | Qué es cada equipo BioStar: a qué puerta corresponde y si marca **ingreso** o **egreso**. | Todo se guarda como ingreso, marcado "sentido desconocido". |
+
+Ejemplo de `devices` (el número es el **ID del equipo** que muestra BioStar en Dispositivos):
+
+```json
+"devices": {
+  "544112233": { "doorId": "puerta-p2", "direction": "ingreso" },
+  "544112244": { "doorId": "puerta-p2", "direction": "egreso" }
+}
+```
+
+- Si el equipo tiene teclas de **Asistencia (T&A)**, el puente también entiende `tna_key`: 1 = ingreso, 2 = egreso. Lo que pongas en `devices` tiene prioridad.
+- Si no se sabe el sentido, el pase queda como ingreso con la marca `direccionDesconocida` para que los reportes lo distingan.
+- Solo los pases de **identificación** (huella/cara/tarjeta aceptada o rechazada) van al historial. Puerta forzada, puerta abierta mucho tiempo, equipo desconectado, etc. se guardan aparte (`deviceEvents`) y **no** aparecen como "denegado".
+
+### Cómo saber si el puente está importando de verdad
+
+El puente avisa a MSS cada 2 minutos el último envío bueno, el último error y hasta qué fecha está al día el historial. En **Admin → Personas** aparece la tarjeta **Conexión BioStar 2**:
+
+- **Conectado**: importó bien en los últimos 15 minutos.
+- **Con errores**: el programa está vivo pero no logra importar (por ejemplo: "Sin importar huellas desde el 15/08 03:54 — error: …"). También llega un mail si están configuradas las alertas de "puente local sin señal".
+- "Poniéndose al día": está recuperando un atraso; dejarlo trabajar.
+
+Si después de actualizar sigue con errores: revisar `biostar.service.log` y correr **05b-reiniciar-servicio-biostar.cmd**.
 
 ---
 

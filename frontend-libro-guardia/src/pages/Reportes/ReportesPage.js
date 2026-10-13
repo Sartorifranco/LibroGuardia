@@ -267,7 +267,7 @@ function ReportesPage() {
               <span className="reportes-total-hint">ingreso / egreso</span>
             </div>
             <div className="reportes-total-card">
-              <span className="reportes-total-label">Vehículos externos</span>
+              <span className="reportes-total-label">Vehículos</span>
               <strong>
                 {totals.vehiculo.ingreso} / {totals.vehiculo.egreso}
               </strong>

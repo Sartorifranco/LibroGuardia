@@ -16,6 +16,21 @@
 const fs = require('fs');
 const path = require('path');
 const { createBioStarClient } = require('./lib/biostarClient');
+const { writeJsonFileAtomic } = require('./lib/atomicJson');
+const { installFatalHandlers } = require('./lib/fatalHandlers');
+const os = require('os');
+const {
+  DEFAULT_EVENTS_BATCH_SIZE,
+  DEFAULT_EVENTS_FETCH_LIMIT,
+  DEFAULT_EVENTS_MAX_ROUNDS,
+  createSyncHealth,
+  buildHeartbeatPayload,
+  runEventSync,
+  runUserSync
+} = require('./lib/biostarEventSync');
+
+const BRIDGE_VERSION = '2026.10-lotes';
+const MSS_TIMEOUT_MS = 90 * 1000;
 
 const CONFIG_CANDIDATES = [
   path.join(__dirname, 'configuracion-biostar.json'),
@@ -34,7 +49,7 @@ const readJson = (file, fallback = null) => {
 };
 
 const writeJson = (file, data) => {
-  fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  writeJsonFileAtomic(file, data);
 };
 
 const loadConfig = () => {
@@ -60,7 +75,14 @@ const loadConfig = () => {
       : ['4867', '4102'],
     pollUsersMs: Number(raw.pollUsersMs) || 15 * 60 * 1000,
     pollEventsMs: Number(raw.pollEventsMs) || 30 * 1000,
-    eventsLookbackHours: Number(raw.eventsLookbackHours) || 24
+    eventsLookbackHours: Number(raw.eventsLookbackHours) || 24,
+    // Lotes chicos: cada POST a MSS tiene que terminar antes del corte de 60 s de Hosting.
+    eventsBatchSize: Number(raw.eventsBatchSize) || DEFAULT_EVENTS_BATCH_SIZE,
+    eventsFetchLimit: Number(raw.eventsFetchLimit) || DEFAULT_EVENTS_FETCH_LIMIT,
+    eventsMaxRounds: Number(raw.eventsMaxRounds) || DEFAULT_EVENTS_MAX_ROUNDS,
+    usersBatchSize: Number(raw.usersBatchSize) || DEFAULT_EVENTS_BATCH_SIZE,
+    // Opcional: { "<device_id BioStar>": { doorId, direction: 'ingreso'|'egreso' } }
+    devices: raw.devices && typeof raw.devices === 'object' && !Array.isArray(raw.devices) ? raw.devices : {}
   };
   if (!cfg.biostarLoginId || !cfg.biostarPassword) {
     throw new Error('configuracion-biostar.json: faltan biostarLoginId / biostarPassword');
@@ -101,8 +123,12 @@ const createMssClient = ({ apiBaseUrl, username, password }) => {
 
   const authorized = async (method, pathSuffix, body) => {
     if (!token) await login();
+    // Sin timeout, un POST colgado dejaba la sync trabada para siempre.
     const doCall = async () => fetch(`${apiBaseUrl}${pathSuffix}`, {
       method,
+      signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+        ? AbortSignal.timeout(MSS_TIMEOUT_MS)
+        : undefined,
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -155,6 +181,29 @@ async function main() {
 
   let syncingUsers = false;
   let syncingEvents = false;
+  // Estado honesto para el heartbeat: último éxito, último error, cursor y atraso.
+  const health = createSyncHealth();
+  health.cursor = loadState().lastEventDatetime || null;
+  let lastReportedOk = null;
+
+  const sendHeartbeat = async () => {
+    try {
+      await mss.heartbeat(buildHeartbeatPayload(health, {
+        hostname: os.hostname(),
+        biostarHost: cfg.biostarBaseUrl.replace(/^https?:\/\//, ''),
+        version: BRIDGE_VERSION
+      }));
+    } catch (err) {
+      log('warn', 'Heartbeat MSS falló', { error: err.message });
+    }
+  };
+
+  /** Si la sync cambió de bien a mal (o al revés), avisar enseguida sin esperar 2 min. */
+  const reportIfChanged = (ok) => {
+    if (lastReportedOk === ok) return;
+    lastReportedOk = ok;
+    sendHeartbeat().catch(() => {});
+  };
 
   const syncUsers = async () => {
     if (syncingUsers) return;
@@ -162,16 +211,15 @@ async function main() {
     try {
       const users = await biostar.listAllUsers({ groupId: cfg.userGroupId, pageSize: 50 });
       log('info', 'Usuarios leídos de BioStar', { count: users.length });
-      const result = await mss.importUsers({
-        users,
-        defaultDoorId: cfg.defaultDoorId
-      });
+      const result = await runUserSync({ users, mss, cfg, health });
       log('info', 'Usuarios importados a MSS', {
         created: result.created,
         updated: result.updated,
         skipped: result.skipped
       });
     } catch (err) {
+      health.lastError = `Personas: ${err.message}`;
+      health.lastErrorAt = new Date().toISOString();
       log('error', 'Sync usuarios falló', { error: err.message });
     } finally {
       syncingUsers = false;
@@ -182,41 +230,35 @@ async function main() {
     if (syncingEvents) return;
     syncingEvents = true;
     try {
-      const state = loadState();
-      const lookback = new Date(
-        Date.now() - Math.max(1, cfg.eventsLookbackHours) * 60 * 60 * 1000
-      ).toISOString();
-      const since = state.lastEventDatetime || lookback;
-      // Retroceder 1s para no perder el borde; MSS deduplica por id
-      const sinceDate = new Date(since);
-      if (!Number.isNaN(sinceDate.getTime())) {
-        sinceDate.setSeconds(sinceDate.getSeconds() - 1);
-      }
-      const events = await biostar.searchEventsSince({
-        sinceIso: sinceDate.toISOString(),
-        limit: 500
+      const result = await runEventSync({
+        biostar,
+        mss,
+        cfg,
+        loadState,
+        saveState,
+        health,
+        log
       });
-      if (!events.length) {
-        log('info', 'Sin eventos nuevos', { since });
-        return;
+      if (result.batches === 0) {
+        log('info', 'Sin eventos nuevos', { since: result.cursor });
+      } else {
+        log('info', 'Eventos importados a MSS', {
+          accepted: result.accepted,
+          deviceEvents: result.deviceEvents,
+          skipped: result.skipped,
+          batches: result.batches,
+          cursor: result.cursor,
+          backlogEstimate: result.backlogEstimate
+        });
       }
-      const result = await mss.importEvents({
-        events,
-        defaultDoorId: cfg.defaultDoorId,
-        doorMap: cfg.doorMap,
-        successEventCodes: cfg.successEventCodes,
-        cursorDatetime: state.lastEventDatetime
-      });
-      if (result.cursorDatetime) {
-        saveState({ lastEventDatetime: result.cursorDatetime });
-      }
-      log('info', 'Eventos importados a MSS', {
-        accepted: result.accepted,
-        skipped: result.skipped,
-        cursor: result.cursorDatetime
-      });
+      reportIfChanged(true);
     } catch (err) {
-      log('error', 'Sync eventos falló', { error: err.message });
+      log('error', 'Sync eventos falló', {
+        error: err.message,
+        cursor: health.cursor,
+        importadosAntesDelError: err.syncTotals?.accepted || 0
+      });
+      reportIfChanged(false);
     } finally {
       syncingEvents = false;
     }
@@ -228,21 +270,25 @@ async function main() {
 
   setInterval(() => { syncUsers().catch(() => {}); }, cfg.pollUsersMs);
   setInterval(() => { syncEvents().catch(() => {}); }, cfg.pollEventsMs);
-  setInterval(() => {
-    mss.heartbeat().catch((err) => log('warn', 'Heartbeat MSS falló', { error: err.message }));
-  }, 2 * 60 * 1000);
-  mss.heartbeat().catch(() => {});
+  setInterval(() => { sendHeartbeat().catch(() => {}); }, 2 * 60 * 1000);
+  sendHeartbeat().catch(() => {});
 
   log('info', 'Puente en marcha', {
+    version: BRIDGE_VERSION,
     pollUsersMin: Math.round(cfg.pollUsersMs / 60000),
-    pollEventsSec: Math.round(cfg.pollEventsMs / 1000)
+    pollEventsSec: Math.round(cfg.pollEventsMs / 1000),
+    eventsBatchSize: cfg.eventsBatchSize,
+    devicesMapeados: Object.keys(cfg.devices).length
   });
 
   // Mantener proceso vivo
   setInterval(() => {}, 60 * 60 * 1000);
 }
 
-main().catch((err) => {
-  console.error('[biostar-bridge] FATAL', err.message);
-  process.exit(1);
-});
+if (require.main === module) {
+  installFatalHandlers((level, message, extra) => log(level, message, extra));
+  main().catch((err) => {
+    console.error('[biostar-bridge] FATAL', err.message);
+    process.exit(1);
+  });
+}

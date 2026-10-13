@@ -16,6 +16,7 @@ import {
   buildGatePolygonPatch
 } from '../utils/fleetGpsGeofence';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
 import brand from '../config/brand';
 import 'leaflet/dist/leaflet.css';
 
@@ -82,9 +83,11 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
   previewConfig,
   active = true,
   editable = false,
+  simpleMode = false,
   onGeofenceChange,
   onGeofenceSaved,
-  onGeofenceError
+  onGeofenceError,
+  onSnapshot
 }, ref) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -111,8 +114,18 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
   useImperativeHandle(ref, () => ({
     commitDraft() {
       return buildGatePolygonPatch(drawTarget, draftPoints, previewConfig?.gatePolygons);
+    },
+    startDraw(target) {
+      const id = target === 'plant' ? 'plant' : (target || 'gate-1');
+      setDrawTarget(id);
+      if (id === 'plant') {
+        setDraftPoints(queryConfig.plantPolygon?.points || []);
+        return;
+      }
+      const gate = (queryConfig.gatePolygons || []).find((item) => item.id === id);
+      setDraftPoints(gate?.points || []);
     }
-  }), [drawTarget, draftPoints, previewConfig?.gatePolygons]);
+  }), [drawTarget, draftPoints, previewConfig?.gatePolygons, queryConfig.gatePolygons, queryConfig.plantPolygon]);
 
   const queryConfig = useMemo(() => ({
     guardiaLat: previewConfig?.guardiaLat === '' ? null : Number(previewConfig?.guardiaLat),
@@ -161,22 +174,28 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
       }
       const data = await apiFetch(`/admin/fleet-gps/live?${params.toString()}`, { token: authToken });
       setSnapshot(data);
+      onSnapshot?.(data);
       setError(data.error || null);
     } catch (err) {
       setError(err.message || 'No se pudo cargar el mapa en vivo');
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [authToken, active, hasCoords, queryConfig, editable]);
+  }, [authToken, active, hasCoords, queryConfig, editable, onSnapshot]);
 
+  const livePollingEnabled = Boolean(active && authToken && !isDrawing);
   useEffect(() => {
-    if (!active || !authToken || isDrawing) return undefined;
+    if (!livePollingEnabled) return;
     fetchLive(false);
-    const timer = setInterval(() => {
-      if (!mapViewLockedRef.current) fetchLive(true);
-    }, queryConfig.pollIntervalSeconds * 1000);
-    return () => clearInterval(timer);
-  }, [active, authToken, fetchLive, queryConfig.pollIntervalSeconds, isDrawing]);
+  }, [livePollingEnabled, fetchLive]);
+  const pollLive = useCallback(() => {
+    if (!mapViewLockedRef.current) return fetchLive(true);
+    return undefined;
+  }, [fetchLive]);
+  usePolling(pollLive, queryConfig.pollIntervalSeconds * 1000, {
+    enabled: livePollingEnabled,
+    immediate: false
+  });
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return undefined;
@@ -529,23 +548,25 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
     <div className="fleet-gps-live-map">
       <div className="fleet-gps-live-map__header">
         <div>
-          <h4 className="fleet-gps-live-map__title">Mapa en vivo</h4>
+          <h4 className="fleet-gps-live-map__title">{simpleMode ? 'Mapa' : 'Mapa en vivo'}</h4>
           <p className="fleet-gps-live-map__desc">
-            {polygonMode
-              ? 'Dibujá polígonos sobre cada portón para detectar entradas y salidas con precisión. Hasta 2 portones y el perímetro de planta.'
-              : 'Visualizá cada móvil y ajustá los radios de portón/planta hasta que las entradas y salidas coincidan con la realidad.'}
+            {simpleMode
+              ? 'Marcá el portón y la planta sobre el mapa. Después guardá el dibujo.'
+              : polygonMode
+                ? 'Dibujá polígonos sobre cada portón para detectar entradas y salidas con precisión. Hasta 2 portones y el perímetro de planta.'
+                : 'Visualizá cada móvil y ajustá los radios de portón/planta hasta que las entradas y salidas coincidan con la realidad.'}
           </p>
         </div>
         <div className="fleet-gps-live-map__header-actions">
           {editable && (
             <button
               type="button"
-              className="btn btn-primary"
+              className={simpleMode ? 'btn btn-secondary' : 'btn btn-primary'}
               onClick={handleSaveGeofence}
               disabled={savingGeofence || isDrawing}
             >
               {savingGeofence ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              Guardar mapa
+              {simpleMode ? 'Guardar el dibujo' : 'Guardar mapa'}
             </button>
           )}
           <button type="button" className="btn btn-secondary" onClick={handleCenterMap}>
@@ -560,6 +581,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
 
       {editable && (
         <div className="fleet-gps-geofence-editor">
+          {!simpleMode && (
           <div className="fleet-gps-geofence-editor__row">
             <label className="fleet-gps-geofence-editor__field">
               <span>Modo de geocerca</span>
@@ -588,12 +610,14 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
               </label>
             )}
           </div>
+          )}
 
           {polygonMode && (
             <>
               <p className="fleet-gps-geofence-editor__hint">
-                Hacé clic en el mapa para agregar vértices (Portón Santiago / Portón Olmos).
-                La alerta de acercamiento a 400 m puede estar activa al mismo tiempo: avisa al guardia antes del cruce y el ingreso/egreso se registra al pasar el polígono del portón.
+                {simpleMode
+                  ? 'Hacé clic en el mapa para marcar las esquinas. Con 3 o más, cerrá la zona.'
+                  : 'Hacé clic en el mapa para agregar vértices (Portón Santiago / Portón Olmos). La alerta de acercamiento a 400 m puede estar activa al mismo tiempo: avisa al guardia antes del cruce y el ingreso/egreso se registra al pasar el polígono del portón.'}
               </p>
               <div className="fleet-gps-geofence-editor__actions">
                 <button type="button" className="btn btn-secondary" onClick={handleFinishPolygon} disabled={draftPoints.length < 3}>
@@ -617,7 +641,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
 
       {!hasCoords && (
         <div className="theme-callout-info">
-          Complete latitud y longitud de la guardia arriba para centrar el mapa.
+          Complete la ubicación en el mapa (o en Opciones avanzadas) para centrarlo.
         </div>
       )}
 
@@ -645,7 +669,7 @@ const FleetGpsLiveMap = forwardRef(function FleetGpsLiveMap({
             <span>Planta {queryConfig.plantRadiusMeters} m</span>
           </>
         )}
-        <span>{snapshot?.vehicleCount ?? 0} móviles</span>
+        <span>{snapshot?.vehicleCount ?? 0} vehículos</span>
         {snapshot?.summary && (
           <>
             <span>{snapshot.summary.moving} en movimiento</span>

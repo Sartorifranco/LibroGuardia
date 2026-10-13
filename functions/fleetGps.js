@@ -37,11 +37,12 @@ const DEFAULT_FLEET_GPS = {
   lastSyncAt: null
 };
 
+const crypto = require('crypto');
+const { loadTrackMap, saveTrackMap, trackNeedsWrite } = require('./lib/fleetGpsStore');
+
 const API_KEY_MASK = '********';
-const TRACKS_COLLECTION = 'fleetGpsTracks';
 const SNAPSHOT_DOC = 'fleetGpsSnapshot';
-/** Solo reescribir track si se movió más de esto (metros) o cambió de zona. */
-const TRACK_MOVE_THRESHOLD_M = 25;
+const LOOKUP_TTL_MS = 10 * 60 * 1000;
 const {
   sanitizeGatePolygons,
   persistGatePolygons,
@@ -375,28 +376,53 @@ const detectApproachingVehicles = (vehicles = [], config = {}) => {
     }));
 };
 
-const loadTracks = async (db, deviceIds) => {
-  const map = new Map();
-  await Promise.all(deviceIds.map(async (deviceId) => {
-    const snap = await db.collection(TRACKS_COLLECTION).doc(String(deviceId)).get();
-    if (snap.exists) map.set(String(deviceId), snap.data());
+let mobilesCache = { loadedAt: 0, rows: null };
+let vehiclesCache = { loadedAt: 0, byPlate: null };
+
+const invalidateFleetLookupCache = () => {
+  mobilesCache = { loadedAt: 0, rows: null };
+  vehiclesCache = { loadedAt: 0, byPlate: null };
+};
+
+const cacheFresh = (loadedAt) => loadedAt && (Date.now() - loadedAt) < LOOKUP_TTL_MS;
+
+const getMobilesCached = async (db) => {
+  if (cacheFresh(mobilesCache.loadedAt) && mobilesCache.rows) return mobilesCache.rows;
+  const snap = await db.collection('mobiles').get();
+  const rows = (snap.docs || []).map((doc) => ({
+    id: doc.id,
+    name: doc.data()?.name || ''
   }));
-  return map;
+  mobilesCache = { loadedAt: Date.now(), rows };
+  return rows;
+};
+
+const getVehiclesByPlateCached = async (db) => {
+  if (cacheFresh(vehiclesCache.loadedAt) && vehiclesCache.byPlate) return vehiclesCache.byPlate;
+  const snap = await db.collection('vehiclesMaster').get();
+  const byPlate = new Map();
+  (snap.docs || []).forEach((doc) => {
+    const data = doc.data() || {};
+    const plate = String(data.plateNormalized || '').toUpperCase();
+    if (plate) byPlate.set(plate, { id: doc.id, ...data });
+  });
+  vehiclesCache = { loadedAt: Date.now(), byPlate };
+  return byPlate;
+};
+
+const warmFleetLookupCache = async (db) => {
+  await Promise.all([getMobilesCached(db), getVehiclesByPlateCached(db)]);
 };
 
 const lookupVehicleMaster = async (db, plate) => {
   if (!plate) return null;
-  const snap = await db.collection('vehiclesMaster')
-    .where('plateNormalized', '==', String(plate).toUpperCase())
-    .limit(1)
-    .get();
-  if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+  const byPlate = await getVehiclesByPlateCached(db);
+  return byPlate.get(String(plate).toUpperCase()) || null;
 };
 
 const lookupFleetMobile = async (db, vehicle = {}) => {
-  const snap = await db.collection('mobiles').get();
-  if (snap.empty) return null;
+  const rows = await getMobilesCached(db);
+  if (!rows.length) return null;
 
   const label = extractVehicleLabel(vehicle.name, vehicle.plate);
   const searchTokens = [...new Set([
@@ -410,8 +436,8 @@ const lookupFleetMobile = async (db, vehicle = {}) => {
   let best = null;
   let bestScore = 0;
 
-  snap.docs.forEach((doc) => {
-    const mobileName = doc.data()?.name || '';
+  rows.forEach((row) => {
+    const mobileName = row.name || '';
     const mobileToken = normalizeFleetToken(mobileName);
     if (!mobileToken) return;
 
@@ -423,7 +449,7 @@ const lookupFleetMobile = async (db, vehicle = {}) => {
 
       if (score > bestScore) {
         bestScore = score;
-        best = { id: doc.id, name: mobileName };
+        best = { id: row.id, name: mobileName };
       }
     });
   });
@@ -556,11 +582,14 @@ const registerGpsMovement = async (db, FieldValue, vehicle, movementType, meta =
 const processTransit = async (db, FieldValue, vehicles, config, options = {}) => {
   const cooldown = Number(config.movementCooldownSeconds) || DEFAULT_FLEET_GPS.movementCooldownSeconds;
   const autoRegister = config.autoRegisterMovements !== false && !options.skipAutoRegister;
-  const tracks = await loadTracks(db, vehicles.map((v) => v.deviceId));
+  const loaded = await loadTrackMap(db);
+  const tracks = loaded.map;
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
 
   const transit = [];
   const registered = [];
-  const trackUpdates = [];
+  let dirty = false;
 
   for (const vehicle of vehicles) {
     const trackKey = String(vehicle.deviceId);
@@ -579,9 +608,15 @@ const processTransit = async (db, FieldValue, vehicles, config, options = {}) =>
       motion: vehicle.motion,
       ignition: vehicle.ignition,
       status: vehicle.status,
-      lastSeenAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp()
+      moving: Boolean(vehicle.moving),
+      pendingDirection: prev?.pendingDirection || null,
+      lastMovementType: prev?.lastMovementType || null,
+      lastMovementAt: prev?.lastMovementAt || null,
+      lastEntryId: prev?.lastEntryId || null,
+      lastWrittenAt: prev?.lastWrittenAt || null,
+      lastSeenAt: prev?.lastSeenAt || null
     };
+    let movementLogged = false;
 
     if (direction) {
       const cooled = withinCooldown(prev, direction, cooldown);
@@ -603,9 +638,10 @@ const processTransit = async (db, FieldValue, vehicles, config, options = {}) =>
           item.registered = true;
           item.pending = false;
           trackUpdate.lastMovementType = direction;
-          trackUpdate.lastMovementAt = FieldValue.serverTimestamp();
+          trackUpdate.lastMovementAt = nowIso;
           trackUpdate.lastEntryId = result.entryId;
           trackUpdate.pendingDirection = null;
+          movementLogged = true;
           registered.push(item);
         } catch (err) {
           item.registered = false;
@@ -622,27 +658,15 @@ const processTransit = async (db, FieldValue, vehicles, config, options = {}) =>
       trackUpdate.pendingDirection = null;
     }
 
-    // Costo: no reescribir todos los tracks en cada poll; solo cambios relevantes.
-    const movedFar = prev?.lat != null
-      && prev?.lng != null
-      && vehicle.lat != null
-      && vehicle.lng != null
-      && distanceMeters(prev.lat, prev.lng, vehicle.lat, vehicle.lng) >= TRACK_MOVE_THRESHOLD_M;
-    const zoneChanged = !prev || prev.zone !== vehicle.zone;
-    const pendingChanged = (prev?.pendingDirection || null) !== (trackUpdate.pendingDirection || null);
-    const movementLogged = Boolean(trackUpdate.lastMovementAt);
-    if (!prev || zoneChanged || pendingChanged || movementLogged || movedFar || direction) {
-      trackUpdates.push({ trackKey, trackUpdate });
+    if (trackNeedsWrite(prev, { ...trackUpdate, movementLogged }, nowMs)) {
+      trackUpdate.lastWrittenAt = nowIso;
+      trackUpdate.lastSeenAt = nowIso;
+      tracks.set(trackKey, trackUpdate);
+      dirty = true;
     }
   }
 
-  for (let i = 0; i < trackUpdates.length; i += 400) {
-    const batch = db.batch();
-    trackUpdates.slice(i, i + 400).forEach(({ trackKey, trackUpdate }) => {
-      batch.set(db.collection(TRACKS_COLLECTION).doc(trackKey), trackUpdate, { merge: true });
-    });
-    await batch.commit();
-  }
+  if (dirty) await saveTrackMap(db, tracks, loaded.shardCount);
 
   return { transit, registered };
 };
@@ -694,9 +718,54 @@ const buildAlertsPayloadFromSnapshot = (snapshot, config) => {
   };
 };
 
+const stableStringify = (value) => {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+};
+
+const snapshotFingerprint = (payload) => {
+  const round = (n) => {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return null;
+    return Math.round(x * 10000) / 10000;
+  };
+  const ids = (list) => (list || []).map((item) => String(item.deviceId || item.id || '')).sort();
+  return crypto.createHash('sha1').update(stableStringify({
+    vehicleCount: payload.vehicleCount || 0,
+    message: payload.message || '',
+    summary: payload.summary || null,
+    gateRadiusMeters: payload.gateRadiusMeters || null,
+    plantRadiusMeters: payload.plantRadiusMeters || null,
+    guardiaLat: payload.guardiaLat ?? null,
+    guardiaLng: payload.guardiaLng ?? null,
+    transit: (payload.transit || []).map((item) => `${item.deviceId}:${item.direction}:${item.registered ? 1 : 0}:${item.zone}`).sort(),
+    registered: (payload.registered || []).map((item) => `${item.deviceId}:${item.entryId || ''}`).sort(),
+    approaching: ids(payload.approaching),
+    atGateStopped: ids(payload.atGateStopped),
+    inPlant: ids(payload.inPlant),
+    vehicles: (payload.vehicles || []).map((item) => ({
+      id: String(item.deviceId),
+      zone: item.zone || null,
+      moving: Boolean(item.moving),
+      lat: round(item.lat),
+      lng: round(item.lng),
+      speed: Math.round(Number(item.speed) || 0)
+    })).sort((a, b) => a.id.localeCompare(b.id))
+  })).digest('hex');
+};
+
 const persistFleetGpsSnapshot = async (db, FieldValue, payload) => {
   const vehicles = Array.isArray(payload.vehicles) ? payload.vehicles : [];
-  await db.collection('settings').doc(SNAPSHOT_DOC).set({
+  const contentHash = snapshotFingerprint(payload);
+  const ref = db.collection('settings').doc(SNAPSHOT_DOC);
+  const prev = await ref.get();
+  const previous = prev.exists ? (prev.data() || {}) : null;
+  if (previous && previous.contentHash === contentHash) return false;
+
+  await ref.set({
     syncedAt: payload.syncedAt,
     message: payload.message || '',
     vehicleCount: payload.vehicleCount || vehicles.length,
@@ -712,12 +781,14 @@ const persistFleetGpsSnapshot = async (db, FieldValue, payload) => {
     plantRadiusMeters: payload.plantRadiusMeters || null,
     guardiaLat: payload.guardiaLat ?? null,
     guardiaLng: payload.guardiaLng ?? null,
+    contentHash,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true });
+  return true;
 };
 
 const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
-  const config = await getFleetGpsConfig(db);
+  const config = options.config || await getFleetGpsConfig(db);
   const force = Boolean(options.force);
   const forceUbika = Boolean(options.forceUbika) || force;
   const preferCache = options.preferCache !== false && !forceUbika;
@@ -788,7 +859,10 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
   }
 
   try {
-    const vehicles = withDistanceAndZone(await fetchFleetFromProvider(config), config);
+    const rawVehicles = Array.isArray(options.vehicles)
+      ? options.vehicles
+      : await fetchFleetFromProvider(config);
+    const vehicles = withDistanceAndZone(rawVehicles, config);
     const gateRadius = resolveGateRadius(config);
     const plantRadius = resolvePlantRadius(config);
     const approaching = detectApproachingVehicles(vehicles, config);
@@ -799,10 +873,12 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
     const atGateStopped = vehicles.filter((v) => v.zone === 'gate' && !v.moving);
     const nearest = vehicles.slice(0, 15);
 
-    await db.collection('settings').doc('fleetGps').set({
-      lastSyncAt: FieldValue.serverTimestamp(),
-      lastError: null
-    }, { merge: true });
+    if ((config.lastError || null) !== null) {
+      await db.collection('settings').doc('fleetGps').set({
+        lastSyncAt: FieldValue.serverTimestamp(),
+        lastError: null
+      }, { merge: true });
+    }
 
     const syncedAt = new Date().toISOString();
     const approachSuffix = approaching.length
@@ -845,10 +921,12 @@ const fetchNearbyFleetAlerts = async (db, FieldValue, options = {}) => {
     await persistFleetGpsSnapshot(db, FieldValue, payload);
     return payload;
   } catch (err) {
-    await db.collection('settings').doc('fleetGps').set({
-      lastError: err.message,
-      lastSyncAt: FieldValue.serverTimestamp()
-    }, { merge: true });
+    if ((config.lastError || null) !== (err.message || null)) {
+      await db.collection('settings').doc('fleetGps').set({
+        lastError: err.message,
+        lastSyncAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
 
     // Si UBIKA falla, devolver última foto si hay (mejor que panel vacío).
     const snapshot = await readFleetGpsSnapshot(db);
@@ -1040,5 +1118,7 @@ module.exports = {
   usesPolygonGeofence,
   detectApproachingVehicles,
   resolveTransitDirection,
-  resolveGpsEventTimeIso
+  resolveGpsEventTimeIso,
+  invalidateFleetLookupCache,
+  warmFleetLookupCache
 };

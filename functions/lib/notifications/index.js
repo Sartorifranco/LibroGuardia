@@ -23,6 +23,44 @@ const getChannel = (id = DEFAULT_CHANNEL) => CHANNELS[id] || CHANNELS[DEFAULT_CH
 const buildMessage = (eventType, payload = {}) => {
   const brand = 'LibroGuardia';
   switch (eventType) {
+    case 'access_request': {
+      const decided = payload.phase === 'decidida';
+      return {
+        subject: decided
+          ? `${brand}: se decidió una autorización`
+          : `${brand}: nueva solicitud de autorización`,
+        text: decided
+          ? [
+            'Se decidió una solicitud de ingreso.',
+            `Persona: ${payload.name || '—'}`,
+            `DNI: ${payload.dni || '—'}`,
+            `Resultado: ${payload.estado || '—'}`,
+            `Nota: ${payload.nota || '—'}`
+          ].join('\n')
+          : [
+            'Hay una solicitud de ingreso para revisar.',
+            `Persona: ${payload.name || '—'}`,
+            `DNI: ${payload.dni || '—'}`,
+            `Empresa: ${payload.empresaNombre || '—'}`,
+            `Motivo: ${payload.motivo || '—'}`,
+            `Desde: ${payload.desde || '—'}`,
+            `Hasta: ${payload.hasta || '—'}`,
+            `La pidió: ${payload.solicitadoPorNombre || '—'}`
+          ].join('\n')
+      };
+    }
+    case 'ingreso_emergencia':
+      return {
+        subject: `${brand}: ALERTA — ingreso de emergencia`,
+        text: [
+          'Un guardia abrió la puerta por emergencia. Hay que revisarlo.',
+          `Nombre: ${payload.name || '—'}`,
+          `DNI: ${payload.idNumber || '—'}`,
+          `Motivo: ${payload.reason || '—'}`,
+          `Operador: ${payload.username || payload.userId || '—'}`,
+          `Registro: ${payload.entryId || '—'}`
+        ].join('\n')
+      };
     case 'exceptional_entry':
       return {
         subject: `${brand}: ingreso excepcional`,
@@ -58,6 +96,32 @@ const buildMessage = (eventType, payload = {}) => {
         ].join('\n')
       };
     case 'bridge_offline':
+      if (payload.variant === 'problem') {
+        return {
+          subject: `${brand}: equipo de planta con problemas — ${payload.name || payload.kind || ''}`.trim(),
+          text: [
+            'Un equipo de planta sigue reportando, pero tiene un problema.',
+            `Qué: ${payload.name || payload.kind || '—'}`,
+            `Problema: ${payload.reason || '—'}`,
+            `Id: ${payload.id || '—'}`,
+            `Tipo: ${payload.kind || '—'}`,
+            `Última señal: ${payload.lastAt || '—'}`,
+            'Revisar el cable USB del lector, la placa de relé o la contraseña de la estación según el problema (ver docs/CONTINGENCIA-BRIDGES.md).'
+          ].join('\n')
+        };
+      }
+      if (payload.variant === 'recovered') {
+        return {
+          subject: `${brand}: recuperado — ${payload.name || payload.kind || ''}`.trim(),
+          text: [
+            'El equipo de planta volvió a funcionar normalmente.',
+            `Qué: ${payload.name || payload.kind || '—'}`,
+            `Id: ${payload.id || '—'}`,
+            `Tipo: ${payload.kind || '—'}`,
+            `Última señal: ${payload.lastAt || '—'}`
+          ].join('\n')
+        };
+      }
       return {
         subject: `${brand}: puente local sin señal`,
         text: [
@@ -66,9 +130,40 @@ const buildMessage = (eventType, payload = {}) => {
           `Id: ${payload.id || '—'}`,
           `Tipo: ${payload.kind || '—'}`,
           `Última señal: ${payload.lastAt || '—'}`,
-          'Si la PC de planta está apagada, encenderla y verificar PM2 (ver docs/CONTINGENCIA-BRIDGES.md).'
+          'Si la PC de planta está apagada, encenderla. Si está encendida, correr scripts/02-reiniciar-estacion.cmd como administrador (ver docs/CONTINGENCIA-BRIDGES.md).'
         ].join('\n')
       };
+    case 'duress_access':
+      return {
+        subject: `${brand}: ALERTA — ingreso bajo coacción`,
+        text: [
+          'Una persona marcó la huella de coacción (pánico). La puerta se abrió para no ponerla en riesgo.',
+          `Persona: ${payload.name || '—'}`,
+          `Puerta: ${payload.doorId || '—'}`,
+          `Hora: ${payload.at || '—'}`,
+          `Registro: ${payload.entryId || '—'}`,
+          'Actuar según el protocolo de seguridad. No llamar a la persona por teléfono.'
+        ].join('\n')
+      };
+    case 'edge_alarm': {
+      const titles = {
+        door_forced: 'puerta forzada',
+        emergency: 'botón de emergencia activado',
+        interlock_violation: 'dos puertas del estanco abiertas a la vez'
+      };
+      const title = titles[payload.alarmType] || payload.alarmType || 'alarma de puerta';
+      return {
+        subject: `${brand}: ALARMA — ${title}`,
+        text: [
+          `Alarma: ${title}.`,
+          `Puerta: ${payload.doorName || payload.doorId || '—'}`,
+          `Equipo: ${payload.deviceId || '—'}`,
+          `Hora: ${payload.at || '—'}`,
+          payload.message ? `Detalle: ${payload.message}` : null,
+          'Verificar en el lugar y reconocer la alarma en el sistema con una nota.'
+        ].filter(Boolean).join('\n')
+      };
+    }
     case 'admin_sensitive':
       return {
         subject: `${brand}: cambio administrativo sensible`,
@@ -78,6 +173,17 @@ const buildMessage = (eventType, payload = {}) => {
           `Actor: ${payload.actorUsername || payload.actorId || '—'}`,
           `Entidad: ${payload.targetType || '—'} ${payload.targetId || ''}`.trim(),
           `Detalle: ${JSON.stringify(payload.changedKeys || [])}`
+        ].join('\n')
+      };
+    case 'usage_budget':
+      return {
+        subject: `${brand}: el gasto del mes puede pasar el tope`,
+        text: [
+          'La proyección de gasto de este mes supera el tope configurado.',
+          `Llevamos gastado (estimado): US$ ${payload.estimatedUsd ?? '—'}`,
+          `Proyección a fin de mes: US$ ${payload.projectedUsd ?? '—'}`,
+          `Tope: US$ ${payload.budgetUsd ?? '—'}`,
+          'Revisá la pantalla Consumo en Administración. El aviso se manda como máximo una vez por día.'
         ].join('\n')
       };
     default:
@@ -107,7 +213,14 @@ const notify = async (eventType, payload = {}) => {
       return { sent: false, skipped: true, reason: 'evento_deshabilitado' };
     }
 
-    const recipients = Array.isArray(eventCfg.recipients) ? eventCfg.recipients : [];
+    let recipients = Array.isArray(eventCfg.recipients) ? eventCfg.recipients : [];
+    if (eventType === 'access_request' || eventType === 'ingreso_emergencia') {
+      const extra = Array.isArray(payload.extraRecipients) ? payload.extraRecipients : [];
+      recipients = [...new Set([
+        ...recipients,
+        ...extra.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean)
+      ])];
+    }
     if (!recipients.length) {
       return { sent: false, skipped: true, reason: 'sin_destinatarios' };
     }

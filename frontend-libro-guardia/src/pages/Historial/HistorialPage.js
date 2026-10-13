@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ClipboardList, Download, File, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
-import * as XLSX from 'xlsx';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
 import { getEntryTableDisplay } from '../../utils/entryDisplay';
+import EntryNotes from '../../components/EntryNotes';
 import {
   HISTORIAL_DATE_PRESETS,
   resolveHistorialDateRange,
@@ -17,13 +15,65 @@ import {
   filterDoorAccessEntries,
   formatDoorAccessPhrase,
   getHistorialSection,
-  HISTORIAL_SECTIONS
+  HISTORIAL_SECTIONS,
+  resolveDoorEntryOrigin
 } from '../../utils/historialSections';
 import { hasPermission } from '../../utils/permissions';
 import brand from '../../config/brand';
 
 const PAGE_SIZE = 50;
 const EXPORT_MAX = 1000;
+
+function movementKind(entry = {}) {
+  const raw = String(entry.movementType || entry.tipoMovimiento || '').toLowerCase();
+  if (raw.includes('egreso')) return 'egreso';
+  if (raw.includes('ingreso')) return 'ingreso';
+  if (entry.type === 'novedad') return 'novedad';
+  return 'otro';
+}
+
+function movementLabel(entry, kind) {
+  if (kind === 'egreso') return 'Egreso';
+  if (kind === 'ingreso') return 'Ingreso';
+  if (kind === 'novedad') return 'Novedad';
+  return entry.movementType || 'Registro';
+}
+
+function originLabel(entry) {
+  const id = resolveDoorEntryOrigin(entry);
+  return DOOR_ENTRY_ORIGIN_FILTERS.find((item) => item.id === id)?.label || 'Manual';
+}
+
+function HistorialCards({ entries, doorNamesById }) {
+  return (
+    <div className="historial-cards">
+      {entries.map((entry) => {
+        const date = new Date(entry.timestamp);
+        const kind = movementKind(entry);
+        const name = entry.name || entry.nameSnapshot || entry.driver || entry.mobile || entry.plate || 'Sin nombre';
+        const dni = entry.idNumber || entry.dni || '—';
+        const door = entry.doorName || formatDoorAccessPhrase(entry, doorNamesById).door || '—';
+        const hora = entry.eventTime
+          || date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+        const rowKey = entry.id || entry._id || `${entry.timestamp}-${name}-${hora}`;
+        return (
+          <article key={rowKey} className={`historial-card historial-card--${kind}`}>
+            <div className="historial-card__top">
+              <strong>{name}</strong>
+              <span className={`historial-card__type historial-card__type--${kind}`}>
+                {movementLabel(entry, kind)}
+              </span>
+            </div>
+            <p>Hora: {hora}</p>
+            <p>Puerta: {door}</p>
+            <p>DNI: {dni}</p>
+            <EntryNotes entry={entry} />
+          </article>
+        );
+      })}
+    </div>
+  );
+}
 
 function HistorialPage() {
   const { authToken, currentUser } = useAuth();
@@ -292,7 +342,10 @@ function HistorialPage() {
         link.click();
         document.body.removeChild(link);
       } else if (kind === 'pdf') {
-        const doc = new jsPDF('landscape');
+        const jspdfMod = await import('jspdf');
+        const JsPDF = jspdfMod.jsPDF || jspdfMod.default;
+        await import('jspdf-autotable');
+        const doc = new JsPDF('landscape');
         doc.setFontSize(12);
         doc.text(brand.pdfReportTitle, 14, 16);
         doc.setFontSize(9);
@@ -320,6 +373,8 @@ function HistorialPage() {
         });
         doc.save(`${fileBase}.pdf`);
       } else {
+        const xlsxMod = await import('xlsx');
+        const XLSX = xlsxMod.default || xlsxMod;
         const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, section.label.slice(0, 31));
@@ -489,7 +544,8 @@ function HistorialPage() {
             <p className="text-gray-500 text-center py-8">No hay registros en esta sección para los filtros elegidos.</p>
           ) : sectionId === 'accesos' ? (
             <>
-              <div className="overflow-x-auto rounded-lg shadow-md border border-gray-200">
+              <HistorialCards entries={visibleEntries} doorNamesById={doorNamesById} />
+              <div className="historial-table-wrap overflow-x-auto rounded-lg shadow-md border border-gray-200">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-black text-white">
                     <tr>
@@ -508,7 +564,10 @@ function HistorialPage() {
                       const rowKey = entry.id || `${entry.timestamp}-${name}`;
                       return (
                         <tr key={rowKey}>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{name}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {name}
+                            <EntryNotes entry={entry} />
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 capitalize">{verb}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{door}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{date.toLocaleDateString()}</td>
@@ -516,7 +575,7 @@ function HistorialPage() {
                             {entry.eventTime || date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                            {entry.entrySource || (entry.doorId ? 'kiosk' : '—')}
+                            {originLabel(entry)}
                           </td>
                         </tr>
                       );
@@ -534,7 +593,8 @@ function HistorialPage() {
             </>
           ) : (
             <>
-              <div className="overflow-x-auto rounded-lg shadow-md border border-gray-200">
+              <HistorialCards entries={visibleEntries} doorNamesById={doorNamesById} />
+              <div className="historial-table-wrap overflow-x-auto rounded-lg shadow-md border border-gray-200">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-black text-white">
                     <tr>
@@ -565,7 +625,10 @@ function HistorialPage() {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
                             {entry.registeredByUsername || 'Desconocido'}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[0]}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                            {specificDetails[0]}
+                            <EntryNotes entry={entry} />
+                          </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[1]}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[2]}</td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{specificDetails[3]}</td>

@@ -1,0 +1,71 @@
+{
+  "deviceId": "ctl-banco-1",
+  "siteId": "principal",
+  "dataDir": "./data",
+  "logFile": "./data/mss-edge-controller.log",
+  "logLevel": "info",
+
+  "hub": {
+    "url": "http://IP-DEL-HUB:8080",
+    "deviceId": "hub-banco",
+    "publicKey": "./claves/hub.pub",
+    "configPollMs": 300000,
+    "heartbeatMs": 5000
+  },
+
+  "cloud": {
+    "headPublicKey": "./claves/nube-head.pub",
+    "allowUnsignedConfig": false
+  },
+
+  "lan": {
+    "port": 8790,
+    "bind": "0.0.0.0",
+    "allowUnsigned": false
+  },
+
+  "clock": {
+    "trusted": "auto",
+    "maxDriftMs": 120000
+  },
+
+  "interlock": { "enabled": false },
+  "simulation": { "enabled": true },
+  "cooldownMs": 3000,
+
+  "doors": [
+    {
+      "id": "puerta-p1",
+      "name": "Puerta P1 (banco)",
+      "readers": [
+        {
+          "id": "puerta-p1-dni-in",
+          "driver": "serial",
+          "port": "COM3",
+          "baudRate": 9600,
+          "side": "in",
+          "plugin": "serial_dni",
+          "credentialType": "auto",
+          "idleMs": 120
+        }
+      ],
+      "output": {
+        "driver": "sr201",
+        "host": "192.168.0.38",
+        "port": 6722,
+        "channel": 1,
+        "pulseSeconds": 3,
+        "offRetryDelaysMs": [300, 1000, 3000]
+      },
+      "inputs": {
+        "driver": "simulated",
+        "dps": true,
+        "bond": false,
+        "rex": true,
+        "emergency": true
+      },
+      "heldOpenSec": 30,
+      "rexUnlocks": false
+    }
+  ]
+}

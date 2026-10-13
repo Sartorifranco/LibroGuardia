@@ -17,11 +17,13 @@ const createMockFirestore = ({
   authorizations = [],
   entries = [],
   onEntryAdd = null,
-  onPeopleUpdate = null
+  onPeopleUpdate = null,
+  collections = {}
 } = {}) => {
   const entryWrites = [];
   const authQueries = [];
   const peopleUpdates = [];
+  const peopleQueries = [];
 
   const matchDoc = (doc, filters) => filters.every((filter) => {
     const value = doc[filter.field];
@@ -37,10 +39,14 @@ const createMockFirestore = ({
       ? people
       : collectionName === 'authorizations'
         ? authorizations
-        : [];
+        : (collections[collectionName] || []);
 
     const limitFilter = filters.find((filter) => Object.prototype.hasOwnProperty.call(filter, 'limit'));
     const activeFilters = filters.filter((filter) => !Object.prototype.hasOwnProperty.call(filter, 'limit'));
+
+    if (collectionName === 'people') {
+      peopleQueries.push(filters);
+    }
 
     if (collectionName === 'authorizations') {
       authQueries.push(activeFilters);
@@ -121,7 +127,8 @@ const createMockFirestore = ({
     Timestamp: {},
     entryWrites,
     authQueries,
-    peopleUpdates
+    peopleUpdates,
+    peopleQueries
   };
 };
 
@@ -139,6 +146,14 @@ const installFirestoreMock = (mockExports) => {
 
   delete require.cache[accessControlPath];
   delete require.cache[authorizationsPath];
+  // Módulos que capturan `db` al cargarse: sin esto, el segundo mock del mismo
+  // archivo de test seguía consultando el primero.
+  [
+    '../../lib/visitasAccess',
+    '../../lib/accessNominaMessages'
+  ].forEach((rel) => {
+    delete require.cache[require.resolve(rel)];
+  });
 
   return require('../../accessControl');
 };

@@ -19,29 +19,38 @@ export const PERMISSION_LABELS = {
   'roles.view': 'Ver roles',
   'roles.manage': 'Gestionar roles',
   'settings.permissions': 'Configurar permisos',
+  'consumo.ver': 'Ver el consumo de Firebase',
   'audit.view': 'Ver auditoría administrativa',
   'notifications.config': 'Configurar alertas por email',
   'access.control': `Configurar GPS flota ${DEFAULT_GPS_PROVIDER_DISPLAY_NAME}`,
   'access.doors.manage': 'Configurar puertas, estancos y dispositivos',
-  'access.manual_open': 'Abrir puerta manualmente (SR201)',
-  'access.manual_override': 'Autorizar ingreso manual sin citación',
-  'access.exceptional_entry': 'Registrar ingreso excepcional con motivo',
-  'access.kiosk': 'Estación de acceso (lector / bridge)',
+  'access.manual_open': 'Abrir la puerta a mano',
+  'puertas.estanco.forzar': 'Forzar apertura del estanco con la otra puerta abierta (con motivo, queda registrado)',
+  'access.manual_override': 'Autorizar un ingreso y abrir la puerta sin citación',
+  'access.exceptional_entry': 'Registrar un ingreso excepcional, con motivo',
+  'access.kiosk': 'Usar la estación de acceso (lector)',
   'master.citaciones.preregister': 'Pre-registrar visitas esperadas',
   'fleet.gps.read': 'Ver alertas GPS de flota cercana',
   'master.nomina.read': 'Ver nómina de personal',
   'master.nomina.write': 'Importar y gestionar nómina',
   'attendance.alerts.read': 'Ver alertas de asistencia (faltantes de ingreso)',
   'monitoring.vehicles.manage': 'Autorizar vehículos con chofer y acompañantes (Monitoreo)',
-  'monitoring.doors.panel': 'Botonera digital portón Monitoreo',
-  'guard.doors.panel': 'Botonera digital portón Guardia',
+  'monitoring.doors.panel': 'Abrir puertas desde Monitoreo',
+  'guard.doors.panel': 'Abrir puertas desde Guardia',
   'empresas.manage': 'Gestionar empresas del predio',
   'destinos.manage': 'Gestionar destinos y secuencias de puertas',
-  'lectores.manage': 'Gestionar lectores físicos (mini PC / GADNIC)',
+  'lectores.manage': 'Gestionar los lectores de las puertas',
+  'alarmas.ver': 'Ver las alarmas del sitio',
+  'alarmas.reconocer': 'Reconocer y cerrar alarmas',
   'visitas.create': 'Cargar visitas autorizadas (sin aprobación)',
   'visitas.request': 'Solicitar visita (queda pendiente de aprobación)',
   'visitas.approve': 'Aprobar o rechazar solicitudes de visita',
-  'visitas.view.own': 'Ver solo mis visitas cargadas'
+  'visitas.view.own': 'Ver solo mis visitas cargadas',
+  'access.groups.manage': 'Gestionar grupos, horarios y feriados',
+  'personas.puertas.asignar': 'Asignar grupos y acceso total a personas',
+  'autorizaciones.solicitar': 'Pedir una autorización de ingreso',
+  'autorizaciones.aprobar': 'Aprobar ingresos de su empresa',
+  'autorizaciones.aprobar_todas': 'Aprobar ingresos de cualquier empresa'
 };
 
 /** Agrupación de permisos para la UI de roles (nombres de uso diario). */
@@ -66,7 +75,10 @@ export const PERMISSION_CATEGORIES = [
       'visitas.create',
       'visitas.request',
       'visitas.approve',
-      'visitas.view.own'
+      'visitas.view.own',
+      'autorizaciones.solicitar',
+      'autorizaciones.aprobar',
+      'autorizaciones.aprobar_todas'
     ]
   },
   {
@@ -88,9 +100,14 @@ export const PERMISSION_CATEGORIES = [
       'access.control',
       'access.doors.manage',
       'access.manual_open',
+      'puertas.estanco.forzar',
       'access.manual_override',
       'monitoring.doors.panel',
-      'guard.doors.panel'
+      'guard.doors.panel',
+      'alarmas.ver',
+      'alarmas.reconocer',
+      'access.groups.manage',
+      'personas.puertas.asignar'
     ]
   },
   {
@@ -105,6 +122,7 @@ export const PERMISSION_CATEGORIES = [
       'roles.manage',
       'settings.permissions',
       'audit.view',
+      'consumo.ver',
       'notifications.config',
       'empresas.manage',
       'destinos.manage',
@@ -137,7 +155,7 @@ export const DASHBOARD_PROFILE_LABELS = {
 export const ROLE_TEMPLATES = {
   guardia: {
     label: 'Guardia',
-    description: 'Portón de unidades blindadas y acceso principal a planta. Personal, molinete y novedades.',
+    description: 'Portón de unidades blindadas y acceso principal a planta. Personal, lector y novedades.',
     dashboardProfile: 'guardia',
     permissions: [
       'entries.create',
@@ -153,7 +171,10 @@ export const ROLE_TEMPLATES = {
       'access.exceptional_entry',
       'fleet.gps.read',
       'attendance.alerts.read',
-      'guard.doors.panel'
+      'guard.doors.panel',
+      'alarmas.ver',
+      'alarmas.reconocer',
+      'autorizaciones.solicitar'
     ]
   },
   supervisor: {
@@ -182,14 +203,22 @@ export const ROLE_TEMPLATES = {
       'users.view',
       'users.create',
       'users.edit',
-      'users.delete',
+      // D12: borrar usuarios queda solo para Sistemas (admin); el supervisor desactiva.
       'roles.view',
       'access.manual_override',
       'access.manual_open',
+      'puertas.estanco.forzar',
       'access.kiosk',
       'access.exceptional_entry',
       'attendance.alerts.read',
-      'visitas.approve'
+      'visitas.approve',
+      'alarmas.ver',
+      'alarmas.reconocer',
+      'access.groups.manage',
+      'personas.puertas.asignar',
+      'autorizaciones.solicitar',
+      'autorizaciones.aprobar_todas',
+      'consumo.ver'
     ]
   },
   monitoreo: {
@@ -210,13 +239,19 @@ export const ROLE_TEMPLATES = {
     label: 'Empleado — visitas',
     description: 'Puede cargar visitas ya autorizadas y ver las propias.',
     dashboardProfile: 'operational',
-    permissions: ['visitas.create', 'visitas.view.own']
+    permissions: ['visitas.create', 'visitas.view.own', 'autorizaciones.solicitar']
   },
   'empleado-solicitar-visitas': {
     label: 'Empleado — solicitar visitas',
     description: 'Solo puede solicitar visitas; un admin/supervisor debe aprobarlas.',
     dashboardProfile: 'operational',
-    permissions: ['visitas.request', 'visitas.view.own']
+    permissions: ['visitas.request', 'visitas.view.own', 'autorizaciones.solicitar']
+  },
+  responsable: {
+    label: 'Responsable de empresa',
+    description: 'Aprueba los ingresos de su empresa. No puede aprobar lo que pidió él mismo.',
+    dashboardProfile: 'operational',
+    permissions: ['autorizaciones.aprobar', 'autorizaciones.solicitar']
   },
   admin: {
     label: 'Admin',
@@ -267,7 +302,6 @@ export const getDashboardProfile = (user) =>
 export const canAccessAdmin = (user) =>
   hasPermission(user, 'users.view') ||
   hasPermission(user, 'roles.view') ||
-  hasPermission(user, 'master.personal.write') ||
   hasPermission(user, 'master.vehicles.write') ||
   hasPermission(user, 'master.citaciones.write') ||
   hasPermission(user, 'master.nomina.write') ||
@@ -276,11 +310,14 @@ export const canAccessAdmin = (user) =>
   hasPermission(user, 'access.control') ||
   hasPermission(user, 'access.doors.manage') ||
   hasPermission(user, 'audit.view') ||
+  hasPermission(user, 'consumo.ver') ||
   hasPermission(user, 'notifications.config') ||
   hasPermission(user, 'empresas.manage') ||
   hasPermission(user, 'destinos.manage') ||
   hasPermission(user, 'lectores.manage') ||
-  hasPermission(user, 'visitas.approve');
+  hasPermission(user, 'visitas.approve') ||
+  hasPermission(user, 'access.groups.manage') ||
+  hasPermission(user, 'personas.puertas.asignar');
 
 /**
  * Árbol operativo /guardia (sidebar de operación, no panel admin).
@@ -301,6 +338,9 @@ export const canAccessGuardia = (user) => {
     || hasPermission(user, 'master.vehicles.quick_authorize')
     || hasPermission(user, 'monitoring.doors.panel')
     || hasPermission(user, 'guard.doors.panel')
+    || hasPermission(user, 'alarmas.ver')
+    || hasPermission(user, 'autorizaciones.aprobar')
+    || hasPermission(user, 'autorizaciones.aprobar_todas')
   );
 };
 
@@ -311,6 +351,7 @@ export const canAccessEmpleado = (user) => {
     hasPermission(user, 'visitas.create')
     || hasPermission(user, 'visitas.request')
     || hasPermission(user, 'visitas.view.own')
+    || hasPermission(user, 'autorizaciones.solicitar')
   );
 };
 
@@ -319,11 +360,26 @@ export const canManageUsers = (user) =>
   hasPermission(user, 'users.edit') ||
   hasPermission(user, 'users.delete');
 
-export const canManageTargetUser = (actor, targetUser) => {
+/**
+ * Misma regla que el backend (functions/roles.js canManageTargetRole):
+ * - admin: cualquier usuario (la UI además evita tocar a otros admins).
+ * - perfil supervisor: guardia/monitoreo o roles no-sistema, nunca admin, y solo si los
+ *   permisos del rol destino están incluidos en los permisos efectivos del actor.
+ * @param {object[]} roles roles del sistema (GET /admin/roles) con permissions/isSystem.
+ */
+export const canManageTargetUser = (actor, targetUser, roles = []) => {
   if (!actor || !targetUser) return false;
   if (actor.role === 'admin') return targetUser.role !== 'admin' || actor.id === targetUser.id;
-  if (actor.role === 'supervisor') return ['guardia', 'monitoreo'].includes(targetUser.role);
-  return false;
+  if (targetUser.role === 'admin') return false;
+  if (getDashboardProfile(actor) !== 'supervisor') return false;
+  const targetRole = Array.isArray(roles) ? roles.find((r) => r.id === targetUser.role) : null;
+  const allowedKind = ['guardia', 'monitoreo'].includes(targetUser.role)
+    || (targetRole ? targetRole.isSystem !== true : false);
+  if (!allowedKind) return false;
+  // Sin datos del rol no se puede verificar el subconjunto: el backend decide.
+  if (!targetRole || !Array.isArray(targetRole.permissions)) return true;
+  const own = new Set(Array.isArray(actor.permissions) ? actor.permissions : []);
+  return targetRole.permissions.every((p) => own.has(p));
 };
 
 /** Rol técnico de lectores físicos (ID legado en Firestore). */
@@ -339,5 +395,28 @@ export const isAccessStationAccount = (user) => {
 
 export const humanRoleLabel = (systemRoles, roleId) => {
   if (roleId === ACCESS_STATION_ROLE_ID) return ACCESS_STATION_ROLE_LABEL;
-  return systemRoles?.find((r) => r.id === roleId)?.label || roleId || '—';
+  return systemRoles?.find((r) => r.id === roleId)?.label || ROLE_DISPLAY_LABELS[roleId] || '—';
 };
+
+/** Etiqueta de rol para encabezado y pantallas de operación. Nunca el id crudo. */
+export const ROLE_DISPLAY_LABELS = {
+  guardia: 'Guardia',
+  supervisor: 'Supervisor',
+  admin: 'Administración',
+  monitoreo: 'Monitoreo',
+  'empleado-visitas': 'Empleado',
+  empleado: 'Empleado',
+  responsable: 'Responsable de empresa',
+  kiosk_puerta: 'Estación de acceso',
+  operational: 'Operación'
+};
+
+export function displayRoleLabel(user) {
+  if (!user) return '';
+  const raw = String(user.role || '').trim();
+  const given = String(user.roleLabel || '').trim();
+  if (given && given.toLowerCase() !== raw.toLowerCase()) return given;
+  return ROLE_DISPLAY_LABELS[raw]
+    || ROLE_DISPLAY_LABELS[user.dashboardProfile]
+    || 'Operación';
+}

@@ -2,11 +2,15 @@ const express = require('express');
 const { db, FieldValue, Timestamp } = require('../firestore');
 const { resolveOrCreatePerson } = require('../people');
 const { logActivity } = require('../lib/activityLog');
-const { notifySafe } = require('../lib/notifications');
 const { queryEntriesPage } = require('../lib/entriesQuery');
 const { triggerAccessIfAuthorized } = require('../accessControl');
 const {
-  auth
+  auth,
+  requirePermission,
+  requireAnyPermission,
+  userHasAnyPermission,
+  sendServerError,
+  sendRouteError
 } = require('../middleware/auth');
 
 const router = express.Router();
@@ -48,7 +52,7 @@ const validateEntryPayload = (type, body) => {
   return null;
 };
 
-router.post('/api/entries', auth, async (req, res) => {
+router.post('/api/entries', auth, requirePermission('entries.create'), async (req, res) => {
   try {
     const {
       type, movementType, eventTime, name, idNumber, company, destination,
@@ -98,38 +102,120 @@ router.post('/api/entries', auth, async (req, res) => {
 
     let accessResult = null;
     if (type === 'personal') {
-      const userSnap = await db.collection('users').doc(req.user.id).get();
-      const userPermissions = userSnap.exists ? await getUserPermissions(userSnap.data()) : [];
-      const manualOverrideAllowed = userPermissions.includes('access.manual_override') || req.user.role === 'admin';
-      const exceptionalAllowed = userPermissions.includes('access.exceptional_entry') || req.user.role === 'admin';
-      const useExceptional = Boolean(exceptionalReason?.trim()) && exceptionalAllowed;
+      // Permisos resueltos desde Firestore (admin: todos). Nunca confiar en flags del body.
+      const manualOverrideAllowed = await userHasAnyPermission(req, ['access.manual_override']);
+      const exceptionalAllowed = await userHasAnyPermission(req, ['access.exceptional_entry']);
+      const reasonCode = String(req.body?.reasonCode || req.body?.emergencyReason || '').trim();
+      const reasonText = String(req.body?.reasonText || exceptionalReason || '').trim();
+      const {
+        EMERGENCY_REASONS,
+        recordEmergencyReview,
+        createPendingFromEntry,
+        actorFromUser
+      } = require('../lib/accessRequests');
+      const emergencyIds = new Set(EMERGENCY_REASONS.map((item) => item.id));
+      const useEmergency = exceptionalAllowed && emergencyIds.has(reasonCode) && reasonText.length >= 5;
+      // La casilla "autorizar aunque no haya citación" ya no abre: deja una solicitud.
+      const askedOverride = allowAccessOverride === true
+        && (manualOverrideAllowed || exceptionalAllowed)
+        && !useEmergency;
 
-    accessResult = await triggerAccessIfAuthorized({
-      movementType,
-      idNumber,
-      name,
-      entrySource: entrySource || 'manual',
-      entryId: ref.id,
-      username: req.user.id,
-      allowManualOverride: useExceptional
-        ? true
-        : (allowAccessOverride === true ? true : (entrySource === 'manual' ? manualOverrideAllowed : null))
-    });
+      if (useEmergency) {
+        const actor = await actorFromUser(req);
+        accessResult = await triggerAccessIfAuthorized({
+          movementType,
+          idNumber,
+          name,
+          entrySource: entrySource || 'manual',
+          entryId: ref.id,
+          username: req.user.id,
+          allowManualOverride: true,
+          doorId: req.body?.doorId || null
+        });
+        const emergency = await recordEmergencyReview({
+          entryId: ref.id,
+          name,
+          dni: idNumber,
+          reasonCode,
+          reasonText,
+          company,
+          destination,
+          empresaId: req.body?.empresaId || null,
+          doorId: req.body?.doorId || null,
+          actor,
+          req
+        });
+        await ref.update({
+          accessAuthorized: true,
+          accessReason: 'ingreso_excepcional',
+          authorizationType: 'ingreso_excepcional',
+          exceptionalEntry: true,
+          emergency: true,
+          alarmType: 'ingreso_emergencia',
+          exceptionalReason: reasonText,
+          relayTriggered: Boolean(accessResult?.relay?.triggered),
+          relayError: accessResult?.relay?.error || null,
+          accessRequestId: emergency.requestId,
+          notes: emergency.message
+        });
+        res.status(201).json({
+          message: emergency.message,
+          entry: { id: ref.id, ...saved.data(), accessAuthorized: true },
+          access: accessResult,
+          accessRequestId: emergency.requestId,
+          alarmType: 'ingreso_emergencia'
+        });
+        return;
+      }
+
+      accessResult = await triggerAccessIfAuthorized({
+        movementType,
+        idNumber,
+        name,
+        entrySource: entrySource || 'manual',
+        entryId: ref.id,
+        username: req.user.id,
+        allowManualOverride: entrySource === 'manual' ? manualOverrideAllowed : null
+      });
 
       const accessPatch = {
-        accessAuthorized: useExceptional ? true : accessResult.authorized,
-        accessReason: useExceptional ? 'ingreso_excepcional' : accessResult.reason,
-        authorizationType: useExceptional ? 'ingreso_excepcional' : accessResult.authorizationType,
+        accessAuthorized: accessResult.authorized,
+        accessReason: accessResult.reason,
+        authorizationType: accessResult.authorizationType,
         relayTriggered: Boolean(accessResult.relay?.triggered),
         relayError: accessResult.relay?.error || null
       };
-      if (useExceptional) {
-        accessPatch.exceptionalEntry = true;
-        accessPatch.exceptionalReason = exceptionalReason.trim();
-        accessPatch.notes = `Ingreso excepcional: ${exceptionalReason.trim()}`;
+      let pendingRequest = null;
+      if (askedOverride || (exceptionalAllowed && reasonText && !useEmergency)) {
+        try {
+          const actor = await actorFromUser(req);
+          pendingRequest = await createPendingFromEntry({
+            name,
+            idNumber,
+            company,
+            destination,
+            empresaId: req.body?.empresaId,
+            destinoId: req.body?.destinoId,
+            motivo: reasonText || 'Pedido de autorización desde guardia'
+          }, actor, { req });
+          accessPatch.accessRequestId = pendingRequest.id;
+          accessPatch.notes = pendingRequest.message;
+        } catch (pendingErr) {
+          console.error('accessRequest desde entrada:', pendingErr.message);
+          accessPatch.notes = pendingErr.message;
+        }
       }
 
       await ref.update(accessPatch);
+      if (pendingRequest) {
+        res.status(201).json({
+          message: pendingRequest.message,
+          entry: { id: ref.id, ...saved.data(), accessAuthorized: accessResult?.authorized },
+          access: accessResult,
+          accessRequest: { id: pendingRequest.id, message: pendingRequest.message }
+        });
+        return;
+      }
     }
 
     res.status(201).json({
@@ -142,11 +228,12 @@ router.post('/api/entries', auth, async (req, res) => {
       ...(accessResult ? { access: accessResult } : {})
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error al crear entrada', error: err.message });
+    sendServerError(res, err, 'Error al crear entrada', 'POST /api/entries');
   }
 });
 
-router.get('/api/entries', auth, async (req, res) => {
+// Libro de guardia: solo roles operativos (no empleados autoregistrados).
+router.get('/api/entries', auth, requireAnyPermission(['entries.view', 'reports.export']), async (req, res) => {
   try {
     const {
       startDate,
@@ -196,11 +283,7 @@ router.get('/api/entries', auth, async (req, res) => {
       }
     });
   } catch (err) {
-    const status = err.status || 500;
-    res.status(status).json({
-      message: err.message || 'Error al obtener entradas',
-      error: err.message
-    });
+    sendRouteError(res, err, 'Error al obtener entradas');
   }
 });
 

@@ -2,18 +2,22 @@ import React, { useCallback } from 'react';
 import ExecutiveDashboard from '../../components/dashboards/ExecutiveDashboard';
 import GuardiaDashboard from '../../components/dashboards/GuardiaDashboard';
 import MonitoreoDashboard from '../../components/dashboards/MonitoreoDashboard';
+import EntriesRefreshNotice from '../../components/EntriesRefreshNotice';
 import ExpirationAlertsBanner from '../../components/ExpirationAlertsBanner';
 import GuardiaControlCenter from '../../components/GuardiaControlCenter';
 import { useAuth } from '../../context/AuthContext';
 import { useEntries } from '../../context/EntriesContext';
 import { useToast } from '../../context/ToastContext';
 import { getDashboardProfile, hasPermission } from '../../utils/permissions';
+import { useRuntime } from '../../context/RuntimeContext';
+import PlantGuardHome from '../../components/PlantGuardHome';
 
 /**
  * Dashboard de inicio — lógica de renderHomeDashboard.
  */
 function HomePage({ onNavigate, onEnterAdmin }) {
   const { authToken, currentUser } = useAuth();
+  const { mode } = useRuntime();
   const { entries, reloadEntries } = useEntries();
   const { showSuccess } = useToast();
 
@@ -32,6 +36,9 @@ function HomePage({ onNavigate, onEnterAdmin }) {
   }, [reloadEntries, showSuccess]);
 
   const dashboardProfile = getDashboardProfile(currentUser);
+  if (mode === 'lan') {
+    return <PlantGuardHome />;
+  }
   const showExpirationAlerts = ['guardia', 'supervisor', 'admin'].includes(dashboardProfile)
     || ['guardia', 'supervisor', 'admin'].includes(currentUser?.role);
 
@@ -81,6 +88,7 @@ function HomePage({ onNavigate, onEnterAdmin }) {
 
   return (
     <>
+      {dashboardProfile === 'guardia' && <EntriesRefreshNotice />}
       {showExpirationAlerts && <ExpirationAlertsBanner />}
       {showControlCenter && <GuardiaControlCenter onNavigate={onNavigate} />}
       {dashboard}

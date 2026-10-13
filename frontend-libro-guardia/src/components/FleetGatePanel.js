@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   Truck,
   ArrowDownCircle,
@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import FleetGpsVehicleTable, { formatDistance, formatFleetTime } from './FleetGpsVehicleTable';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
 import { gpsProviderDisplayName } from '../utils/gpsProviderLabel';
 
 function FleetGatePanel({
@@ -69,12 +70,8 @@ function FleetGatePanel({
     }
   }, [authToken, enabled]);
 
-  useEffect(() => {
-    fetchStatus(false);
-    if (!enabled) return undefined;
-    const timer = setInterval(() => fetchStatus(false), pollMs);
-    return () => clearInterval(timer);
-  }, [fetchStatus, enabled, pollMs]);
+  const pollStatus = useCallback(() => fetchStatus(false), [fetchStatus]);
+  usePolling(pollStatus, pollMs, { enabled });
 
   if (!enabled) return null;
 

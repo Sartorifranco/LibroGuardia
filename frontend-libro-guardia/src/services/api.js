@@ -6,6 +6,7 @@
 export const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
 
 export const SESSION_EXPIRED_MESSAGE = 'Tu sesión expiró. Iniciá sesión de nuevo.';
+export const FORBIDDEN_MESSAGE = 'No tenés permiso para hacer esto.';
 export const NETWORK_ERROR_MESSAGE = 'No se pudo conectar con el servidor. Revisá tu conexión a internet.';
 export const GENERIC_ERROR_MESSAGE = 'Ocurrió un error inesperado. Intentá de nuevo o avisá a soporte.';
 
@@ -92,10 +93,11 @@ const triggerSessionExpired = () => {
  *   skipSessionExpiry?: boolean
  * }} options
  * - token: string usa ese Bearer; undefined → localStorage; null → sin Authorization
- * - allowForbidden: 403 no cierra sesión (permiso denegado esperado)
+ * - allowForbidden: se mantiene por compatibilidad. Un 403 nunca cierra sesión
+ *   (permiso denegado). El llamador sigue recibiendo el error para mostrarlo o ignorarlo.
  * - skipSessionExpiry: no forzar logout (p.ej. login con clave incorrecta)
  */
-export async function apiFetch(path, options = {}) {
+async function requestApi(path, options = {}) {
   const {
     method = 'GET',
     token: tokenOption,
@@ -158,14 +160,32 @@ export async function apiFetch(path, options = {}) {
 
   if (!response.ok) {
     const status = response.status;
-    const isAuthFailure = status === 401 || (status === 403 && !allowForbidden);
 
-    if (isAuthFailure && !skipExpiry) {
+    // Solo 401 cierra la sesión. 403 es falta de permiso, aunque no venga allowForbidden.
+    if (status === 401 && !skipExpiry) {
       triggerSessionExpired();
-      const err = new Error(SESSION_EXPIRED_MESSAGE);
+      // Cuenta deshabilitada: mostrar el motivo real, no "sesión expirada".
+      const err = new Error(
+        data?.code === 'USER_INACTIVE' && data?.message ? data.message : SESSION_EXPIRED_MESSAGE
+      );
       err.status = status;
       err.isSessionExpired = true;
       err.data = data;
+      throw err;
+    }
+
+    if (status === 403) {
+      const err = new Error(FORBIDDEN_MESSAGE);
+      err.status = 403;
+      err.isForbidden = true;
+      err.data = data;
+      // allowForbidden: pantallas que ya esperan un 403 y muestran el texto del servidor.
+      if (allowForbidden) {
+        const serverMessage = buildErrorMessage(data, status);
+        if (serverMessage && serverMessage !== GENERIC_ERROR_MESSAGE) {
+          err.message = serverMessage;
+        }
+      }
       throw err;
     }
 
@@ -177,6 +197,40 @@ export async function apiFetch(path, options = {}) {
   }
 
   return data ?? {};
+}
+
+/** GET idénticos en curso (misma URL + token + opciones): comparten la misma promesa. */
+const inflightGets = new Map();
+
+const buildGetKey = (path, options) => {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  return [
+    normalized,
+    resolveToken(options.token) || '',
+    options.allowForbidden ? 1 : 0,
+    options.skipSessionExpiry ? 1 : 0,
+    options.headers ? JSON.stringify(options.headers) : ''
+  ].join('|');
+};
+
+/**
+ * Ver requestApi. Los GET sin body se deduplican mientras están en vuelo
+ * (varias pantallas pidiendo lo mismo a la vez = un solo request).
+ * `dedupe: false` fuerza un request propio.
+ */
+export function apiFetch(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' || options.body !== undefined || options.dedupe === false) {
+    return requestApi(path, options);
+  }
+  const key = buildGetKey(path, options);
+  const pending = inflightGets.get(key);
+  if (pending) return pending;
+  const promise = requestApi(path, options).finally(() => {
+    if (inflightGets.get(key) === promise) inflightGets.delete(key);
+  });
+  inflightGets.set(key, promise);
+  return promise;
 }
 
 export default apiFetch;
