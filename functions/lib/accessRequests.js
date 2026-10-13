@@ -90,6 +90,7 @@ const actorFromUser = async (req) => {
     username: req.user?.username || profile.username || id,
     role: req.user?.role || profile.role || null,
     email: profile.email || null,
+    emailVerified: profile.emailVerified !== false,
     empresaId: profile.empresaId || null,
     nombre: profile.nombre || profile.username || req.user?.username || id,
     permissions: req.user?.role === 'admin'

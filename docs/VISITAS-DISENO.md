@@ -25,6 +25,28 @@ Estado: **propuesta para revisar** (2026-10-13). Referentes: Envoy, Eptura/Proxy
 
 ## 3. Propuesta
 
+### 3.0 Reglas del cliente (2026-10-13)
+
+**Quién puede invitar**: solo personal con mail del dominio **@bacarsa.com.ar**.
+- Configurable en Admin → Visitas: `settings/visitas.dominiosAnfitrion = ['bacarsa.com.ar']`.
+- Se valida en el backend al crear, editar o solicitar una visita (`visitas.create` o `visitas.request`): si el usuario no tiene un mail de esos dominios, responde 403 con un mensaje simple.
+- El admin queda exento.
+- El pre-registro que hace el guardia en el portón no se toca, porque es operativo.
+- El autorregistro exige **verificar el mail** con un link que se manda por SMTP antes de poder invitar. Hoy no se verifica (TODO en `lib/selfRegister.js`).
+
+**Duración del QR** (la elige el anfitrión):
+
+| Opción | Validez | Ingresos |
+|---|---|---|
+| Un solo ingreso | el día elegido (o la franja horaria) | 1 |
+| Por horas | desde–hasta, el mismo día | varios, alternando entrada y salida (antipassback) |
+| Todo el día | 00:00–23:59 del día elegido | varios |
+| Por mes | rango de hasta 31 días, con horario diario opcional (horarios del sitio) | varios; **siempre lo aprueba Seguridad** |
+
+El vencimiento del link (`inviteExpiresAt`) coincide con el fin de la validez.
+
+**Implementado (etapa 1c, backend):** `GET/PUT /api/admin/visitas/settings` (dominios, caché de 5 min en `lib/visitasSettings.js`); verificación del mail con `POST /api/public/empleado/verificar` y `POST /api/auth/resend-verification` (`lib/emailVerification.js`; el admin puede marcar `emailVerified` en el usuario); campos de la visita `duracion`, `validoHasta` y `scheduleId`. La ventana se calcula en un solo lugar (`siteCompiler/build.js` `visitPassWindow`) y la usan el borde, la nube y el link. Sin `maxUses` (por horas, día o mes) se vuelve a entrar después de salir; el antipassback sigue frenando dos ingresos seguidos.
+
 ### 3.1 Tres tipos de persona externa (una sola pantalla para el anfitrión)
 
 1. **Visita puntual** — un día o un rango corto (máx. 5 días). Lo carga un anfitrión. QR por invitación.

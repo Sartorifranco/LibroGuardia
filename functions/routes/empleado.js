@@ -19,9 +19,11 @@ const { normalizeDni } = require('../lib/normalize');
 const { isSelfRegisteredUser } = require('../lib/selfRegister');
 const { validateDestinationDoorIds } = require('../lib/empresasDestinos');
 const { getDoorsConfig } = require('../lib/doorsConfig');
-const { filterOwnVisitas, endOfArgentinaDay, toDate } = require('../lib/visitasAccess');
+const { filterOwnVisitas, toDate } = require('../lib/visitasAccess');
 const { generatePassCode } = require('../lib/visitPassCode');
 const { logAdminAction } = require('../lib/auditLog');
+const { resolveVisitDuration, inviteExpiresAtOf } = require('../lib/visitDuration');
+const { checkVisitHost } = require('../lib/visitasSettings');
 
 const router = express.Router();
 
@@ -40,10 +42,28 @@ const serializeVisita = (v) => ({
   createdAt: isoOf(v.createdAt),
   fechaHoraEsperada: isoOf(v.fechaHoraEsperada),
   aprobadoAt: isoOf(v.aprobadoAt),
-  inviteExpiresAt: isoOf(v.inviteExpiresAt)
+  inviteExpiresAt: isoOf(v.inviteExpiresAt),
+  validoHasta: isoOf(v.validoHasta)
 });
 
-const inviteExpiresAtFor = (expected) => Timestamp.fromDate(endOfArgentinaDay(expected));
+/** 403 si el usuario no puede invitar (dominio del mail o mail sin confirmar); null si puede. */
+const denyIfNotHost = async (req, res, profile) => {
+  const denied = await checkVisitHost({ id: req.user.id, ...(profile || {}) }, { role: req.user.role });
+  if (!denied) return false;
+  res.status(denied.status).json({ error: denied.error, message: denied.error, code: denied.code });
+  return true;
+};
+
+/** Duración + horario del sitio (si viene) → { error } o la duración resuelta. */
+const resolveDuracion = async (input) => {
+  const dur = resolveVisitDuration(input);
+  if (dur.error) return dur;
+  if (dur.scheduleId) {
+    const sch = await db.collection('schedules').doc(dur.scheduleId).get();
+    if (!sch.exists) return { error: 'El horario elegido no existe. Elegí otro o dejalo sin horario.' };
+  }
+  return dur;
+};
 
 /** Solo los últimos 3 dígitos del DNI (la página pública no muestra el DNI completo). */
 const maskDni = (dni) => {
@@ -145,6 +165,7 @@ router.post(
       }
 
       const user = await loadUserProfile(userId);
+      if (await denyIfNotHost(req, res, user)) return undefined;
       const empresaId = user?.empresaId || null;
       if (!empresaId) {
         return res.status(400).json({ message: 'Tu usuario no tiene empresa asignada' });
@@ -178,11 +199,23 @@ router.post(
         return res.status(400).json({ message: resolved.error });
       }
       const { expected, destino, allowedDoorIds } = resolved;
+      const dur = await resolveDuracion({
+        duracion: req.body?.duracion,
+        expected,
+        validoHasta: req.body?.validoHasta,
+        scheduleId: req.body?.scheduleId
+      });
+      if (dur.error) {
+        return res.status(400).json({ message: dur.error });
+      }
 
       const dniVisitanteNormalized = normalizeDni(dniVisitante);
+      const isApprover = isAdmin || permissions.includes('visitas.approve');
       // create gana sobre request si tiene ambos, salvo usuarios autoregistrados:
       // sus visitas siempre quedan pendientes de aprobación (admin/supervisor).
-      const autoAuthorize = canCreate && !isSelfRegisteredUser(user);
+      // El pase por mes siempre lo aprueba Seguridad (visitas.approve o admin).
+      const autoAuthorize = canCreate && !isSelfRegisteredUser(user)
+        && (!dur.requiresApproval || isApprover);
       const estado = autoAuthorize ? 'autorizada' : 'pendiente_aprobacion';
       const inviteToken = autoAuthorize ? newInviteToken() : null;
       const { normalizePhotoDataUrl } = require('../lib/personPhoto');
@@ -200,6 +233,9 @@ router.post(
         dniVisitante,
         dniVisitanteNormalized,
         fechaHoraEsperada: Timestamp.fromDate(expected),
+        duracion: dur.duracion,
+        validoHasta: Timestamp.fromDate(dur.validoHasta),
+        scheduleId: dur.scheduleId,
         motivo,
         destinoId,
         destinoNombre: destino.nombre || '',
@@ -209,7 +245,7 @@ router.post(
         createdByUserId: userId,
         createdByNombre,
         inviteToken,
-        inviteExpiresAt: inviteExpiresAtFor(expected),
+        inviteExpiresAt: Timestamp.fromDate(new Date(dur.validTo)),
         passCode: generatePassCode(),
         estado,
         photoDataUrl,
@@ -227,7 +263,8 @@ router.post(
           id: ref.id,
           ...doc,
           fechaHoraEsperada: expected.toISOString(),
-          inviteExpiresAt: endOfArgentinaDay(expected).toISOString(),
+          validoHasta: dur.validoHasta.toISOString(),
+          inviteExpiresAt: new Date(dur.validTo).toISOString(),
           createdAt: new Date().toISOString()
         }
       });
@@ -262,8 +299,8 @@ router.post(
       const patch = {};
       if (!data.inviteToken) patch.inviteToken = newInviteToken();
       if (!data.passCode) patch.passCode = generatePassCode();
-      const expected = toDate(data.fechaHoraEsperada);
-      if (!data.inviteExpiresAt && expected) patch.inviteExpiresAt = inviteExpiresAtFor(expected);
+      const expiresAt = inviteExpiresAtOf(data);
+      if (!data.inviteExpiresAt && expiresAt) patch.inviteExpiresAt = Timestamp.fromDate(expiresAt);
       if (Object.keys(patch).length) {
         await ref.set({ ...patch, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
         if (patch.passCode) markDirty({ visitas: [ref.id] });
@@ -350,13 +387,19 @@ router.patch(
       const hasFecha = body.fechaHoraEsperada !== undefined;
       const hasMotivo = body.motivo !== undefined;
       const hasDestino = body.destinoId !== undefined;
-      if (!hasFecha && !hasMotivo && !hasDestino) {
-        return res.status(400).json({ message: 'Indicá qué querés cambiar: fechaHoraEsperada, motivo o destinoId' });
+      const hasDuracion = body.duracion !== undefined || body.validoHasta !== undefined || body.scheduleId !== undefined;
+      if (!hasFecha && !hasMotivo && !hasDestino && !hasDuracion) {
+        return res.status(400).json({
+          message: 'Indicá qué querés cambiar: fechaHoraEsperada, duracion, validoHasta, motivo o destinoId'
+        });
       }
 
       const loaded = await loadHostEditableVisita(req, res);
       if (!loaded) return undefined;
       const { ref, data, permissions, isApprover } = loaded;
+      const isAdmin = req.user.role === 'admin';
+      const editor = isAdmin ? null : await loadUserProfile(req.user.id);
+      if (await denyIfNotHost(req, res, editor)) return undefined;
 
       const currentExpected = toDate(data.fechaHoraEsperada);
       const fechaHoraEsperadaRaw = hasFecha ? body.fechaHoraEsperada : currentExpected?.toISOString();
@@ -370,11 +413,28 @@ router.patch(
       }
       const { expected, destino, allowedDoorIds } = resolved;
 
-      // Mismo criterio que el alta: solo con visitas.request vuelve a aprobación.
-      const isAdmin = req.user.role === 'admin';
-      const editor = isAdmin || isApprover ? null : await loadUserProfile(req.user.id);
+      const duracion = body.duracion !== undefined ? body.duracion : (data.duracion || 'un_ingreso');
+      const fechaCambio = hasFecha && expected.getTime() !== currentExpected?.getTime();
+      let validoHasta = body.validoHasta;
+      if (validoHasta === undefined) {
+        // Un solo ingreso o todo el día: al mover la fecha se recalcula el fin.
+        const recalcular = fechaCambio && (duracion === 'un_ingreso' || duracion === 'dia');
+        validoHasta = recalcular ? null : toDate(data.validoHasta);
+      }
+      const dur = await resolveDuracion({
+        duracion,
+        expected,
+        validoHasta,
+        scheduleId: body.scheduleId !== undefined ? body.scheduleId : data.scheduleId
+      });
+      if (dur.error) {
+        return res.status(400).json({ message: dur.error });
+      }
+
+      // Mismo criterio que el alta: solo con visitas.request vuelve a aprobación;
+      // el pase por mes siempre lo aprueba Seguridad.
       const keepEstado = isAdmin || isApprover
-        || (permissions.includes('visitas.create') && !isSelfRegisteredUser(editor));
+        || (permissions.includes('visitas.create') && !isSelfRegisteredUser(editor) && !dur.requiresApproval);
       const estado = keepEstado ? (data.estado || 'pendiente') : 'pendiente_aprobacion';
 
       const previousPassCodes = [
@@ -384,6 +444,9 @@ router.patch(
 
       const patch = {
         fechaHoraEsperada: Timestamp.fromDate(expected),
+        duracion: dur.duracion,
+        validoHasta: Timestamp.fromDate(dur.validoHasta),
+        scheduleId: dur.scheduleId,
         motivo: hasMotivo ? String(body.motivo || '').trim() : (data.motivo || ''),
         destinoId,
         destinoNombre: destino.nombre || '',
@@ -392,7 +455,7 @@ router.patch(
         passCode: generatePassCode(),
         previousPassCodes,
         inviteToken: OPERATIVE_SHARE_ESTADOS.has(estado) ? newInviteToken() : null,
-        inviteExpiresAt: inviteExpiresAtFor(expected),
+        inviteExpiresAt: Timestamp.fromDate(new Date(dur.validTo)),
         editadaPorUserId: req.user.id,
         updatedAt: FieldValue.serverTimestamp()
       };
@@ -406,12 +469,15 @@ router.patch(
         before: {
           estado: data.estado,
           fechaHoraEsperada: currentExpected ? currentExpected.toISOString() : null,
+          duracion: data.duracion || 'un_ingreso',
           motivo: data.motivo || '',
           destinoId: data.destinoId || null
         },
         after: {
           estado,
           fechaHoraEsperada: expected.toISOString(),
+          duracion: dur.duracion,
+          validoHasta: dur.validoHasta.toISOString(),
           motivo: patch.motivo,
           destinoId
         }
@@ -455,8 +521,7 @@ router.get('/api/public/visita-invite/:token', async (req, res) => {
         message: 'Esta invitación fue cancelada. Si tenés que venir igual, pedile a quien te invitó que te mande una nueva.'
       });
     }
-    const expiresAt = toDate(raw.inviteExpiresAt)
-      || (toDate(raw.fechaHoraEsperada) ? endOfArgentinaDay(toDate(raw.fechaHoraEsperada)) : null);
+    const expiresAt = toDate(raw.inviteExpiresAt) || inviteExpiresAtOf(raw);
     if (expiresAt && Date.now() > expiresAt.getTime()) {
       return res.status(410).json({
         message: 'Esta invitación ya venció. Si tenés que venir otro día, pedile a quien te invitó que te mande una nueva.'
@@ -474,6 +539,7 @@ router.get('/api/public/visita-invite/:token', async (req, res) => {
         passCode: v.passCode || null,
         destinoNombre: v.destinoNombre || '',
         fechaHoraEsperada: v.fechaHoraEsperada,
+        duracion: v.duracion || 'un_ingreso',
         inviteExpiresAt: expiresAt ? expiresAt.toISOString() : null,
         motivo: v.motivo || '',
         estado

@@ -19,14 +19,14 @@ describe('Autoregistro: visitas quedan pendientes de aprobación', () => {
       initial: {
         roles: defaultRoleDocs(),
         empresas: {
-          cliente: { nombre: 'Cliente SA', activa: true, dominiosPermitidos: ['cliente.com'] }
+          cliente: { nombre: 'Bacarsa', activa: true, dominiosPermitidos: ['bacarsa.com.ar'] }
         },
         destinos: {
           oficinas: { nombre: 'Oficinas', activo: true, doorIds: [] }
         },
         users: {
           'interno.visitas': {
-            username: 'interno.visitas',
+            username: 'interno@bacarsa.com.ar',
             role: 'empleado-visitas',
             active: true,
             passwordVersion: 1,
@@ -48,35 +48,40 @@ describe('Autoregistro: visitas quedan pendientes de aprobación', () => {
     motivo: 'Reunión'
   };
 
-  it('el usuario autoregistrado queda marcado y su visita es pendiente_aprobacion', async () => {
+  it('el autoregistrado queda sin verificar; verificado, su visita es pendiente_aprobacion', async () => {
     const reg = await srv.request('POST', '/api/auth/self-register', {
-      body: { email: 'nuevo@cliente.com', password: 'ClaveSegura2026!', nombre: 'Nuevo Empleado' }
+      body: { email: 'nuevo@bacarsa.com.ar', password: 'ClaveSegura2026!', nombre: 'Nuevo Empleado' }
     });
     assert.equal(reg.status, 201, reg.text);
-    const stored = mem.getDoc('users', 'nuevo@cliente.com');
+    const stored = mem.getDoc('users', 'nuevo@bacarsa.com.ar');
     assert.equal(stored.selfRegistered, true);
     assert.equal(stored.role, 'empleado-visitas');
+    assert.equal(stored.emailVerified, false);
+    assert.match(stored.emailVerifyTokenHash, /^[0-9a-f]{64}$/);
 
-    const res = await srv.request('POST', '/api/empleado/visitas', {
-      token: signTestToken({ id: 'nuevo@cliente.com', role: 'empleado-visitas' }),
-      body: visitaBody
-    });
+    const token = signTestToken({ id: 'nuevo@bacarsa.com.ar', role: 'empleado-visitas' });
+    const denied = await srv.request('POST', '/api/empleado/visitas', { token, body: visitaBody });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.body.error, 'Confirmá tu mail para poder invitar visitas. Revisá tu correo.');
+
+    mem.setDoc('users', 'nuevo@bacarsa.com.ar', { ...stored, emailVerified: true });
+    const res = await srv.request('POST', '/api/empleado/visitas', { token, body: visitaBody });
     assert.equal(res.status, 201, res.text);
     assert.equal(res.body.visita.estado, 'pendiente_aprobacion');
     assert.equal(res.body.visita.inviteToken, null);
   });
 
   it('autoregistrados legacy (sin flag, con email) también quedan pendientes', async () => {
-    mem.setDoc('users', 'viejo@cliente.com', {
-      username: 'viejo@cliente.com',
-      email: 'viejo@cliente.com',
+    mem.setDoc('users', 'viejo@bacarsa.com.ar', {
+      username: 'viejo@bacarsa.com.ar',
+      email: 'viejo@bacarsa.com.ar',
       role: 'empleado-visitas',
       active: true,
       passwordVersion: 1,
       empresaId: 'cliente'
     });
     const res = await srv.request('POST', '/api/empleado/visitas', {
-      token: signTestToken({ id: 'viejo@cliente.com', role: 'empleado-visitas' }),
+      token: signTestToken({ id: 'viejo@bacarsa.com.ar', role: 'empleado-visitas' }),
       body: visitaBody
     });
     assert.equal(res.status, 201, res.text);

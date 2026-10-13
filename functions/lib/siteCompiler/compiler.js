@@ -244,7 +244,7 @@ const createSiteCompiler = (opts = {}) => {
     const win = visitaWindow(days, tz);
     const auths = db.collection('authorizations');
 
-    const [peopleSnap, permSnap, citSnap, rangeSnap, nominaSnap, visitasSnap, operators, catalog] = await Promise.all([
+    const [peopleSnap, permSnap, citSnap, rangeSnap, nominaSnap, visitasSnap, longVisitasSnap, operators, catalog] = await Promise.all([
       db.collection('people').where('active', '==', true).get(),
       auths.where('active', '==', true).where('type', '==', 'permanent').get(),
       // Rango sobre un solo campo (índice automático); tipo/activa se filtran en memoria.
@@ -253,6 +253,8 @@ const createSiteCompiler = (opts = {}) => {
       db.collection('personalMaster').where('source', '==', 'nomina').get(),
       db.collection('visitas').where('fechaHoraEsperada', '>=', new Date(win.from - 2 * 3600 * 1000))
         .where('fechaHoraEsperada', '<=', new Date(win.to)).get(),
+      // Visitas de varios días (p. ej. 'mes') empezadas antes de la ventana: siguen vigentes.
+      db.collection('visitas').where('validoHasta', '>=', new Date(win.from)).get(),
       loadOperators(db),
       loadAccessCatalog(db)
     ]);
@@ -305,7 +307,9 @@ const createSiteCompiler = (opts = {}) => {
 
     const passes = [];
     const revoked = [];
-    for (const d of visitasSnap.docs) {
+    const visitaDocs = new Map();
+    for (const d of [...visitasSnap.docs, ...longVisitasSnap.docs]) visitaDocs.set(d.id, d);
+    for (const d of visitaDocs.values()) {
       const r = build.buildPass({ id: d.id, ...d.data() }, { key, tz });
       if (r.pass && passInWindow(r.pass, win)) passes.push(r.pass);
       if (r.revoked) revoked.push(r.revoked);

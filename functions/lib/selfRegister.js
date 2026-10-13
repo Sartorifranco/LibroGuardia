@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const { db, FieldValue } = require('../firestore');
 const { normalizeDomain } = require('./empresasDestinos');
 const { validateNewPassword } = require('./changePassword');
+const { newVerification, sendVerificationEmail } = require('./emailVerification');
 
 const EMPLEADO_ROLE = 'empleado-visitas';
 
@@ -40,7 +41,12 @@ const findEmpresaByEmailDomain = async (email, { empresasDocs = null } = {}) => 
   return matches[0] || null;
 };
 
-const selfRegisterEmployee = async ({ email, password, nombre }) => {
+/**
+ * Crea la cuenta sin verificar y manda el link de confirmación (lib/emailVerification.js).
+ * Sin SMTP la cuenta se crea igual y queda sin verificar.
+ * @param {{ email: string, password: string, nombre: string, req?: object }} input
+ */
+const selfRegisterEmployee = async ({ email, password, nombre, req = null }) => {
   const emailNorm = String(email || '').trim().toLowerCase();
   const name = String(nombre || '').trim();
   if (!emailNorm || !emailNorm.includes('@')) {
@@ -97,6 +103,7 @@ const selfRegisterEmployee = async ({ email, password, nombre }) => {
   }
 
   const hashed = await bcrypt.hash(String(password), 10);
+  const verification = newVerification();
   const userDoc = {
     username,
     password: hashed,
@@ -110,15 +117,22 @@ const selfRegisterEmployee = async ({ email, password, nombre }) => {
     // Las visitas de usuarios autoregistrados siempre quedan pendientes de aprobación
     // (ver isSelfRegisteredUser / routes/empleado.js).
     selfRegistered: true,
-    // TODO(seguridad): verificar el email (link de confirmación) antes de habilitar la cuenta.
-    // Hoy cualquiera que conozca un dominio habilitado puede crear una cuenta.
+    // Sin confirmar el mail no puede invitar visitas (lib/visitasSettings.js checkVisitHost).
+    ...verification.fields,
     permissions: [],
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp()
   };
   await userRef.set(userDoc);
+  const mail = await sendVerificationEmail({ req, to: emailNorm, nombre: name, token: verification.token })
+    .catch((err) => {
+      console.warn('selfRegister: no se pudo mandar el mail de confirmación:', err.message);
+      return { sent: false };
+    });
 
   return {
+    emailVerified: false,
+    verificationSent: mail.sent,
     id: username,
     username,
     role: EMPLEADO_ROLE,

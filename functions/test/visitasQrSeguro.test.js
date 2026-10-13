@@ -200,7 +200,7 @@ describe('rutas de visitas: link público, cancelar y editar', () => {
 
   before(async () => {
     process.env.JWT_SECRET = TEST_JWT_SECRET;
-    const user = (role) => ({ username: role, role, active: true, passwordVersion: 1, permissions: [], selfRegistered: false });
+    const user = (role) => ({ username: `${role}@bacarsa.com.ar`, role, active: true, passwordVersion: 1, permissions: [], selfRegistered: false });
     mem = setupHarness({
       initial: {
         roles: defaultRoleDocs(),

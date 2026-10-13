@@ -17,6 +17,7 @@ const {
   cancelAccessRequest,
   listOptions
 } = require('../lib/accessRequests');
+const { checkVisitHost } = require('../lib/visitasSettings');
 
 const router = express.Router();
 
@@ -32,9 +33,24 @@ router.get('/api/requests/options', auth, requireAnyPermission([...CAN_SEE, 'use
   }
 });
 
+const GUARD_OPERATIVE = ['access.exceptional_entry', 'master.citaciones.preregister'];
+
+/** Empleado anfitrión (visitas.create/request) sin permisos operativos de guardia. */
+const isEmployeeHost = (actor) => {
+  const perms = actor.permissions || [];
+  if (actor.role === 'admin') return false;
+  if (GUARD_OPERATIVE.some((p) => perms.includes(p))) return false;
+  return perms.includes('visitas.create') || perms.includes('visitas.request');
+};
+
 router.post('/api/requests', auth, requireAnyPermission(CAN_ASK), async (req, res) => {
   try {
     const actor = await actorFromUser(req);
+    const tipo = String(req.body?.tipo || 'visita').trim().toLowerCase();
+    if (tipo === 'visita' && isEmployeeHost(actor)) {
+      const denied = await checkVisitHost(actor, { role: actor.role });
+      if (denied) return res.status(denied.status).json({ error: denied.error, message: denied.error, code: denied.code });
+    }
     const created = await createAccessRequest({
       ...req.body,
       origen: req.body?.origen

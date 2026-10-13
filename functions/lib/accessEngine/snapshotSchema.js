@@ -128,10 +128,12 @@
  * @property {string} [cardholderId]
  * @property {string} [name]
  * @property {string[]} doors
- * @property {number|string} validFrom      esperada − 2 h
- * @property {number|string} validTo        fin del día
+ * @property {number|string} validFrom      inicio según la duración (lib/visitDuration.js)
+ * @property {number|string} validTo        fin según la duración
  * @property {'pendiente'|'autorizada'|'ingreso_registrado'|'egreso_registrado'|'cancelada'|'revocada'} [status]
- * @property {number} [maxUses]
+ * @property {'un_ingreso'|'horas'|'dia'|'mes'} [duracion]
+ * @property {string} [scheduleId]   horario del sitio (solo 'mes'): la hora tiene que caer adentro
+ * @property {number} [maxUses]      solo 'un_ingreso' (1); sin maxUses entra varias veces alternando
  * @property {number} [uses]
  *
  * Claves de revocación (passes.revoked): 'pass:<id>' o '<id>' pelado (= pase),
@@ -345,6 +347,7 @@ const validators = {
     if (p.dniHash != null && !/^[0-9a-f]{64}$/.test(String(p.dniHash))) err('dniHash debe ser hex de 64');
     if (!Array.isArray(p.doors)) err('doors requerido');
     if (!isTime(p.validFrom) || !isTime(p.validTo)) err('validFrom/validTo requeridos');
+    if (p.scheduleId != null && !isStr(p.scheduleId)) err('scheduleId inválido');
   },
   revoked(r, err) { if (!isStr(typeof r === 'string' ? r : r?.id)) err('clave requerida'); },
   policy(p, err) {

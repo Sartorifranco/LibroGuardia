@@ -1,10 +1,10 @@
 /**
  * Visitas de empleados (colección 'visitas') — vigencia y match para acceso.
  *
- * Ventana de vigencia (ingreso):
+ * Ventana de vigencia (ingreso): según `duracion`, la misma que el pase del borde
+ * (siteCompiler/build.js visitPassWindow). Un solo ingreso (default):
  *   desde fechaHoraEsperada − 2 horas
- *   hasta el fin del día calendario de fechaHoraEsperada en America/Argentina/Buenos_Aires
- *   (23:59:59.999 AR).
+ *   hasta validoHasta o el fin del día calendario AR (23:59:59.999 AR).
  * Motivo: el visitante suele llegar antes; el mismo día laboral debe alcanzar
  * para completar el ingreso. El egreso (estado ingreso_registrado) no revalida
  * la ventana para no dejar gente atrapada tras el cierre del día.
@@ -15,6 +15,7 @@ const { normalizeDni } = require('./normalize');
 const { getArgentinaDateParts } = require('./normalize');
 const { isDoorAllowedForIngreso, normalizeAllowedDoorIds } = require('./doorAccess');
 const { parsePassCode, looksLikePassCode } = require('./visitPassCode');
+const { visitPassWindow } = require('./siteCompiler/build');
 
 const VISITAS = 'visitas';
 const EARLY_MS = 2 * 60 * 60 * 1000;
@@ -36,13 +37,18 @@ const endOfArgentinaDay = (referenceDate) => {
 };
 
 /**
+ * Recibe la fecha esperada (ventana de un solo ingreso) o la visita completa
+ * (ventana según `duracion`, igual que el pase del borde).
  * @returns {{ ok: boolean, reason?: string, windowStart?: Date, windowEnd?: Date }}
  */
-const isVisitaWithinWindow = (fechaHoraEsperada, now = new Date()) => {
-  const expected = toDate(fechaHoraEsperada);
-  if (!expected) return { ok: false, reason: 'visita_sin_fecha' };
-  const windowStart = new Date(expected.getTime() - EARLY_MS);
-  const windowEnd = endOfArgentinaDay(expected);
+const isVisitaWithinWindow = (fechaHoraEsperadaOrVisita, now = new Date()) => {
+  const raw = fechaHoraEsperadaOrVisita;
+  const isVisita = raw && typeof raw === 'object' && !(raw instanceof Date) && typeof raw.toDate !== 'function'
+    && Object.prototype.hasOwnProperty.call(raw, 'fechaHoraEsperada');
+  const win = visitPassWindow(isVisita ? raw : { fechaHoraEsperada: toDate(raw) });
+  if (!win) return { ok: false, reason: 'visita_sin_fecha' };
+  const windowStart = new Date(win.validFrom);
+  const windowEnd = new Date(win.validTo);
   const t = now.getTime();
   if (t < windowStart.getTime()) {
     return { ok: false, reason: 'visita_antes_de_ventana', windowStart, windowEnd };
@@ -52,6 +58,8 @@ const isVisitaWithinWindow = (fechaHoraEsperada, now = new Date()) => {
   }
   return { ok: true, windowStart, windowEnd };
 };
+
+const isMultiEntry = (visita) => ['horas', 'dia', 'mes'].includes(visita && visita.duracion);
 
 const normalizeVisitaDoc = (doc) => {
   if (!doc) return null;
@@ -121,7 +129,9 @@ const findEligibleVisita = async ({
   const candidates = docs.filter((v) => {
     if (!matches(v)) return false;
     if (movement === 'ingreso') {
-      return v.estado === 'pendiente' || v.estado === 'autorizada';
+      if (v.estado === 'pendiente' || v.estado === 'autorizada') return true;
+      // Por horas, día o mes: después de salir puede volver a entrar dentro de la ventana.
+      return v.estado === 'egreso_registrado' && isMultiEntry(v);
     }
     return v.estado === 'ingreso_registrado';
   });
@@ -139,7 +149,7 @@ const findEligibleVisita = async ({
 
   for (const visita of candidates) {
     if (movement === 'ingreso') {
-      const win = isVisitaWithinWindow(visita.fechaHoraEsperada, now);
+      const win = isVisitaWithinWindow(visita, now);
       if (!win.ok) {
         continue;
       }
