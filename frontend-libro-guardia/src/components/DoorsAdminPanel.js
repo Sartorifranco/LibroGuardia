@@ -13,8 +13,6 @@ import {
 } from '../utils/accessHardwareCoherence';
 import {
   DOOR_KINDS,
-  airlockPartnerId,
-  applyAirlockChoice,
   kindLabel,
   placesFromDoor,
   readersForDraft,
@@ -24,6 +22,13 @@ import {
   swapPlaces,
   validateSimpleDoor
 } from '../pages/Admin/DoorsAdmin/doorForm';
+import {
+  airlockGroupsOfDoor,
+  describeDoorAirlocks,
+  joinNames,
+  removeDoorFromGroups,
+  syncAirlockFields
+} from '../pages/Admin/EstancosAdmin/estancoForm';
 
 const SIDES_HELP = 'Esto le dice al sistema si la persona ENTRÓ o SALIÓ, y quién está dentro de cada lugar (sirve para saber quién está en la planta en una evacuación).';
 const NEW_PLACE = '__crear_lugar__';
@@ -93,8 +98,6 @@ const normalizeDoorLocal = (door = {}, fallbackCode = 'P1') => {
     sensorsRequired: door.sensorsRequired === true,
     heldOpenSec: Number(door.heldOpenSec) > 0 ? Number(door.heldOpenSec) : 60,
     requireGuardApproval: door.requireGuardApproval === true,
-    airlockEnabled: door.airlockEnabled === true,
-    airlockPartnerId: door.airlockPartnerId || '',
     device: {
       driver: door.device?.driver === 'generic_http' ? 'generic_http' : 'sr201',
       bridgeUrl: '',
@@ -174,7 +177,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
   const [newPlaceName, setNewPlaceName] = useState('');
   const [placeError, setPlaceError] = useState('');
   const [placeBusy, setPlaceBusy] = useState(false);
-  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaveTo, setLeaveTo] = useState(null);
 
   const loadConfig = useCallback(async () => {
     const data = await apiFetch('/admin/doors-config', { token: authToken, allowForbidden: true });
@@ -182,12 +185,8 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     const list = stored.map((door, index) => (
       normalizeDoorLocal(door, nextDoorCode(stored.slice(0, index) || []))
     ));
-    const groups = data.config?.airlockGroups || [];
-    setDoors(list.map((door) => {
-      const partner = airlockPartnerId(door.id, groups);
-      return { ...door, airlockEnabled: Boolean(partner), airlockPartnerId: partner };
-    }));
-    setAirlockGroups(groups);
+    setDoors(list);
+    setAirlockGroups(data.config?.airlockGroups || []);
     setDefaultDoorId(data.config?.defaultDoorId || list[0]?.id || null);
     setGlobalAccess({ ...DEFAULT_GLOBAL, ...(data.globalAccess || {}) });
   }, [authToken]);
@@ -244,8 +243,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
   };
 
   const openDoor = (door) => {
-    const partner = airlockPartnerId(door.id, airlockGroups);
-    setDraft(normalizeDoorLocal({ ...door, airlockEnabled: Boolean(partner), airlockPartnerId: partner }));
+    setDraft(normalizeDoorLocal(door));
     setFieldErrors({});
     setDirty(false);
   };
@@ -255,19 +253,17 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     setDirty(false);
     setFieldErrors({});
     setPlaceModal(null);
-    setLeaveOpen(false);
+    setLeaveTo(null);
   };
 
   const persistDoors = async (nextDoors, nextDefaultId = defaultDoorId, nextGlobal = globalAccess, nextGroups = airlockGroups) => {
     const usedIds = new Set();
-    const payloadDoors = nextDoors.map(({
+    const payloadDoors = syncAirlockFields(nextDoors, nextGroups).map(({
       _localId,
       doorCode,
       localStation,
       placeA,
       placeB,
-      airlockEnabled,
-      airlockPartnerId: partnerIgnored,
       readersMode,
       ...door
     }) => {
@@ -317,14 +313,11 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
         globalAccess: nextGlobal
       }
     });
-    const groups = data.config?.airlockGroups || [];
-    const list = (data.config?.doors || []).map((door, index) => {
-      const local = normalizeDoorLocal(door, nextDoorCode(data.config?.doors?.slice(0, index) || []));
-      const partner = airlockPartnerId(local.id, groups);
-      return { ...local, airlockEnabled: Boolean(partner), airlockPartnerId: partner };
-    });
+    const list = (data.config?.doors || []).map((door, index) => (
+      normalizeDoorLocal(door, nextDoorCode(data.config?.doors?.slice(0, index) || []))
+    ));
     setDoors(list);
-    setAirlockGroups(groups);
+    setAirlockGroups(data.config?.airlockGroups || []);
     setDefaultDoorId(data.config?.defaultDoorId || null);
     setGlobalAccess({ ...DEFAULT_GLOBAL, ...(data.globalAccess || {}) });
     onGlobalAccessSaved?.(data.globalAccess);
@@ -361,9 +354,8 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
       const withDraft = exists
         ? doors.map((door) => (door._localId === normalized._localId ? normalized : door))
         : [...doors, normalized];
-      const paired = applyAirlockChoice(withDraft, airlockGroups, normalized);
       try {
-        await persistDoors(paired.doors, defaultDoorId || normalized.id, globalAccess, paired.airlockGroups);
+        await persistDoors(withDraft, defaultDoorId || normalized.id, globalAccess, airlockGroups);
         setDraft(null);
         setDirty(false);
         setFieldErrors({});
@@ -380,17 +372,32 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
 
   const deleteCurrentDoor = async () => {
     if (!draft) return;
+    const cleanup = removeDoorFromGroups(draft.id, airlockGroups);
+    const notes = [];
+    if (cleanup.removed.length) {
+      const names = joinNames(cleanup.removed.map((group) => group.name || group.id));
+      notes.push(cleanup.removed.length === 1
+        ? `El estanco ${names} se borra, porque le queda una sola puerta.`
+        : `Los estancos ${names} se borran, porque les queda una sola puerta.`);
+    }
+    const wasIn = new Set(airlockGroupsOfDoor(draft.id, airlockGroups).map((group) => group.id));
+    const kept = cleanup.airlockGroups.filter((group) => wasIn.has(group.id));
+    if (kept.length) {
+      notes.push(`Sale ${kept.length === 1 ? 'del estanco' : 'de los estancos'} ${joinNames(kept.map((group) => group.name || group.id))}.`);
+    }
+    if (cleanup.changedOuter.length) {
+      notes.push('Era la puerta de afuera: revisá en Estancos cuál pasa a ser la de afuera.');
+    }
     const ok = await confirm({
       title: 'Eliminar puerta',
-      message: `¿Eliminar la puerta "${draft.name}"? Las personas dejan de poder usarla.`,
+      message: [`¿Eliminar la puerta "${draft.name}"? Las personas dejan de poder usarla.`, ...notes].join(' '),
       confirmLabel: 'Eliminar',
       tone: 'danger'
     });
     if (!ok) return;
     await onPending(`delete-door-${draft._localId}`, async () => {
       const nextDoors = doors.filter((door) => door._localId !== draft._localId);
-      const paired = applyAirlockChoice(nextDoors, airlockGroups, { ...draft, airlockEnabled: false, id: draft.id });
-      await persistDoors(paired.doors, defaultDoorId, globalAccess, paired.airlockGroups);
+      await persistDoors(nextDoors, defaultDoorId, globalAccess, cleanup.airlockGroups);
       setDraft(null);
       setDirty(false);
       onSuccess?.('Puerta eliminada');
@@ -428,9 +435,9 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     return doors.filter((door) => `${door.name} ${kindLabel(door.kind)} ${door.placeA} ${door.placeB}`.toLowerCase().includes(q));
   }, [doors, query]);
 
-  const otherDoors = doors.filter((door) => door._localId !== draft?._localId);
   const readers = draft ? ensureTwoReaders(draft, draft.doorCode) : [];
   const isNew = draft ? !doors.some((door) => door._localId === draft._localId) : true;
+  const draftAirlocks = draft && !isNew ? describeDoorAirlocks(draft.id, airlockGroups, doors) : [];
 
   const managedBy = (door) => {
     if (door.controllerId && deviceNames[door.controllerId]) return deviceNames[door.controllerId];
@@ -533,10 +540,10 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
     }
   };
 
-  const onLugaresClick = (event) => {
+  const confirmLeave = (section, label) => (event) => {
     if (!dirty) return;
     event.preventDefault();
-    setLeaveOpen(true);
+    setLeaveTo({ section, label });
   };
 
   const placeOptions = (prefix) => (
@@ -587,7 +594,8 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
               <div className="aui-card-grid">
                 {filtered.map((door) => {
                   const phys = physicalById[door.id];
-                  const status = door.airlockEnabled ? 'Estanco' : (door.active !== false ? 'En uso' : 'Pausada');
+                  const inAirlock = airlockGroupsOfDoor(door.id, airlockGroups).length > 0;
+                  const status = inAirlock ? 'Estanco' : (door.active !== false ? 'En uso' : 'Pausada');
                   return (
                     <article key={door._localId} className="aui-card">
                       <h4 className="aui-card__title">{door.name || 'Sin nombre'}</h4>
@@ -608,7 +616,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                       ) : null}
                       <p className="aui-card__meta">La maneja: {managedBy(door)}</p>
                       <p>
-                        <span className={`aui-status${door.airlockEnabled ? ' is-warn' : ' is-ok'}`}>{status}</span>
+                        <span className={`aui-status${inAirlock ? ' is-warn' : ' is-ok'}`}>{status}</span>
                         {phys?.physicalLabel ? (
                           <span className="aui-status" style={{ marginLeft: '0.35rem' }}>{phys.physicalLabel}</span>
                         ) : null}
@@ -678,7 +686,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
             </div>
             <p className="aui-card__meta">
               ¿No está el lugar que buscás? Elegí «+ Crear un lugar nuevo…» en la lista, o administrá todos en{' '}
-              <Link to={adminPath('lugares')} onClick={onLugaresClick}>Puertas y equipos → Lugares</Link>.
+              <Link to={adminPath('lugares')} onClick={confirmLeave('lugares', 'Lugares')}>Puertas y equipos → Lugares</Link>.
             </p>
             <Field label="¿Desde dónde se llega a esta puerta?" error={fieldErrors.placeA}>
               <select
@@ -785,26 +793,23 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
                 />
               </Field>
             ) : null}
-            <label className="aui-check">
-              <input
-                type="checkbox"
-                checked={draft.airlockEnabled === true}
-                onChange={(event) => patchDraft({ airlockEnabled: event.target.checked, airlockPartnerId: event.target.checked ? draft.airlockPartnerId : '' })}
-              />
-              <span>
-                ¿Forma un estanco con otra puerta?
-                <HelpTip text="En un estanco nunca se abren las dos a la vez. Primero se cierra una y después se abre la otra." />
+            <section className="aui-field" aria-label="Estancos de esta puerta">
+              <span className="aui-field__label">
+                Estancos
+                <HelpTip text="En un estanco nunca se abren dos puertas a la vez. Los estancos se arman en su propia pantalla." />
               </span>
-            </label>
-            {draft.airlockEnabled ? (
-              <Field label="La otra puerta del estanco" error={fieldErrors.airlockPartnerId}>
-                <select className="input-field" value={draft.airlockPartnerId || ''} onChange={(event) => patchDraft({ airlockPartnerId: event.target.value })}>
-                  <option value="">Elegir puerta</option>
-                  {otherDoors.map((door) => <option key={door.id} value={door.id}>{door.name || door.id}</option>)}
-                </select>
-              </Field>
-            ) : null}
-            {draft.airlockEnabled ? <p className="aui-card__meta">Nunca se abren las dos a la vez.</p> : null}
+              {draftAirlocks.length ? (
+                <>
+                  <p className="aui-card__meta">Forma parte de:</p>
+                  <ul className="aui-plain-list">
+                    {draftAirlocks.map((line) => <li key={line}>{line}</li>)}
+                  </ul>
+                </>
+              ) : (
+                <p className="aui-card__meta">No forma parte de ningún estanco.</p>
+              )}
+              <Link to={adminPath('estancos')} onClick={confirmLeave('estancos', 'Estancos')}>Editar estancos</Link>
+            </section>
             <label className="aui-check">
               <input type="checkbox" checked={draft.requireGuardApproval === true} onChange={(event) => patchDraft({ requireGuardApproval: event.target.checked })} />
               <span>
@@ -933,23 +938,23 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
       </Modal>
 
       <Modal
-        open={leaveOpen}
+        open={Boolean(leaveTo)}
         size="sm"
         title="Cambios sin guardar"
         description="Si salís ahora, se pierde lo que cargaste en esta puerta."
-        onClose={() => setLeaveOpen(false)}
+        onClose={() => setLeaveTo(null)}
         footer={(
           <>
             <button type="button" className="btn btn-secondary" data-aui-cancel="true">
               Seguir acá
             </button>
-            <button type="button" className="btn btn-primary" onClick={() => navigate(adminPath('lugares'))}>
+            <button type="button" className="btn btn-primary" onClick={() => navigate(adminPath(leaveTo?.section || 'lugares'))}>
               Salir sin guardar
             </button>
           </>
         )}
       >
-        <p>¿Querés ir a Lugares igual?</p>
+        <p>¿Querés ir a {leaveTo?.label || 'Lugares'} igual?</p>
       </Modal>
     </PageContainer>
   );

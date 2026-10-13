@@ -31,6 +31,7 @@ import ConsumoAdminSection from './ConsumoAdmin/ConsumoAdminSection';
 import HuellaAdminSection from './HuellaAdmin/HuellaAdminSection';
 import CitacionesAutoSection from './CitacionesAuto/CitacionesAutoSection';
 import DoorsAdminSection from './DoorsAdmin/DoorsAdminSection';
+import EstancosAdminSection from './EstancosAdmin/EstancosAdminSection';
 import './admin-ui.css';
 
 const ADVANCED_KEY = 'mss-admin-show-advanced';
@@ -39,6 +40,7 @@ const OWN_HEADER = new Set([
   'primerosPasos',
   'lugares',
   'puertas',
+  'estancos',
   'equipos',
   'rolesPermisos',
   'registro',
@@ -244,6 +246,8 @@ function AdminPage({ adminSection, adminQuery = {}, onSectionChange, onExit, onA
               onAccessConfigSaved={onAccessConfigSaved}
             />
           )}
+
+          {adminSection === 'estancos' && canDoors && <EstancosAdminSection />}
 
           {adminSection === 'equipos' && hasPermission(currentUser, 'lectores.manage') && (
             <EquiposAdminSection />

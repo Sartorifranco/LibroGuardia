@@ -76,6 +76,7 @@ export const ADMIN_SECTION_SEGMENTS = {
   visitas: 'visitas',
   lugares: 'lugares',
   puertas: 'puertas',
+  estancos: 'estancos',
   equipos: 'equipos',
   sistemas: 'sistemas',
   notifications: 'avisos',

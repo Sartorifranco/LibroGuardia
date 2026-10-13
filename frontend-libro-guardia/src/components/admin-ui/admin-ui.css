@@ -270,6 +270,16 @@
   margin-top: 0.2rem;
 }
 
+.aui-plain-list {
+  margin: 0.25rem 0 0.5rem;
+  padding-left: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
+.aui-plain-list li + li {
+  margin-top: 0.2rem;
+}
+
 .aui-places {
   display: grid;
   grid-template-columns: 1fr;

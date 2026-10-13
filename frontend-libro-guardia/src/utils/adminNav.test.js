@@ -11,7 +11,8 @@ describe('menú de administración', () => {
     });
 
     const puertas = labels({ role: 'custom', permissions: ['access.doors.manage'] });
-    expect(puertas).toEqual(expect.arrayContaining(['Lugares', 'Puertas']));
+    expect(puertas).toEqual(expect.arrayContaining(['Lugares', 'Puertas', 'Estancos']));
+    expect(puertas.indexOf('Estancos')).toBe(puertas.indexOf('Puertas') + 1);
     expect(puertas).not.toContain('Equipos');
 
     const equipos = labels({ role: 'custom', permissions: ['lectores.manage'] });

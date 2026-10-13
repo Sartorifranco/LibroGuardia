@@ -74,12 +74,6 @@ export function readersForDraft(draft = {}) {
   ];
 }
 
-export function airlockPartnerId(doorId, groups = []) {
-  const group = (groups || []).find((item) => (item.doorIds || []).includes(doorId) && item.enabled !== false);
-  if (!group) return '';
-  return (group.doorIds || []).find((id) => id && id !== doorId) || '';
-}
-
 /**
  * @returns {Record<string, string>} vacío si se puede guardar
  */
@@ -109,55 +103,5 @@ export function validateSimpleDoor(draft = {}) {
       errors.heldOpenSec = 'El aviso tiene que ser más largo que el tiempo que queda destrabada.';
     }
   }
-  if (draft.airlockEnabled === true) {
-    if (!draft.airlockPartnerId) {
-      errors.airlockPartnerId = 'Elegí la otra puerta. En un estanco nunca se abren las dos a la vez.';
-    } else if (draft.airlockPartnerId === draft.id) {
-      errors.airlockPartnerId = 'Una puerta no puede formar un estanco consigo misma.';
-    }
-  }
   return errors;
-}
-
-/**
- * Arma los grupos de estanco a partir de la elección del formulario.
- * La puerta editada queda del lado de afuera si toca el exterior o es un portón.
- * La pareja anterior sale del estanco.
- */
-export function applyAirlockChoice(doors = [], groups = [], draft = {}) {
-  const selfId = String(draft.id || '').trim();
-  const wantPair = draft.airlockEnabled === true && draft.airlockPartnerId && draft.airlockPartnerId !== selfId;
-  const partnerId = wantPair ? String(draft.airlockPartnerId).trim() : '';
-  const removed = new Set([selfId]);
-  if (partnerId) removed.add(partnerId);
-
-  let nextGroups = (groups || []).map((group) => ({
-    ...group,
-    doorIds: (group.doorIds || []).filter((id) => !removed.has(id))
-  })).filter((group) => group.doorIds.length >= 2);
-
-  const assignment = new Map();
-  if (wantPair) {
-    const groupId = `estanco-${[selfId, partnerId].slice().sort().join('-')}`.slice(0, 48);
-    nextGroups = nextGroups.filter((group) => group.id !== groupId);
-    nextGroups.push({
-      id: groupId,
-      name: `Estanco ${String(draft.name || selfId).trim()}`,
-      doorIds: [selfId, partnerId],
-      enabled: true,
-      mode: 'sequential_closed'
-    });
-    const selfIsOuter = draft.placeA === 'exterior' || draft.placeB === 'exterior' || draft.kind === 'gate';
-    assignment.set(selfId, { airlockGroupId: groupId, airlockRole: selfIsOuter ? 'outer' : 'inner' });
-    assignment.set(partnerId, { airlockGroupId: groupId, airlockRole: selfIsOuter ? 'inner' : 'outer' });
-  }
-
-  const nextDoors = doors.map((door) => {
-    if (assignment.has(door.id)) return { ...door, ...assignment.get(door.id) };
-    const still = nextGroups.some((group) => (group.doorIds || []).includes(door.id));
-    if (!still && door.airlockGroupId) return { ...door, airlockGroupId: null, airlockRole: null };
-    return door;
-  });
-
-  return { doors: nextDoors, airlockGroups: nextGroups };
 }

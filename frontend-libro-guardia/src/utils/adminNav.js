@@ -16,6 +16,7 @@ import {
   Satellite,
   ScrollText,
   Settings,
+  Shield,
   ShieldCheck,
   Truck,
   UserRound,
@@ -189,6 +190,13 @@ export const ADMIN_NAV_GROUPS = [
         label: 'Puertas',
         description: 'Cada puerta, qué lugares conecta y cuánto queda abierta.',
         icon: DoorOpen,
+        match: canDoors
+      },
+      {
+        id: 'estancos',
+        label: 'Estancos',
+        description: 'Puertas que nunca se abren a la vez.',
+        icon: Shield,
         match: canDoors
       },
       {
