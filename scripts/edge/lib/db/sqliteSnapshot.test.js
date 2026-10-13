@@ -7,7 +7,7 @@ const { SKIP, DRIVER, tmpDir, rmDir, makeHead, doorsBody, cardholderChunks } = r
 const { openEdgeDb } = require('./index');
 
 const SNAP_METHODS = ['findCredential', 'cardholder', 'rightsFor', 'schedule', 'isHoliday', 'door',
-  'interlockGroup', 'pass', 'isRevoked', 'policy'];
+  'interlockGroup', 'interlockGroups', 'pass', 'isRevoked', 'policy'];
 
 function siteBodies() {
   return {
@@ -99,6 +99,23 @@ describe('SqliteSnapshot (interfaz snap del motor)', { skip: SKIP }, () => {
       assert.equal(snap.isRevoked('qr_b'), false);
       assert.equal(snap.policy().apb, 'soft');
       assert.equal(snap.site().tz, 'America/Argentina/Buenos_Aires');
+    } finally {
+      e.db.close();
+    }
+  });
+
+  it('interlockGroups: una puerta entre dos estancos devuelve los dos grupos, por id', () => {
+    const e = openEdgeDb(':memory:', { role: 'hub', deviceId: 'hub-1' });
+    try {
+      const doors = doorsBody();
+      doors.interlockGroups.push({ id: 'est0', doorIds: ['p2', 'p3', 'p4'], mode: 'sensor' });
+      const bodies = { doors };
+      e.chunks.applyHead(makeHead(1, bodies), bodies);
+      const snap = e.snapshot.refresh();
+      assert.deepEqual(snap.interlockGroups('p2').map((g) => g.id), ['est0', 'est1']);
+      assert.equal(snap.interlockGroup('p2').id, 'est0');
+      assert.deepEqual(snap.interlockGroups('p1').map((g) => g.id), ['est1']);
+      assert.deepEqual(snap.interlockGroups('p9'), []);
     } finally {
       e.db.close();
     }

@@ -507,6 +507,8 @@ const buildDoorsChunk = ({
 } = {}) => {
   const tz = site.tz || (site.policy && site.policy.tz) || DEFAULT_TZ;
   const interlockGroups = buildInterlockGroups(doorsConfig);
+  // Solo para defaultSides (primer grupo de cada puerta). Una puerta puede estar en varios
+  // estancos: la lista completa viaja en `interlockGroups` y el motor los evalúa todos.
   const groupByDoor = new Map();
   for (const g of interlockGroups) for (const d of g.doorIds) if (!groupByDoor.has(d)) groupByDoor.set(d, g);
   const doors = (Array.isArray(doorsConfig.doors) ? doorsConfig.doors : [])

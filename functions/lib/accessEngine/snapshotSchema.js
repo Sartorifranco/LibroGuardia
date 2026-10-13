@@ -164,7 +164,9 @@
  * @property {(id:string) => Schedule|null} schedule                          '24x7' siempre existe
  * @property {(dateYmd:string, setId?:string|null) => boolean} isHoliday       setId null = cualquier calendario
  * @property {(id:string) => Door|null} door
- * @property {(doorId:string) => InterlockGroup|null} interlockGroup
+ * @property {(doorId:string) => InterlockGroup|null} interlockGroup         el primero (por id) de interlockGroups
+ * @property {(doorId:string) => InterlockGroup[]} [interlockGroups]          todos los estancos de la puerta, por id;
+ *                                                                            el motor los evalúa todos (cualquiera niega)
  * @property {(qrIdOrDni:string) => VisitorPass|null} pass                    por id (QR) o por dni (validTo más tardío)
  * @property {(key:string) => boolean} isRevoked
  * @property {() => Policy} policy

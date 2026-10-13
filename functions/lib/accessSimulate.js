@@ -87,9 +87,12 @@ const simulateAccess = ({ snap, person, personId, doorId, at }) => {
     return { status: 503, body: { message: 'No se pudo revisar el acceso en este momento.' } };
   }
 
-  const group = typeof snap.interlockGroup === 'function' ? snap.interlockGroup(door) : null;
+  let groups = [];
+  if (typeof snap.interlockGroups === 'function') groups = snap.interlockGroups(door) || [];
+  else if (typeof snap.interlockGroup === 'function') groups = [snap.interlockGroup(door)].filter(Boolean);
   const doorStates = {};
-  const ids = group && Array.isArray(group.doorIds) ? group.doorIds : [door];
+  const ids = new Set([door]);
+  for (const g of groups) if (Array.isArray(g.doorIds)) g.doorIds.forEach((id) => ids.add(id));
   for (const id of ids) doorStates[id] = { state: 'SEGURA', dps: 'closed', bond: 'engaged' };
 
   let result;
