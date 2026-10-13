@@ -181,6 +181,84 @@ describe('Edge: comandos pendientes y señal en el head', () => {
     }
   });
 
+  it('controlador en línea informado con lastSeenAt viejo: se guarda la hora del servidor y se refresca a los 10 min', async () => {
+    const { deviceHealth, OFFLINE_AFTER_MS } = require('../lib/deviceHealth');
+    cloud.fs.poke('devices/ctl-b', { siteId: 'principal', kind: 'controller', name: 'Pi B', status: 'active', doorIds: [] });
+    const t0 = Date.now() + 60 * 60 * 1000;
+    const hb = (now) => edgeIngest.recordHeartbeat({
+      deviceId: 'hub-1',
+      siteId: 'principal',
+      deviceKind: 'hub',
+      now,
+      body: {
+        configVersionApplied: 9,
+        controllers: { 'ctl-b': { configVersionApplied: 9, online: true, lastSeenAt: t0 - 20 * 60 * 1000, lastError: null } }
+      }
+    });
+
+    const first = await hb(t0);
+    assert.equal(first.controllersWritten, 1);
+    const ctl = cloud.fs.peek('devices/ctl-b');
+    assert.equal(ctl.lastSeenAt, t0);
+    assert.notEqual(deviceHealth(ctl, { now: t0 + 60 * 1000 }).code, 'offline');
+
+    const sinCambios = await hb(t0 + 9 * 60 * 1000);
+    assert.equal(sinCambios.controllersWritten, 0);
+
+    const t1 = t0 + 10 * 60 * 1000 + 1;
+    const refresh = await hb(t1);
+    assert.equal(refresh.controllersWritten, 1, 'refresco a los 10 min');
+    assert.equal(cloud.fs.peek('devices/ctl-b').lastSeenAt, t1);
+    assert.ok(t1 - t0 < OFFLINE_AFTER_MS);
+    assert.notEqual(deviceHealth(cloud.fs.peek('devices/ctl-b'), { now: t1 + 4 * 60 * 1000 }).code, 'offline');
+  });
+
+  it('controlador informado fuera de línea: se mantiene el lastSeenAt informado', async () => {
+    cloud.fs.poke('devices/ctl-c', { siteId: 'principal', kind: 'controller', name: 'Pi C', status: 'active', doorIds: [] });
+    const now = Date.now() + 2 * 60 * 60 * 1000;
+    const seen = now - 20 * 60 * 1000;
+    await edgeIngest.recordHeartbeat({
+      deviceId: 'hub-1',
+      siteId: 'principal',
+      deviceKind: 'hub',
+      now,
+      body: { controllers: { 'ctl-c': { configVersionApplied: 9, online: false, lastSeenAt: seen } } }
+    });
+    assert.equal(cloud.fs.peek('devices/ctl-c').lastSeenAt, seen);
+  });
+
+  it('heartbeat del hub con clockMs: se guarda clockOffsetMs y solo hay "Reloj desfasado" si está corrido', async () => {
+    const { deviceHealth, problemLabels } = require('../lib/deviceHealth');
+    cloud.fs.poke('devices/hub-2', { siteId: 'principal', kind: 'hub', name: 'Hub 2', status: 'active', doorIds: [] });
+    const hb = (now, clockMs) => edgeIngest.recordHeartbeat({
+      deviceId: 'hub-2',
+      siteId: 'principal',
+      deviceKind: 'hub',
+      now,
+      body: { configVersionApplied: 9, checks: { db: 'ok', clockMs } }
+    });
+
+    const t0 = Date.now();
+    const first = await hb(t0, t0);
+    assert.equal(first.wrote, true);
+    let doc = cloud.fs.peek('devices/hub-2');
+    assert.equal(doc.checks.clockOffsetMs, 0);
+    assert.equal('clockMs' in doc.checks, false);
+    assert.equal(deviceHealth(doc, { now: t0 + 4 * 60 * 1000 }).problems.includes('Reloj desfasado'), false);
+
+    // Reloj bien, 1 min después: nada cambió, no se escribe.
+    const second = await hb(t0 + 60 * 1000, t0 + 60 * 1000 + 300);
+    assert.equal(second.wrote, false, 'reloj bien no cuenta como cambio');
+
+    const t2 = t0 + 2 * 60 * 1000;
+    const corrido = await hb(t2, t2 - 5 * 60 * 1000);
+    assert.equal(corrido.wrote, true);
+    doc = cloud.fs.peek('devices/hub-2');
+    assert.ok(Math.abs(doc.checks.clockOffsetMs - -300000) <= 1000, String(doc.checks.clockOffsetMs));
+    assert.ok(problemLabels(doc.checks, t2).includes('Reloj desfasado'));
+    assert.ok(deviceHealth(doc, { now: t2 }).problems.includes('Reloj desfasado'));
+  });
+
   it('el hub puede reportar expired/rejected; contador negativo se acota a 0; listado vacío re-sincroniza', async () => {
     const created = await cloud.request('POST', '/api/guard/doors/p1/remote-open', { token: guardiaToken, body: {} });
     const r = await cloud.request('POST', `/api/edge/v1/commands/${created.body.command.id}/result`, {
