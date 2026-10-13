@@ -61,6 +61,7 @@ import HistorialPage from './pages/Historial/HistorialPage';
 import { ADMIN_SECTION_META } from './pages/Admin/adminConstants';
 import ModeSelectPage from './pages/ModeSelect/ModeSelectPage';
 import EmpleadoRegistroPage from './pages/Empleado/EmpleadoRegistroPage';
+import EmpleadoVerificarPage from './pages/Empleado/EmpleadoVerificarPage';
 import EmpleadoVisitasPage from './pages/Empleado/EmpleadoVisitasPage';
 import VisitaInvitacionPage from './pages/Empleado/VisitaInvitacionPage';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
@@ -780,6 +781,7 @@ function AppRoutes() {
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/invitacion/:token" element={<VisitaInvitacionPage />} />
       <Route path="/empleado/registro" element={<EmpleadoRegistroPage />} />
+      <Route path="/empleado/verificar/:token" element={<EmpleadoVerificarPage />} />
       <Route path="/empleado/login" element={<EmpleadoLoginRoute />} />
       <Route
         path="/empleado"

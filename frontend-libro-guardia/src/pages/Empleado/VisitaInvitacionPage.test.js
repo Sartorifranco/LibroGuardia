@@ -50,6 +50,18 @@ describe('VisitaInvitacionPage', () => {
     expect(screen.getByText('DNI ***222')).toBeInTheDocument();
   });
 
+  it.each([
+    [{ duracion: 'horas', fechaHoraEsperada: '2026-10-14T09:00:00', inviteExpiresAt: '2026-10-14T13:00:00' }, 'Válido el 14/10 de 9:00 a 13:00'],
+    [{ duracion: 'mes', fechaHoraEsperada: '2026-10-14T00:00:00', inviteExpiresAt: '2026-11-13T23:59:59' }, 'Válido del 14/10 al 13/11'],
+    [{ duracion: 'un_ingreso', fechaHoraEsperada: '2026-10-14T10:00:00', inviteExpiresAt: '2026-10-14T23:59:59' }, /Sirve para un solo ingreso/]
+  ])('muestra la validez según la duración (%#)', async (extra, texto) => {
+    apiFetch.mockResolvedValue({
+      invite: { id: 'v1', nombreVisitante: 'Ana', passCode: PASS, destinoNombre: 'Planta', ...extra }
+    });
+    renderPage();
+    expect(await screen.findByText(texto)).toBeInTheDocument();
+  });
+
   it('si la invitación venció o fue cancelada (410) lo explica simple', async () => {
     const err = new Error('Esta invitación ya venció.');
     err.status = 410;

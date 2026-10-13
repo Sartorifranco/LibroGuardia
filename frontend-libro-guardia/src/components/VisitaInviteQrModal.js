@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
 import { Copy, Mail, MessageCircle, X } from 'lucide-react';
-import { buildVisitaQrPayload, getVisitaWindow, maskDni } from '../utils/visitaInvite';
+import { buildVisitaQrPayload, maskDni } from '../utils/visitaInvite';
+import { formatValidezInvitacion } from '../utils/visitaDuracion';
 import { apiFetch } from '../services/api';
 
 function buildInviteUrl(token) {
@@ -80,8 +81,8 @@ function VisitaInviteQrModal({ visita, authToken, onClose, onReady }) {
   }, [visita?.id, visita?.inviteToken, visita?.passCode, authToken]);
 
   const windowInfo = useMemo(
-    () => getVisitaWindow(visita?.fechaHoraEsperada),
-    [visita?.fechaHoraEsperada]
+    () => ({ label: formatValidezInvitacion(visita) }),
+    [visita]
   );
 
   const inviteUrl = buildInviteUrl(inviteToken);

@@ -218,6 +218,78 @@ html.dark .empleado-meta,
   opacity: 0.9;
 }
 
+.empleado-callout--error {
+  border-color: rgba(220, 38, 38, 0.4);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.empleado-callout .btn {
+  margin-top: 0.6rem;
+}
+
+.visita-duracion__fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.visita-duracion__legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.45rem;
+}
+
+.visita-duracion__options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.visita-duracion__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+  min-height: 4.5rem;
+  padding: 0.75rem 0.85rem;
+  text-align: left;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: inherit;
+  cursor: pointer;
+}
+
+.visita-duracion__option.is-selected {
+  border-color: var(--brand-primary, #dc2626);
+  background: rgba(var(--brand-primary-rgb, 220, 38, 38), 0.08);
+}
+
+.visita-duracion__option-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.visita-duracion__option-help {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.visita-duracion__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .visita-duracion__options {
+    grid-template-columns: 1fr;
+  }
+}
+
 .empleado-visita-actions {
   display: flex;
   flex-wrap: wrap;

@@ -29,6 +29,12 @@ describe('menú de administración', () => {
     const visitas = labels({ role: 'supervisor', permissions: ['visitas.approve'] });
     expect(visitas).toContain('Autorizaciones');
     expect(visitas).not.toContain('Aprobar visitas');
+    expect(visitas).not.toContain('Mis visitas');
+
+    const anfitrion = buildAdminNav({ role: 'supervisor', permissions: ['visitas.request', 'visitas.approve'] })
+      .flatMap((group) => group.items)
+      .find((item) => item.label === 'Mis visitas');
+    expect(anfitrion?.href).toBe('/empleado/visitas');
   });
 
   test('las opciones avanzadas solo se ven para admin con el interruptor', () => {

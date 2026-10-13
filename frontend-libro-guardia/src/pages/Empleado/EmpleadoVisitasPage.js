@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Ban, LogOut, Pencil, QrCode } from 'lucide-react';
+import { Ban, LogOut, Mail, Pencil, QrCode } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { apiFetch } from '../../services/api';
@@ -10,7 +10,8 @@ import ToastStack from '../../components/ToastStack';
 import VisitaInviteQrModal from '../../components/VisitaInviteQrModal';
 import PersonPhotoField from '../../components/PersonPhotoField';
 import Modal from '../../components/admin-ui/Modal';
-import { getVisitaWindow } from '../../utils/visitaInvite';
+import VisitaDuracionPicker from '../../components/VisitaDuracionPicker';
+import { buildDuracionPayload, duracionFormFrom, formatValidezCorta } from '../../utils/visitaDuracion';
 import { hasPermission } from '../../utils/permissions';
 
 const ESTADO_LABEL = {
@@ -26,20 +27,22 @@ const ESTADO_LABEL = {
 
 const HOST_EDITABLE_ESTADOS = new Set(['pendiente_aprobacion', 'autorizada', 'pendiente']);
 
-function toLocalInputValue(date = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+const HOST_DENIED_CODES = new Set(['dominio_no_permitido', 'email_no_verificado']);
+const RESEND_WAIT_MESSAGE = 'Ya te mandamos un mail hace un momento. Esperá 2 minutos y probá de nuevo.';
 
 function editFormFrom(visita) {
-  const expected = visita?.fechaHoraEsperada ? new Date(visita.fechaHoraEsperada) : null;
   return {
-    fechaHoraEsperada: expected && !Number.isNaN(expected.getTime())
-      ? toLocalInputValue(expected)
-      : toLocalInputValue(),
+    dur: duracionFormFrom(visita),
     motivo: visita?.motivo || '',
     destinoId: visita?.destinoId || ''
   };
+}
+
+/** 403 por dominio o mail sin confirmar → { code, message }; si no, null. */
+function hostDeniedFrom(err) {
+  const code = err?.data?.code;
+  if (err?.status !== 403 || !HOST_DENIED_CODES.has(code)) return null;
+  return { code, message: err.data?.message || err.data?.error || err.message };
 }
 
 function EmpleadoVisitasPage() {
@@ -58,8 +61,12 @@ function EmpleadoVisitasPage() {
 
   const [nombreVisitante, setNombreVisitante] = useState('');
   const [dniVisitante, setDniVisitante] = useState('');
-  const [fechaHoraEsperada, setFechaHoraEsperada] = useState(() => toLocalInputValue());
+  const [durForm, setDurForm] = useState(() => duracionFormFrom());
   const [motivo, setMotivo] = useState('');
+  const [hostDenied, setHostDenied] = useState(null);
+  const [emailConfirmed, setEmailConfirmed] = useState(false);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendNote, setResendNote] = useState('');
   const [destinoId, setDestinoId] = useState('');
   const [photoDataUrl, setPhotoDataUrl] = useState('');
 
@@ -107,29 +114,36 @@ function EmpleadoVisitasPage() {
       showError('Elegí un destino. Si no hay opciones, un admin debe crearlas en Admin → Destinos.');
       return;
     }
+    const dur = buildDuracionPayload(durForm);
+    if (dur.error) {
+      showError(dur.error);
+      return;
+    }
     setSaving(true);
     try {
-      const expected = new Date(fechaHoraEsperada);
       const result = await apiFetch('/empleado/visitas', {
         method: 'POST',
         token: authToken,
+        allowForbidden: true,
         body: {
           nombreVisitante: nombreVisitante.trim(),
           dniVisitante: dniVisitante.trim(),
-          fechaHoraEsperada: expected.toISOString(),
+          ...dur.payload,
           motivo: motivo.trim(),
           destinoId,
           photoDataUrl: photoDataUrl || null
         }
       });
+      setHostDenied(null);
+      const needsApproval = !canCreate || dur.payload.duracion === 'mes';
       const created = result.visita || {
         id: result.id,
         nombreVisitante: nombreVisitante.trim(),
         dniVisitante: dniVisitante.trim(),
-        fechaHoraEsperada: expected.toISOString(),
+        ...dur.payload,
         destinoId,
         destinoNombre: destinos.find((d) => d.id === destinoId)?.nombre || '',
-        estado: canCreate ? 'autorizada' : 'pendiente_aprobacion',
+        estado: needsApproval ? 'pendiente_aprobacion' : 'autorizada',
         createdByNombre: currentUser?.nombre || currentUser?.username || ''
       };
       showSuccess(result.message || (canCreate
@@ -140,12 +154,17 @@ function EmpleadoVisitasPage() {
       setMotivo('');
       setDestinoId('');
       setPhotoDataUrl('');
-      setFechaHoraEsperada(toLocalInputValue());
+      setDurForm(duracionFormFrom());
       await load();
       if (created.estado === 'autorizada' || created.estado === 'pendiente') {
         setQrVisita(created);
       }
     } catch (err) {
+      const denied = hostDeniedFrom(err);
+      if (denied) {
+        setHostDenied(denied);
+        return;
+      }
       showError(err.message || 'No se pudo guardar la visita');
     } finally {
       setSaving(false);
@@ -172,9 +191,9 @@ function EmpleadoVisitasPage() {
       setEditError('Elegí un destino.');
       return;
     }
-    const expected = new Date(editForm.fechaHoraEsperada);
-    if (!editForm.fechaHoraEsperada || Number.isNaN(expected.getTime())) {
-      setEditError('Poné la fecha y la hora de la visita.');
+    const dur = buildDuracionPayload(editForm.dur);
+    if (dur.error) {
+      setEditError(dur.error);
       return;
     }
     setActionBusy(true);
@@ -183,8 +202,9 @@ function EmpleadoVisitasPage() {
       const result = await apiFetch(`/empleado/visitas/${editVisita.id}`, {
         method: 'PATCH',
         token: authToken,
+        allowForbidden: true,
         body: {
-          fechaHoraEsperada: expected.toISOString(),
+          ...dur.payload,
           motivo: editForm.motivo.trim(),
           destinoId: editForm.destinoId
         }
@@ -198,9 +218,32 @@ function EmpleadoVisitasPage() {
         showSuccess(result.message || 'Visita modificada. Queda pendiente de aprobación.');
       }
     } catch (err) {
-      setEditError(err.message || 'No se pudo guardar el cambio');
+      const denied = hostDeniedFrom(err);
+      if (denied) setHostDenied(denied);
+      setEditError((denied && denied.message) || err.message || 'No se pudo guardar el cambio');
     } finally {
       setActionBusy(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setResendBusy(true);
+    setResendNote('');
+    try {
+      const result = await apiFetch('/auth/resend-verification', { method: 'POST', token: authToken });
+      setResendNote(result.message || 'Te mandamos un mail nuevo. Revisá tu correo (y la carpeta de spam).');
+    } catch (err) {
+      if (err.status === 429) {
+        setResendNote(err.message || RESEND_WAIT_MESSAGE);
+      } else if (err.data?.code === 'ya_verificado') {
+        setEmailConfirmed(true);
+        setHostDenied(null);
+        showSuccess('Tu mail ya está confirmado. Ya podés invitar visitas.');
+      } else {
+        setResendNote(err.message || 'No se pudo mandar el mail. Probá de nuevo en un rato.');
+      }
+    } finally {
+      setResendBusy(false);
     }
   };
 
@@ -227,6 +270,9 @@ function EmpleadoVisitasPage() {
     return v?.estado === 'pendiente' || v?.estado === 'autorizada';
   }
   const canChange = (v) => canSubmit && HOST_EDITABLE_ESTADOS.has(v?.estado || 'pendiente');
+  const needsEmailConfirm = !emailConfirmed
+    && (currentUser?.emailVerified === false || hostDenied?.code === 'email_no_verificado');
+  const domainDenied = hostDenied?.code === 'dominio_no_permitido' ? hostDenied : null;
 
   return (
     <div className="empleado-shell">
@@ -277,6 +323,33 @@ function EmpleadoVisitasPage() {
                 </>
               )}
             </p>
+            {needsEmailConfirm && (
+              <div className="empleado-callout" role="alert">
+                <strong>Confirmá tu mail para poder invitar visitas</strong>
+                <p>
+                  Te mandamos un link a
+                  {' '}
+                  {currentUser?.email || currentUser?.username || 'tu correo'}
+                  . Abrilo para confirmar tu cuenta. Si no lo encontrás, revisá la carpeta de spam.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleResend}
+                  disabled={resendBusy}
+                >
+                  <Mail size={14} />
+                  {resendBusy ? 'Enviando…' : 'Reenviar mail'}
+                </button>
+                {resendNote ? <p role="status">{resendNote}</p> : null}
+              </div>
+            )}
+            {domainDenied && (
+              <div className="empleado-callout empleado-callout--error" role="alert">
+                <strong>No podés invitar visitas con este usuario</strong>
+                <p>{domainDenied.message}</p>
+              </div>
+            )}
             {!loading && destinos.length === 0 && (
               <div className="empleado-callout" role="status">
                 <strong>No hay destinos disponibles</strong>
@@ -312,18 +385,7 @@ function EmpleadoVisitasPage() {
                   pattern="[0-9]*"
                 />
               </label>
-              <label>
-                Fecha y hora esperada
-                <input
-                  type="datetime-local"
-                  className="input-field"
-                  value={fechaHoraEsperada}
-                  onChange={(e) => setFechaHoraEsperada(e.target.value)}
-                  required
-                  disabled={!destinos.length}
-                />
-              </label>
-              <label>
+              <label className="empleado-form-full">
                 Destino
                 <select
                   className="input-field"
@@ -347,6 +409,12 @@ function EmpleadoVisitasPage() {
                   disabled={!destinos.length}
                 />
               </label>
+              <VisitaDuracionPicker
+                value={durForm}
+                onChange={setDurForm}
+                disabled={!destinos.length || saving}
+                idPrefix="alta-dur"
+              />
               <div className="empleado-form-full">
                 <PersonPhotoField
                   value={photoDataUrl}
@@ -383,20 +451,14 @@ function EmpleadoVisitasPage() {
           ) : (
             <ul className="empleado-visita-list">
               {visitas.map((v) => {
-                const windowInfo = getVisitaWindow(v.fechaHoraEsperada);
                 return (
                   <li key={v.id}>
                     <div>
                       <strong>{v.nombreVisitante}</strong>
                       <span className="empleado-meta"> · DNI {v.dniVisitante}</span>
                     </div>
-                    <div className="empleado-meta">
-                      {v.destinoNombre || v.destinoId}
-                      {v.fechaHoraEsperada
-                        ? ` · ${new Date(v.fechaHoraEsperada).toLocaleString('es-AR')}`
-                        : ''}
-                    </div>
-                    <div className="empleado-meta">{windowInfo.label}</div>
+                    <div className="empleado-meta">{v.destinoNombre || v.destinoId}</div>
+                    <div className="empleado-meta">{formatValidezCorta(v)}</div>
                     {v.motivo ? <div className="empleado-meta">{v.motivo}</div> : null}
                     <div className="empleado-visita-actions">
                       <span className={`empleado-estado empleado-estado-${v.estado}`}>
@@ -462,7 +524,7 @@ function EmpleadoVisitasPage() {
         description={editVisita ? `${editVisita.nombreVisitante}. Al guardar se genera una invitación nueva y la anterior deja de servir.` : ''}
         onClose={() => setEditVisita(null)}
         dirty={editDirty && !actionBusy}
-        size="sm"
+        size="md"
         footer={(
           <>
             <button type="button" className="btn btn-secondary" disabled={actionBusy}>
@@ -475,16 +537,17 @@ function EmpleadoVisitasPage() {
         )}
       >
         <form id="editar-visita-form" onSubmit={handleEditSubmit} className="empleado-form">
-          <label className="empleado-form-full">
-            Fecha y hora esperada
-            <input
-              type="datetime-local"
-              className="input-field"
-              value={editForm.fechaHoraEsperada}
-              onChange={(e) => setEditForm((f) => ({ ...f, fechaHoraEsperada: e.target.value }))}
-              required
-            />
-          </label>
+          {editError ? (
+            <div className="empleado-callout empleado-callout--error empleado-form-full" role="alert">
+              <p>{editError}</p>
+            </div>
+          ) : null}
+          <VisitaDuracionPicker
+            value={editForm.dur}
+            onChange={(dur) => setEditForm((f) => ({ ...f, dur }))}
+            disabled={actionBusy}
+            idPrefix="editar-dur"
+          />
           <label className="empleado-form-full">
             Destino
             <select
@@ -507,12 +570,11 @@ function EmpleadoVisitasPage() {
               onChange={(e) => setEditForm((f) => ({ ...f, motivo: e.target.value }))}
             />
           </label>
-          {!canCreate && (
+          {(!canCreate || editForm.dur.duracion === 'mes') && (
             <p className="empleado-hint empleado-form-full">
               Al cambiarla, la visita vuelve a quedar pendiente de aprobación.
             </p>
           )}
-          {editError ? <p className="empleado-hint empleado-form-full" role="alert">{editError}</p> : null}
         </form>
       </Modal>
 

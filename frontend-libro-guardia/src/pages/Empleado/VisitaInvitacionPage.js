@@ -5,7 +5,8 @@ import { Moon, Sun } from 'lucide-react';
 import { apiFetch } from '../../services/api';
 import brand from '../../config/brand';
 import { useTheme } from '../../hooks/useTheme';
-import { buildVisitaQrPayload, getVisitaWindow } from '../../utils/visitaInvite';
+import { buildVisitaQrPayload } from '../../utils/visitaInvite';
+import { formatValidezInvitacion } from '../../utils/visitaDuracion';
 
 function VisitaInvitacionPage() {
   const { token } = useParams();
@@ -62,7 +63,8 @@ function VisitaInvitacionPage() {
     return () => { cancelled = true; };
   }, [invite]);
 
-  const windowInfo = invite ? getVisitaWindow(invite.fechaHoraEsperada) : null;
+  // TODO(visitas): horario diario del pase por mes ("lun a vie 8 a 17") cuando el link público lo devuelva.
+  const validez = invite ? formatValidezInvitacion(invite) : '';
 
   return (
     <div className="auth-page empleado-auth-page">
@@ -106,7 +108,7 @@ function VisitaInvitacionPage() {
               <p><strong>{invite.nombreVisitante}</strong></p>
               {invite.dniMasked ? <p>DNI {invite.dniMasked}</p> : null}
               <p>Destino: {invite.destinoNombre || '—'}</p>
-              {windowInfo && <p className="visita-invite-page__window">{windowInfo.label}</p>}
+              {validez && <p className="visita-invite-page__window">{validez}</p>}
             </div>
 
             {dataUrl ? (
