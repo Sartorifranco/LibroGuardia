@@ -28,11 +28,21 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
-.site-map__problems .btn {
+.site-map__actions {
+  display: flex;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.site-map__hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
 }
 
 .site-map__scroll {
@@ -128,7 +138,7 @@
 
 .site-map__door text {
   fill: var(--text);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .site-map__door.is-off text {

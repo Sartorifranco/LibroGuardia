@@ -2,14 +2,13 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageContainer, PageHeader } from '../../../components/admin-ui';
 import { apiFetch } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
-import { BOX_H, BOX_W, buildSiteMap, buildSiteTree, layoutSiteMap } from './siteMapModel';
+import { PLACE_LINE_H, buildSiteMap, buildSiteTree, layoutSiteMap } from './siteMapModel';
 import './SiteMap.css';
 
 const MOBILE_QUERY = '(max-width: 699px)';
-const TARGET_LABEL = { puertas: 'Puertas', lugares: 'Lugares' };
+const TARGET_LABEL = { puertas: 'Puertas', lugares: 'Lugares', estancos: 'Estancos' };
 const KIND_LABEL = { door: 'Puerta', gate: 'Portón', turnstile: 'Molinete' };
-
-const short = (text, max = 22) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+const DOOR_LINE_H = 14;
 
 const readMobile = () => {
   if (typeof window === 'undefined') return false;
@@ -71,6 +70,8 @@ function SiteMapDrawing({ model, onOpen }) {
           if (node.fixed) classes.push('is-exterior');
           if (!node.reachable) classes.push('is-alone');
           const open = () => onOpen('lugares');
+          const block = pos.lines.length * PLACE_LINE_H + (node.airlock ? 16 : 0);
+          const top = (pos.h - block) / 2;
           return (
             <g
               key={`place-${node.id}`}
@@ -83,12 +84,14 @@ function SiteMapDrawing({ model, onOpen }) {
               onKeyDown={onKeyActivate(open)}
             >
               <title>{node.name}</title>
-              <rect width={BOX_W} height={BOX_H} rx={10} />
-              <text x={BOX_W / 2} y={node.airlock ? BOX_H / 2 - 4 : BOX_H / 2 + 5} textAnchor="middle" className="site-map__place-name">
-                {short(node.name)}
+              <rect width={pos.w} height={pos.h} rx={10} />
+              <text textAnchor="middle" className="site-map__place-name">
+                {pos.lines.map((line, i) => (
+                  <tspan key={i} x={pos.w / 2} y={top + 13 + i * PLACE_LINE_H}>{line}</tspan>
+                ))}
               </text>
               {node.airlock ? (
-                <text x={BOX_W / 2} y={BOX_H / 2 + 14} textAnchor="middle" className="site-map__place-tag">
+                <text x={pos.w / 2} y={top + pos.lines.length * PLACE_LINE_H + 12} textAnchor="middle" className="site-map__place-tag">
                   Estanco
                 </text>
               ) : null}
@@ -97,8 +100,8 @@ function SiteMapDrawing({ model, onOpen }) {
         })}
 
         {layout.edges.map((edge) => {
-          const text = short(edge.name, 20);
-          const w = text.length * 6.6 + 14;
+          const { w, h, lines } = edge.label;
+          const firstY = 4 - ((lines.length - 1) * DOOR_LINE_H) / 2;
           const open = () => onOpen('puertas');
           return (
             <g
@@ -112,8 +115,12 @@ function SiteMapDrawing({ model, onOpen }) {
               onKeyDown={onKeyActivate(open)}
             >
               <title>{`${KIND_LABEL[edge.kind]}: ${edge.name}${edge.active ? '' : ' (apagada)'}`}</title>
-              <rect x={-w / 2} y={-11} width={w} height={22} rx={11} />
-              <text textAnchor="middle" y={4}>{text}</text>
+              <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={11} />
+              <text textAnchor="middle">
+                {lines.map((line, i) => (
+                  <tspan key={i} x={0} y={firstY + i * DOOR_LINE_H}>{line}</tspan>
+                ))}
+              </text>
             </g>
           );
         })}
@@ -186,6 +193,8 @@ function SiteMapSection({ onOpen }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [savingId, setSavingId] = useState('');
+  const [actionError, setActionError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -208,6 +217,29 @@ function SiteMapSection({ onOpen }) {
   }, [authToken]);
 
   useEffect(() => { load(); }, [load]);
+
+  const acceptSingleSide = useCallback(async (doorId) => {
+    setSavingId(doorId);
+    setActionError('');
+    try {
+      const current = await apiFetch('/admin/doors-config', { token: authToken });
+      const doors = current?.meta?.legacyFallback ? [] : (current?.config?.doors || []);
+      if (!doors.some((door) => door.id === doorId)) throw new Error('No encontramos esa puerta. Recargá la página.');
+      await apiFetch('/admin/doors-config', {
+        method: 'PUT',
+        token: authToken,
+        body: {
+          doors: doors.map((door) => (door.id === doorId ? { ...door, singleSideReaderOk: true } : door)),
+          defaultDoorId: current?.config?.defaultDoorId
+        }
+      });
+      await load();
+    } catch (err) {
+      setActionError(err.message || 'No se pudo guardar.');
+    } finally {
+      setSavingId('');
+    }
+  }, [authToken, load]);
 
   const model = useMemo(() => (data ? buildSiteMap(data) : null), [data]);
   const open = useCallback((section) => onOpen?.(section), [onOpen]);
@@ -236,21 +268,40 @@ function SiteMapSection({ onOpen }) {
         <>
           <section className={`site-map__review${model.problems.length ? ' has-problems' : ''}`} aria-label="Revisión automática">
             <h4 className="aui-section-title">Revisión automática</h4>
+            {actionError ? <p role="alert">{actionError}</p> : null}
             {model.problems.length === 0 ? (
               <p>No encontramos problemas.</p>
             ) : (
               <ul className="site-map__problems">
                 {model.problems.map((problem) => (
                   <li key={problem.id}>
-                    <span>{problem.message}</span>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={() => open(problem.target)}
-                      aria-label={`Arreglar en ${TARGET_LABEL[problem.target]}: ${problem.message}`}
-                    >
-                      Arreglar
-                    </button>
+                    <span>
+                      {problem.message}
+                      {problem.type === 'reader_one_side' ? (
+                        <small className="site-map__hint">Por ejemplo, si se entra por esta puerta pero se sale por otra.</small>
+                      ) : null}
+                    </span>
+                    <span className="site-map__actions">
+                      {problem.type === 'reader_one_side' ? (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          disabled={Boolean(savingId)}
+                          onClick={() => acceptSingleSide(problem.refId)}
+                          aria-label={`Está bien así: ${problem.message}`}
+                        >
+                          {savingId === problem.refId ? 'Guardando…' : 'Está bien así'}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => open(problem.target)}
+                        aria-label={`Arreglar en ${TARGET_LABEL[problem.target]}: ${problem.message}`}
+                      >
+                        Arreglar
+                      </button>
+                    </span>
                   </li>
                 ))}
               </ul>
