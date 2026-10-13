@@ -8,7 +8,6 @@ const crypto = require('crypto');
 const { db, FieldValue } = require('../firestore');
 const { getNotificationsConfig } = require('./notifications/config');
 const emailChannel = require('./notifications/email');
-const { resolveApiBaseUrl } = require('./lectores');
 
 const VERIFY_TTL_MS = 48 * 60 * 60 * 1000;
 const RESEND_MIN_MS = 2 * 60 * 1000;
@@ -29,14 +28,19 @@ const newVerification = (now = Date.now()) => {
   };
 };
 
-/** Origen de la app: APP_BASE_URL o el mismo host que sirve la API (sin /api). */
-const resolveAppBaseUrl = (req) => {
+/**
+ * Origen de la app: solo APP_BASE_URL. No se arma con el Host del pedido: quien se
+ * autoregistra lo controla y podría mandar el token a otro sitio con el mail de un tercero.
+ */
+const resolveAppBaseUrl = () => {
   const fromEnv = String(process.env.APP_BASE_URL || '').trim();
-  if (fromEnv) return fromEnv.replace(/\/+$/, '');
-  return resolveApiBaseUrl(req).replace(/\/api\/?$/, '');
+  return /^https?:\/\/[^/\s]+/i.test(fromEnv) ? fromEnv.replace(/\/+$/, '') : null;
 };
 
-const verificationLink = (req, token) => `${resolveAppBaseUrl(req)}/empleado/verificar/${token}`;
+const verificationLink = (token) => {
+  const base = resolveAppBaseUrl();
+  return base ? `${base}/empleado/verificar/${token}` : null;
+};
 
 /**
  * Manda el mail con el link. Sin SMTP configurado no falla: avisa en el log y
@@ -50,7 +54,11 @@ const sendVerificationEmail = async ({ req, to, nombre, token }) => {
     console.warn('emailVerification: SMTP sin configurar; la cuenta queda sin verificar hasta que un admin la marque.');
     return { sent: false, reason: 'smtp_incompleto' };
   }
-  const link = verificationLink(req, token);
+  const link = verificationLink(token);
+  if (!link) {
+    console.warn('emailVerification: falta APP_BASE_URL; la cuenta queda sin verificar hasta que un admin la marque.');
+    return { sent: false, reason: 'app_base_url_sin_configurar' };
+  }
   const saludo = nombre ? `Hola ${nombre}:` : 'Hola:';
   const text = [
     saludo,
