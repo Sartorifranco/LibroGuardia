@@ -77,6 +77,7 @@ export const ADMIN_SECTION_SEGMENTS = {
   mapa: 'mapa-predio',
   lugares: 'lugares',
   puertas: 'puertas',
+  estancos: 'estancos',
   equipos: 'equipos',
   sistemas: 'sistemas',
   notifications: 'avisos',

@@ -201,6 +201,101 @@ describe('esquema afuera y adentro de una puerta', () => {
   });
 });
 
+describe('una puerta en estancos', () => {
+  const saved = [];
+  const sides = { in: { zoneFrom: 'exterior', zoneTo: 'planta' }, out: { zoneFrom: 'planta', zoneTo: 'exterior' } };
+  const groups = [
+    { id: 'estanco-guardia', name: 'Estanco Guardia', doorIds: ['guardia', 'teso', 'depo'], outerDoorId: 'guardia', enabled: true, mode: 'sequential_closed', transitTimeoutMs: 90000 },
+    { id: 'estanco-playa', name: 'Estanco Playa', doorIds: ['playa', 'depo'], outerDoorId: 'playa', enabled: true, mode: 'sequential_closed' }
+  ];
+
+  beforeEach(() => {
+    saved.length = 0;
+    apiFetch.mockImplementation(async (path, opts = {}) => {
+      if (path === '/admin/areas') return areas;
+      if (path === '/admin/doors/physical-status') return { doors: [] };
+      if (path === '/admin/devices') return { devices: [] };
+      if (path === '/admin/lectores') return { lectores: [] };
+      if (path === '/admin/doors-config' && opts.method === 'PUT') {
+        saved.push(opts.body);
+        return { config: { doors: opts.body.doors, airlockGroups: opts.body.airlockGroups, defaultDoorId: opts.body.defaultDoorId }, globalAccess: {} };
+      }
+      if (path === '/admin/doors-config') {
+        return {
+          config: {
+            doors: [
+              { id: 'guardia', name: 'Puerta Guardia', doorCode: 'P1', sides, airlockGroupId: 'estanco-guardia', airlockRole: 'outer' },
+              { id: 'teso', name: 'Ingreso Teso y Camioneros', doorCode: 'P2', sides, airlockGroupId: 'estanco-guardia', airlockRole: 'inner' },
+              { id: 'depo', name: 'Ingreso Depositario', doorCode: 'P3', sides, airlockGroupId: 'estanco-guardia', airlockRole: 'inner' },
+              { id: 'playa', name: 'Portón Playa', doorCode: 'P4', sides, airlockGroupId: 'estanco-playa', airlockRole: 'outer' },
+              { id: 'oficina', name: 'Oficina', doorCode: 'P5', sides }
+            ],
+            airlockGroups: groups,
+            defaultDoorId: 'guardia'
+          },
+          globalAccess: {}
+        };
+      }
+      return {};
+    });
+  });
+
+  const openCard = async (name) => {
+    const card = (await screen.findByRole('heading', { name })).closest('article');
+    await userEvent.click(within(card).getByRole('button', { name: 'Configurar' }));
+    return screen.findByRole('dialog');
+  };
+
+  test('muestra los estancos solo para leer y guardar no los cambia', async () => {
+    renderDoors();
+    const dialog = await openCard('Puerta Guardia');
+    expect(within(dialog).getByText('Forma parte de:')).toBeInTheDocument();
+    expect(within(dialog).getByText('Estanco Guardia (con Ingreso Teso y Camioneros e Ingreso Depositario)')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: 'Editar estancos' })).toHaveAttribute('href', '/admin/estancos');
+    expect(within(dialog).queryByText(/La otra puerta/)).not.toBeInTheDocument();
+
+    const name = within(dialog).getByPlaceholderText('Portón de clientes');
+    fireEvent.change(name, { target: { value: 'Guardia principal' } });
+    expect(name).toHaveValue('Guardia principal');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Guardar' }));
+
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0].airlockGroups).toEqual(groups);
+    const byId = Object.fromEntries(saved[0].doors.map((door) => [door.id, door]));
+    expect(byId.guardia).toMatchObject({ name: 'Guardia principal', airlockGroupId: 'estanco-guardia', airlockRole: 'outer' });
+    expect(byId.depo).toMatchObject({ airlockGroupId: 'estanco-guardia', airlockRole: 'inner' });
+    expect(byId.oficina.airlockGroupId).toBeNull();
+  });
+
+  test('una puerta en dos estancos muestra una línea por cada uno', async () => {
+    renderDoors();
+    const dialog = await openCard('Ingreso Depositario');
+    expect(within(dialog).getByText('Estanco Guardia (con Puerta Guardia e Ingreso Teso y Camioneros)')).toBeInTheDocument();
+    expect(within(dialog).getByText('Estanco Playa (con Portón Playa)')).toBeInTheDocument();
+  });
+
+  test('una puerta sin estanco lo dice', async () => {
+    renderDoors();
+    const dialog = await openCard('Oficina');
+    expect(within(dialog).getByText('No forma parte de ningún estanco.')).toBeInTheDocument();
+  });
+
+  test('borrar una puerta la saca de sus estancos y avisa cuáles se borran', async () => {
+    renderDoors();
+    const dialog = await openCard('Ingreso Depositario');
+    await userEvent.click(within(dialog).getByRole('button', { name: /Eliminar puerta/ }));
+    expect(await screen.findByText(/El estanco Estanco Playa se borra/)).toBeInTheDocument();
+    expect(screen.getByText(/Sale del estanco Estanco Guardia/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }));
+
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0].airlockGroups).toEqual([
+      { ...groups[0], doorIds: ['guardia', 'teso'] }
+    ]);
+    expect(saved[0].doors.find((door) => door.id === 'playa').airlockGroupId).toBeNull();
+  });
+});
+
 describe('aviso en una puerta sin lugares distintos', () => {
   beforeEach(() => {
     apiFetch.mockImplementation(async (path) => {

@@ -1,4 +1,4 @@
-import { applyAirlockChoice, placesNeedChoice, readersForDraft, sidesFromPlaces, swapPlaces, validateSimpleDoor } from './doorForm';
+import { placesNeedChoice, readersForDraft, sidesFromPlaces, swapPlaces, validateSimpleDoor } from './doorForm';
 
 describe('formulario simple de puerta', () => {
   const base = {
@@ -8,8 +8,7 @@ describe('formulario simple de puerta', () => {
     placeA: 'exterior',
     placeB: 'planta',
     pulseSeconds: 3,
-    sensorsRequired: false,
-    airlockEnabled: false
+    sensorsRequired: false
   };
 
   test('invierte afuera y adentro y arma los lectores según el lado', () => {
@@ -51,43 +50,4 @@ describe('formulario simple de puerta', () => {
     expect(errors.heldOpenSec).toMatch(/10 y 600|más largo/);
   });
 
-  test('el estanco pide otra puerta y no acepta la misma', () => {
-    expect(validateSimpleDoor({ ...base, airlockEnabled: true, airlockPartnerId: '' }).airlockPartnerId)
-      .toMatch(/otra puerta/);
-    expect(validateSimpleDoor({ ...base, airlockEnabled: true, airlockPartnerId: 'porton' }).airlockPartnerId)
-      .toMatch(/consigo misma/);
-  });
-
-  test('arma el estanco con la pareja y suelta la anterior', () => {
-    const doors = [
-      { id: 'porton', name: 'Portón', airlockGroupId: 'viejo', airlockRole: 'outer' },
-      { id: 'molinete', name: 'Molinete', airlockGroupId: 'viejo', airlockRole: 'inner' },
-      { id: 'oficina', name: 'Oficina' }
-    ];
-    const groups = [{ id: 'viejo', doorIds: ['porton', 'molinete'], enabled: true }];
-    const paired = applyAirlockChoice(doors, groups, {
-      ...base,
-      airlockEnabled: true,
-      airlockPartnerId: 'oficina'
-    });
-    expect(paired.airlockGroups).toHaveLength(1);
-    expect(paired.airlockGroups[0].doorIds.slice().sort()).toEqual(['oficina', 'porton']);
-    const porton = paired.doors.find((door) => door.id === 'porton');
-    const oficina = paired.doors.find((door) => door.id === 'oficina');
-    const molinete = paired.doors.find((door) => door.id === 'molinete');
-    expect(porton.airlockRole).toBe('outer');
-    expect(oficina.airlockRole).toBe('inner');
-    expect(molinete.airlockGroupId).toBeNull();
-  });
-
-  test('desmarcar el estanco desarma la pareja', () => {
-    const doors = [
-      { id: 'porton', airlockGroupId: 'estanco-oficina-porton', airlockRole: 'outer' },
-      { id: 'oficina', airlockGroupId: 'estanco-oficina-porton', airlockRole: 'inner' }
-    ];
-    const groups = [{ id: 'estanco-oficina-porton', doorIds: ['porton', 'oficina'], enabled: true }];
-    const paired = applyAirlockChoice(doors, groups, { ...base, airlockEnabled: false });
-    expect(paired.airlockGroups).toHaveLength(0);
-    expect(paired.doors.every((door) => door.airlockGroupId == null)).toBe(true);
-  });
 });

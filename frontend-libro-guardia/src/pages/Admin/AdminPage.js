@@ -32,6 +32,7 @@ import HuellaAdminSection from './HuellaAdmin/HuellaAdminSection';
 import CitacionesAutoSection from './CitacionesAuto/CitacionesAutoSection';
 import DoorsAdminSection from './DoorsAdmin/DoorsAdminSection';
 import SiteMapSection from './SiteMap/SiteMapSection';
+import EstancosAdminSection from './EstancosAdmin/EstancosAdminSection';
 import './admin-ui.css';
 
 const ADVANCED_KEY = 'mss-admin-show-advanced';
@@ -41,6 +42,7 @@ const OWN_HEADER = new Set([
   'mapa',
   'lugares',
   'puertas',
+  'estancos',
   'equipos',
   'rolesPermisos',
   'registro',
@@ -248,6 +250,8 @@ function AdminPage({ adminSection, adminQuery = {}, onSectionChange, onExit, onA
               onAccessConfigSaved={onAccessConfigSaved}
             />
           )}
+
+          {adminSection === 'estancos' && canDoors && <EstancosAdminSection />}
 
           {adminSection === 'equipos' && hasPermission(currentUser, 'lectores.manage') && (
             <EquiposAdminSection />

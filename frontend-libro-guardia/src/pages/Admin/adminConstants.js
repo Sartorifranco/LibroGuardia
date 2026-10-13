@@ -51,6 +51,7 @@ export const ADMIN_SECTION_META = {
   mapa: { title: 'Mapa del predio', description: 'Todos los lugares y puertas de un vistazo.' },
   lugares: { title: 'Lugares', description: 'Zonas del predio que conecta cada puerta.' },
   puertas: { title: 'Puertas', description: 'Cada puerta, qué lugares conecta y cuánto queda abierta.' },
+  estancos: { title: 'Estancos', description: 'Puertas que nunca se abren a la vez.' },
   equipos: { title: 'Equipos', description: 'La cajita que abre las puertas.' },
   sistemas: { title: 'Sistemas', description: 'Opciones para el instalador.' },
   grupos: { title: 'Grupos de acceso', description: 'Puertas y horario que comparten las mismas personas.' },
