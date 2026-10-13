@@ -74,6 +74,7 @@ export const ADMIN_SECTION_SEGMENTS = {
   destinos: 'recorridos',
   citaciones: 'citaciones',
   visitas: 'visitas',
+  mapa: 'mapa-predio',
   lugares: 'lugares',
   puertas: 'puertas',
   equipos: 'equipos',

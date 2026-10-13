@@ -10,6 +10,7 @@ import {
   KeyRound,
   ListChecks,
   Mail,
+  Map as MapIcon,
   MapPinned,
   Palette,
   Route,
@@ -177,6 +178,13 @@ export const ADMIN_NAV_GROUPS = [
     id: 'puertas',
     label: 'Puertas y equipos',
     items: [
+      {
+        id: 'mapa',
+        label: 'Mapa del predio',
+        description: 'Todos los lugares y puertas de un vistazo.',
+        icon: MapIcon,
+        match: canDoors
+      },
       {
         id: 'lugares',
         label: 'Lugares',

@@ -48,6 +48,7 @@ export const ADMIN_SECTION_META = {
   audit: { title: 'Registro de cambios', description: 'Quién cambió qué, y qué quedó distinto.' },
   notifications: { title: 'Avisos por mail', description: 'Quién recibe cada aviso y cómo se envía el correo.' },
   primerosPasos: { title: 'Primeros pasos', description: 'Lo que falta para dejar el predio funcionando.' },
+  mapa: { title: 'Mapa del predio', description: 'Todos los lugares y puertas de un vistazo.' },
   lugares: { title: 'Lugares', description: 'Zonas del predio que conecta cada puerta.' },
   puertas: { title: 'Puertas', description: 'Cada puerta, qué lugares conecta y cuánto queda abierta.' },
   equipos: { title: 'Equipos', description: 'La cajita que abre las puertas.' },
