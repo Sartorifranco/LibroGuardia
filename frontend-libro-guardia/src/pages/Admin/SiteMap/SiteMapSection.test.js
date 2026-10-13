@@ -84,6 +84,76 @@ describe('SiteMapSection', () => {
     expect(onOpen).toHaveBeenLastCalledWith('puertas');
   });
 
+  test('nombres largos sin … y con el nombre completo en el título', async () => {
+    const largo = 'Ingreso Tesorería y Camioneros por Planta';
+    mockPredio({
+      areas: [...baseAreas.slice(0, 3), { id: 'tesoreria', name: 'Tesorería central de recuento' }],
+      doors: [baseDoors[0], baseDoors[1], { ...baseDoors[2], name: largo }],
+      airlockGroups: groups
+    });
+    const { container } = render(<SiteMapSection onOpen={jest.fn()} />);
+    await screen.findByText('No encontramos problemas.');
+    const svg = screen.getByRole('img', { name: 'Dibujo del predio' });
+    expect(svg.textContent).not.toMatch(/…/);
+    const titles = [...container.querySelectorAll('title')].map((t) => t.textContent);
+    expect(titles).toContain('Tesorería central de recuento');
+    expect(titles).toContain(`Puerta: ${largo}`);
+    const door = screen.getByRole('button', { name: new RegExp(`Puerta ${largo}`) });
+    expect(door.querySelectorAll('tspan')).toHaveLength(2);
+  });
+
+  test('lector de un solo lado: Está bien así guarda la puerta y recarga', async () => {
+    const doors = [{ ...baseDoors[0], readers: [{ side: 'in' }] }, baseDoors[1], baseDoors[2]];
+    let saved = null;
+    apiFetch.mockImplementation(async (path, opts = {}) => {
+      if (path === '/admin/areas') return { areas: baseAreas };
+      if (path === '/admin/doors-config' && opts.method === 'PUT') {
+        saved = opts.body;
+        return { config: { doors: opts.body.doors, airlockGroups: groups } };
+      }
+      if (path === '/admin/doors-config') {
+        return { config: { doors: saved?.doors || doors, airlockGroups: groups, defaultDoorId: 'porton' } };
+      }
+      return {};
+    });
+    render(<SiteMapSection onOpen={jest.fn()} />);
+
+    const review = await screen.findByRole('region', { name: 'Revisión automática' });
+    expect(within(review).getByText(/Por ejemplo, si se entra por esta puerta pero se sale por otra/)).toBeInTheDocument();
+    await userEvent.click(within(review).getByRole('button', { name: /Está bien así/ }));
+
+    expect(await screen.findByText('No encontramos problemas.')).toBeInTheDocument();
+    expect(apiFetch).toHaveBeenCalledWith('/admin/doors-config', expect.objectContaining({ method: 'PUT', token: 'token-test' }));
+    expect(saved.defaultDoorId).toBe('porton');
+    expect(saved.doors).toHaveLength(3);
+    expect(saved.doors.find((d) => d.id === 'porton').singleSideReaderOk).toBe(true);
+    expect(saved.doors.filter((d) => d.singleSideReaderOk)).toHaveLength(1);
+  });
+
+  test('puerta con singleSideReaderOk no muestra el aviso', async () => {
+    mockPredio({
+      areas: baseAreas,
+      doors: [{ ...baseDoors[0], readers: [{ side: 'in' }], singleSideReaderOk: true }, baseDoors[1], baseDoors[2]],
+      airlockGroups: groups
+    });
+    render(<SiteMapSection onOpen={jest.fn()} />);
+    expect(await screen.findByText('No encontramos problemas.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Está bien así/ })).not.toBeInTheDocument();
+  });
+
+  test('Arreglar de un estanco lleva a Estancos', async () => {
+    mockPredio({
+      areas: baseAreas,
+      doors: baseDoors,
+      airlockGroups: [{ id: 'g1', name: 'Solito', doorIds: ['e1'], outerDoorId: 'e1' }]
+    });
+    const onOpen = jest.fn();
+    render(<SiteMapSection onOpen={onOpen} />);
+    const review = await screen.findByRole('region', { name: 'Revisión automática' });
+    await userEvent.click(within(review).getByRole('button', { name: /Arreglar en Estancos: El estanco “Solito”/ }));
+    expect(onOpen).toHaveBeenLastCalledWith('estancos');
+  });
+
   test('en celular muestra el árbol en vez del dibujo', async () => {
     const original = window.matchMedia;
     window.matchMedia = jest.fn().mockReturnValue({ matches: true });
