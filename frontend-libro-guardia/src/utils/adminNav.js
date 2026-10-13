@@ -13,6 +13,7 @@ import {
   Map as MapIcon,
   MapPinned,
   Palette,
+  QrCode,
   Route,
   Satellite,
   ScrollText,
@@ -91,6 +92,14 @@ export const ADMIN_NAV_GROUPS = [
         description: 'Quienes entran: empleados, visitas y credenciales.',
         icon: Users,
         match: canPeople
+      },
+      {
+        id: 'misVisitas',
+        label: 'Mis visitas',
+        description: 'Invitar visitas y compartirles el QR.',
+        icon: QrCode,
+        match: (user) => hasPermission(user, 'visitas.create') || hasPermission(user, 'visitas.request'),
+        href: '/empleado/visitas'
       },
       {
         id: 'nomina',

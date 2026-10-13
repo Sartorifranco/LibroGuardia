@@ -4,11 +4,14 @@
 
 const crypto = require('crypto');
 const express = require('express');
-const { db, FieldValue } = require('../firestore');
+const { db, FieldValue, Timestamp } = require('../firestore');
 const { markDirty } = require('../lib/siteCompiler');
 const { auth, requirePermission } = require('../middleware/auth');
 const { logActivity } = require('../lib/activityLog');
 const { logAdminAction } = require('../lib/auditLog');
+const { generatePassCode } = require('../lib/visitPassCode');
+const { inviteExpiresAtOf } = require('../lib/visitDuration');
+const { getVisitasSettings, saveVisitasSettings } = require('../lib/visitasSettings');
 
 const router = express.Router();
 
@@ -26,6 +29,33 @@ const serializeVisita = (v) => ({
 const actorLabel = (user) => String(
   user?.nombre || user?.username || user?.email || user?.id || ''
 ).trim();
+
+router.get('/api/admin/visitas/settings', auth, requirePermission('visitas.approve'), async (_req, res) => {
+  try {
+    res.json({ settings: await getVisitasSettings() });
+  } catch (err) {
+    res.status(500).json({ message: err.message || 'Error al leer la configuración de visitas' });
+  }
+});
+
+router.put('/api/admin/visitas/settings', auth, requirePermission('visitas.approve'), async (req, res) => {
+  try {
+    const before = await getVisitasSettings();
+    const saved = await saveVisitasSettings(req.body || {});
+    if (saved.error) return res.status(400).json({ message: saved.error });
+    logAdminAction({
+      req,
+      action: 'visitas.settings.update',
+      targetType: 'settings',
+      targetId: 'visitas',
+      before,
+      after: saved.settings
+    }).catch((err) => console.error('auditLog visitas.settings.update:', err.message));
+    return res.json({ message: 'Configuración de visitas guardada', settings: saved.settings });
+  } catch (err) {
+    return res.status(500).json({ message: err.message || 'Error al guardar la configuración de visitas' });
+  }
+});
 
 router.get('/api/admin/visitas/pending', auth, requirePermission('visitas.approve'), async (_req, res) => {
   try {
@@ -61,9 +91,12 @@ router.post('/api/admin/visitas/:id/approve', auth, requirePermission('visitas.a
     }
     const inviteToken = data.inviteToken || newInviteToken();
     const aprobadoPor = actorLabel(req.user);
+    const inviteExpiresAt = inviteExpiresAtOf(data);
     await ref.set({
       estado: 'autorizada',
       inviteToken,
+      passCode: data.passCode || generatePassCode(),
+      ...(inviteExpiresAt ? { inviteExpiresAt: Timestamp.fromDate(inviteExpiresAt) } : {}),
       aprobadoPor,
       aprobadoPorUserId: req.user.id,
       aprobadoAt: FieldValue.serverTimestamp(),

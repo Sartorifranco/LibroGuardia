@@ -1,10 +1,10 @@
 /**
  * Visitas de empleados (colección 'visitas') — vigencia y match para acceso.
  *
- * Ventana de vigencia (ingreso):
+ * Ventana de vigencia (ingreso): según `duracion`, la misma que el pase del borde
+ * (siteCompiler/build.js visitPassWindow). Un solo ingreso (default):
  *   desde fechaHoraEsperada − 2 horas
- *   hasta el fin del día calendario de fechaHoraEsperada en America/Argentina/Buenos_Aires
- *   (23:59:59.999 AR).
+ *   hasta validoHasta o el fin del día calendario AR (23:59:59.999 AR).
  * Motivo: el visitante suele llegar antes; el mismo día laboral debe alcanzar
  * para completar el ingreso. El egreso (estado ingreso_registrado) no revalida
  * la ventana para no dejar gente atrapada tras el cierre del día.
@@ -14,6 +14,8 @@ const { db, FieldValue, Timestamp } = require('../firestore');
 const { normalizeDni } = require('./normalize');
 const { getArgentinaDateParts } = require('./normalize');
 const { isDoorAllowedForIngreso, normalizeAllowedDoorIds } = require('./doorAccess');
+const { parsePassCode, looksLikePassCode } = require('./visitPassCode');
+const { visitPassWindow } = require('./siteCompiler/build');
 
 const VISITAS = 'visitas';
 const EARLY_MS = 2 * 60 * 60 * 1000;
@@ -35,13 +37,18 @@ const endOfArgentinaDay = (referenceDate) => {
 };
 
 /**
+ * Recibe la fecha esperada (ventana de un solo ingreso) o la visita completa
+ * (ventana según `duracion`, igual que el pase del borde).
  * @returns {{ ok: boolean, reason?: string, windowStart?: Date, windowEnd?: Date }}
  */
-const isVisitaWithinWindow = (fechaHoraEsperada, now = new Date()) => {
-  const expected = toDate(fechaHoraEsperada);
-  if (!expected) return { ok: false, reason: 'visita_sin_fecha' };
-  const windowStart = new Date(expected.getTime() - EARLY_MS);
-  const windowEnd = endOfArgentinaDay(expected);
+const isVisitaWithinWindow = (fechaHoraEsperadaOrVisita, now = new Date()) => {
+  const raw = fechaHoraEsperadaOrVisita;
+  const isVisita = raw && typeof raw === 'object' && !(raw instanceof Date) && typeof raw.toDate !== 'function'
+    && Object.prototype.hasOwnProperty.call(raw, 'fechaHoraEsperada');
+  const win = visitPassWindow(isVisita ? raw : { fechaHoraEsperada: toDate(raw) });
+  if (!win) return { ok: false, reason: 'visita_sin_fecha' };
+  const windowStart = new Date(win.validFrom);
+  const windowEnd = new Date(win.validTo);
   const t = now.getTime();
   if (t < windowStart.getTime()) {
     return { ok: false, reason: 'visita_antes_de_ventana', windowStart, windowEnd };
@@ -52,6 +59,8 @@ const isVisitaWithinWindow = (fechaHoraEsperada, now = new Date()) => {
   return { ok: true, windowStart, windowEnd };
 };
 
+const isMultiEntry = (visita) => ['horas', 'dia', 'mes'].includes(visita && visita.duracion);
+
 const normalizeVisitaDoc = (doc) => {
   if (!doc) return null;
   const data = typeof doc.data === 'function' ? doc.data() : doc;
@@ -59,43 +68,70 @@ const normalizeVisitaDoc = (doc) => {
   return { id, ...data };
 };
 
+/** Visita por código de pase (QR). Sin match o formato inválido → null. */
+const findVisitaByPassCode = async (rawCode, { visitasDocs = null } = {}) => {
+  const code = parsePassCode(rawCode);
+  if (!code) return null;
+  let docs;
+  if (Array.isArray(visitasDocs)) {
+    docs = visitasDocs.map(normalizeVisitaDoc).filter(Boolean);
+  } else {
+    const snap = await db.collection(VISITAS).where('passCode', '==', code).limit(2).get();
+    docs = snap.docs.map((d) => normalizeVisitaDoc(d));
+  }
+  return docs.find((v) => v.passCode === code) || null;
+};
+
 /**
- * Busca visita elegible para ingreso o egreso.
- * @param {{ dniNormalized: string, doorId?: string|null, movementType?: string, now?: Date, visitasDocs?: object[] }} args
+ * Busca visita elegible para ingreso o egreso, por DNI o por código de pase (QR).
+ * Un valor con prefijo MSSV1. (en passCode o en dniNormalized) nunca se trata como DNI.
+ * @param {{ dniNormalized?: string, passCode?: string|null, doorId?: string|null, movementType?: string, now?: Date, visitasDocs?: object[] }} args
  *   Si pasás visitasDocs, no consulta Firestore (tests).
  */
 const findEligibleVisita = async ({
   dniNormalized,
+  passCode = null,
   doorId = null,
   movementType = 'ingreso',
   now = new Date(),
   visitasDocs = null
 } = {}) => {
-  const dni = normalizeDni(dniNormalized);
-  if (!dni) return { visita: null, reason: 'dni_vacio' };
-
+  const byCode = looksLikePassCode(passCode) || looksLikePassCode(dniNormalized);
+  let matches;
   let docs;
-  if (Array.isArray(visitasDocs)) {
-    docs = visitasDocs.map(normalizeVisitaDoc).filter(Boolean);
+  if (byCode) {
+    const code = parsePassCode(looksLikePassCode(passCode) ? passCode : dniNormalized);
+    if (!code) return { visita: null, reason: 'pase_invalido' };
+    const found = await findVisitaByPassCode(code, { visitasDocs });
+    docs = found ? [found] : [];
+    matches = (v) => v.passCode === code;
   } else {
-    let snap;
-    try {
-      snap = await db.collection(VISITAS)
-        .where('dniVisitanteNormalized', '==', dni)
-        .limit(40)
-        .get();
-    } catch {
-      snap = await db.collection(VISITAS).orderBy('createdAt', 'desc').limit(80).get();
+    const dni = normalizeDni(dniNormalized);
+    if (!dni) return { visita: null, reason: 'dni_vacio' };
+    if (Array.isArray(visitasDocs)) {
+      docs = visitasDocs.map(normalizeVisitaDoc).filter(Boolean);
+    } else {
+      let snap;
+      try {
+        snap = await db.collection(VISITAS)
+          .where('dniVisitanteNormalized', '==', dni)
+          .limit(40)
+          .get();
+      } catch {
+        snap = await db.collection(VISITAS).orderBy('createdAt', 'desc').limit(80).get();
+      }
+      docs = snap.docs.map((d) => normalizeVisitaDoc(d));
     }
-    docs = snap.docs.map((d) => normalizeVisitaDoc(d));
+    matches = (v) => normalizeDni(v.dniVisitanteNormalized || v.dniVisitante || '') === dni;
   }
 
   const movement = movementType === 'egreso' ? 'egreso' : 'ingreso';
   const candidates = docs.filter((v) => {
-    const vDni = normalizeDni(v.dniVisitanteNormalized || v.dniVisitante || '');
-    if (vDni !== dni) return false;
+    if (!matches(v)) return false;
     if (movement === 'ingreso') {
-      return v.estado === 'pendiente' || v.estado === 'autorizada';
+      if (v.estado === 'pendiente' || v.estado === 'autorizada') return true;
+      // Por horas, día o mes: después de salir puede volver a entrar dentro de la ventana.
+      return v.estado === 'egreso_registrado' && isMultiEntry(v);
     }
     return v.estado === 'ingreso_registrado';
   });
@@ -113,7 +149,7 @@ const findEligibleVisita = async ({
 
   for (const visita of candidates) {
     if (movement === 'ingreso') {
-      const win = isVisitaWithinWindow(visita.fechaHoraEsperada, now);
+      const win = isVisitaWithinWindow(visita, now);
       if (!win.ok) {
         continue;
       }
@@ -318,6 +354,7 @@ module.exports = {
   LIST_ESTADOS,
   isVisitaWithinWindow,
   findEligibleVisita,
+  findVisitaByPassCode,
   markVisitaEstado,
   nextEstadoForMovement,
   endOfArgentinaDay,

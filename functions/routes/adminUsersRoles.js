@@ -305,6 +305,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
       role: userToUpdate.role,
       active: userToUpdate.active !== false,
       empresaId: userToUpdate.empresaId || null,
+      emailVerified: userToUpdate.emailVerified !== false,
       passwordChanged: false
     };
 
@@ -334,6 +335,12 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
     if (Object.prototype.hasOwnProperty.call(req.body, 'empresaId')) {
       const empresaId = String(req.body.empresaId || '').trim();
       updates.empresaId = empresaId || null;
+    }
+    if (req.body.emailVerified === true) {
+      updates.emailVerified = true;
+      updates.emailVerifyTokenHash = FieldValue.delete();
+      updates.emailVerifyExpiresAtMs = FieldValue.delete();
+      updates.emailVerifySentAtMs = FieldValue.delete();
     }
 
     // Desactivar o cambiar el rol invalida las sesiones abiertas (JWT con role/permisos viejos).
@@ -365,6 +372,7 @@ router.put('/api/admin/users/:id', auth, requirePermission('users.edit'), async 
         role: afterData.role,
         active: afterData.active !== false,
         empresaId: afterData.empresaId || null,
+        emailVerified: afterData.emailVerified !== false,
         passwordChanged: Boolean(password),
         mustChangePassword: afterData.mustChangePassword === true,
         passwordVersion: getPasswordVersion(afterData)

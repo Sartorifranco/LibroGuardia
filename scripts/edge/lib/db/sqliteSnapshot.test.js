@@ -49,6 +49,25 @@ describe('SqliteSnapshot (interfaz snap del motor)', { skip: SKIP }, () => {
     }
   });
 
+  it('pases: conserva duración, ventana, scheduleId y maxUses', () => {
+    const e = openEdgeDb(':memory:', { role: 'controller', deviceId: 'ctl-a', myDoorIds: ['p1', 'p2'] });
+    try {
+      const mes = { id: 'MSSV1.MES', dni: '40222333', doors: ['p1'], validFrom: 1000, validTo: 2000, duracion: 'mes', scheduleId: 'sch_turno_m' };
+      const uno = { id: 'MSSV1.UNO', dni: '40222444', doors: ['p1'], validFrom: 1000, validTo: 1500, maxUses: 1 };
+      const bodies = { doors: doorsBody(), passes: { passes: [mes, uno], revoked: [] } };
+      assert.equal(e.chunks.applyHead(makeHead(3, bodies), bodies).applied, true);
+      e.snapshot.refresh();
+      assert.deepEqual(e.snapshot.pass('MSSV1.MES'), mes);
+      assert.deepEqual(e.snapshot.pass('40222333'), mes, 'también por DNI');
+      const got = e.snapshot.pass('MSSV1.UNO');
+      assert.equal(got.maxUses, 1);
+      assert.equal(got.scheduleId, undefined);
+      assert.equal(e.snapshot.schedule(mes.scheduleId) !== null, true, 'el horario del pase viaja en el chunk doors');
+    } finally {
+      e.db.close();
+    }
+  });
+
   it('responde sobre datos de chunks sintéticos', () => {
     const e = openEdgeDb(':memory:', { role: 'controller', deviceId: 'ctl-a', myDoorIds: ['p1', 'p2'] });
     const snap = e.snapshot;

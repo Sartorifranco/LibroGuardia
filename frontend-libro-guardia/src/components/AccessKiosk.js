@@ -7,6 +7,7 @@ import ManualDoorButton from './ManualDoorButton';
 import { apiFetch } from '../services/api';
 import { playKioskSound, stopKioskSound, unlockKioskAudio } from '../utils/kioskSounds';
 import brand from '../config/brand';
+import { hidePassCodeAsDni, normalizeScanForSend } from '../utils/visitaInvite';
 
 const isConnectionFailure = (err) => Boolean(err?.isNetworkError || err?.status === 0);
 
@@ -261,12 +262,12 @@ function AccessKiosk({
       const data = await apiFetch('/access/kiosk-scan', {
         method: 'POST',
         token: authToken,
-        body: { rawData, doorId, readerId }
+        body: { rawData: normalizeScanForSend(rawData), doorId, readerId }
       });
 
 
 
-      setResult(data);
+      setResult(hidePassCodeAsDni(data));
 
       if (data.authorized) {
 
@@ -464,7 +465,7 @@ function AccessKiosk({
 
               <h2>Esperando documento</h2>
 
-              <p>Acerque el DNI o el código QR al lector</p>
+              <p>Acerque el DNI o el QR de la visita al lector</p>
 
             </div>
 

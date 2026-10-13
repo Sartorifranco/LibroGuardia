@@ -1,3 +1,5 @@
+import { looksLikeVisitaPassCode, parseVisitaPassCode } from './visitaInvite';
+
 const normalizeIdNumber = (value = '') => String(value).replace(/\D/g, '');
 
 const buildFullName = (firstName = '', lastName = '') =>
@@ -26,6 +28,10 @@ const parseArgentinePdf417 = (rawData = '') => {
 export const parseScanData = (rawData = '') => {
   const trimmed = String(rawData).trim();
   if (!trimmed) return { idNumber: '', name: '', format: 'empty' };
+
+  if (looksLikeVisitaPassCode(trimmed)) {
+    return { format: 'visita_pass', idNumber: '', name: '', passCode: parseVisitaPassCode(trimmed) };
+  }
 
   const pdf417 = parseArgentinePdf417(trimmed);
   if (pdf417) return pdf417;

@@ -1,17 +1,42 @@
+/** Espejo de functions/lib/visitPassCode.js */
+export const VISITA_PASS_PREFIX = 'MSSV1.';
+const VISITA_PASS_RE = /^MSSV1\.[0-9A-F]{32}$/;
+
+/** Forma canónica del código de pase (MSSV1.<32 hex>) o null si no es válido. */
+export function parseVisitaPassCode(raw) {
+  const value = String(raw == null ? '' : raw).trim().toUpperCase();
+  return VISITA_PASS_RE.test(value) ? value : null;
+}
+
+/** true si empieza con el prefijo (aunque esté mal formado): nunca tratarlo como DNI. */
+export function looksLikeVisitaPassCode(raw) {
+  return String(raw == null ? '' : raw).trim().toUpperCase().startsWith(VISITA_PASS_PREFIX);
+}
+
+/** Texto escaneado listo para enviar: el código de pase va en forma canónica; el resto tal cual. */
+export function normalizeScanForSend(raw) {
+  const trimmed = String(raw == null ? '' : raw).trim();
+  return parseVisitaPassCode(trimmed) || trimmed;
+}
+
+/** El backend puede devolver el código de pase en idNumber: no mostrarlo como DNI. */
+export function hidePassCodeAsDni(result) {
+  if (!result || !looksLikeVisitaPassCode(result.idNumber)) return result;
+  return { ...result, idNumber: '' };
+}
+
+/** Solo los últimos 3 dígitos (mismo formato que dniMasked del backend). */
+export function maskDni(dni) {
+  const digits = String(dni == null ? '' : dni).replace(/\D/g, '');
+  return digits ? `***${digits.slice(-3)}` : '';
+}
+
 /**
- * Payload del QR de invitación de visita.
- * El kiosk/lector ya parsea JSON con campo dni (functions/dniParser.parseScanData).
+ * Contenido del QR de invitación: solo el código opaco del pase, sin nombre ni DNI.
  * La vigencia la valida el backend al escanear (ventana de visita).
  */
 export function buildVisitaQrPayload(visita = {}) {
-  const dni = String(visita.dniVisitanteNormalized || visita.dniVisitante || '')
-    .replace(/\D/g, '');
-  return JSON.stringify({
-    tipo: 'visita_mss',
-    dni,
-    visitaId: visita.id || '',
-    nombre: visita.nombreVisitante || ''
-  });
+  return parseVisitaPassCode(visita.passCode) || '';
 }
 
 /** Ventana de vigencia alineada a functions/lib/visitasAccess.js */

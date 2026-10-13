@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
 import { Copy, Mail, MessageCircle, X } from 'lucide-react';
-import { buildVisitaQrPayload, getVisitaWindow } from '../utils/visitaInvite';
+import { buildVisitaQrPayload, maskDni } from '../utils/visitaInvite';
+import { formatValidezInvitacion } from '../utils/visitaDuracion';
 import { apiFetch } from '../services/api';
 
 function buildInviteUrl(token) {
@@ -10,10 +11,9 @@ function buildInviteUrl(token) {
   return `${window.location.origin}/invitacion/${encodeURIComponent(token)}`;
 }
 
-function buildShareMessage(visita, inviteUrl, windowLabel) {
+export function buildShareMessage(visita, inviteUrl, windowLabel) {
   const nombre = visita?.nombreVisitante || 'visitante';
   const destino = visita?.destinoNombre || 'el predio';
-  const dni = visita?.dniVisitanteNormalized || visita?.dniVisitante || '';
   return [
     `Hola ${nombre},`,
     `Tenés una visita autorizada a ${destino}.`,
@@ -21,8 +21,8 @@ function buildShareMessage(visita, inviteUrl, windowLabel) {
     '',
     `Abrí tu invitación (QR): ${inviteUrl}`,
     '',
-    `También podés ingresar mostrando tu DNI físico${dni ? ` (${dni})` : ''} en el lector.`,
-    'No hace falta otra autorización: con la visita cargada ya podés pasar en la ventana indicada.'
+    'En el acceso mostrá el QR en el lector. Si no podés, también sirve tu DNI físico.',
+    'No compartas este link: el QR es personal.'
   ].filter(Boolean).join('\n');
 }
 
@@ -40,13 +40,15 @@ function VisitaInviteQrModal({ visita, authToken, onClose, onReady }) {
     (async () => {
       try {
         let token = visita.inviteToken || '';
-        if (!token && authToken && visita.id) {
+        let passSource = visita;
+        if ((!token || !buildVisitaQrPayload(visita)) && authToken && visita.id) {
           setBusy(true);
           const data = await apiFetch(`/empleado/visitas/${visita.id}/ensure-invite`, {
             method: 'POST',
             token: authToken
           });
           token = data.inviteToken || data.visita?.inviteToken || '';
+          passSource = data.visita || visita;
           if (!cancelled) {
             setInviteToken(token);
             onReady?.(data.visita || { ...visita, inviteToken: token });
@@ -55,7 +57,9 @@ function VisitaInviteQrModal({ visita, authToken, onClose, onReady }) {
           setInviteToken(token);
         }
 
-        const url = await QRCode.toDataURL(buildVisitaQrPayload(visita), {
+        const payload = buildVisitaQrPayload(passSource);
+        if (!payload) throw new Error('Esta visita todavía no tiene QR. Cerrá y volvé a intentar.');
+        const url = await QRCode.toDataURL(payload, {
           width: 280,
           margin: 2,
           errorCorrectionLevel: 'M'
@@ -74,15 +78,16 @@ function VisitaInviteQrModal({ visita, authToken, onClose, onReady }) {
     return () => { cancelled = true; };
     // onReady es opcional; no incluirlo para evitar loops al actualizar el padre
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visita?.id, visita?.inviteToken, visita?.dniVisitante, visita?.nombreVisitante, authToken]);
+  }, [visita?.id, visita?.inviteToken, visita?.passCode, authToken]);
 
   const windowInfo = useMemo(
-    () => getVisitaWindow(visita?.fechaHoraEsperada),
-    [visita?.fechaHoraEsperada]
+    () => ({ label: formatValidezInvitacion(visita) }),
+    [visita]
   );
 
   const inviteUrl = buildInviteUrl(inviteToken);
   const shareMessage = buildShareMessage(visita, inviteUrl, windowInfo.label);
+  const dniMasked = maskDni(visita?.dniVisitanteNormalized || visita?.dniVisitante);
 
   const openWhatsApp = () => {
     if (!inviteUrl) return;
@@ -122,8 +127,7 @@ function VisitaInviteQrModal({ visita, authToken, onClose, onReady }) {
             <h3 className="empleado-modal-title">Invitación lista</h3>
             <p className="visita-qr-modal__sub">
               {visita.nombreVisitante}
-              {' · DNI '}
-              {visita.dniVisitanteNormalized || visita.dniVisitante}
+              {dniMasked ? ` · DNI ${dniMasked}` : ''}
             </p>
           </div>
           <button type="button" className="empleado-modal-close" onClick={onClose} aria-label="Cerrar">

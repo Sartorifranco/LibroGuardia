@@ -4,6 +4,7 @@ import AccessScanModal from './AccessScanModal';
 import { apiFetch } from '../services/api';
 import { hasPermission } from '../utils/permissions';
 import { parseScanData } from '../utils/dniParser';
+import { hidePassCodeAsDni, normalizeScanForSend } from '../utils/visitaInvite';
 import { unlockKioskAudio } from '../utils/kioskSounds';
 
 const AccessScanContext = createContext(null);
@@ -68,7 +69,7 @@ export function AccessScanProvider({
   useEffect(() => () => clearAutoClose(), []);
 
   const showVerdict = useCallback(async (status, data) => {
-    setModalResult(data);
+    setModalResult(hidePassCodeAsDni(data));
     setModalStatus(status);
     verdictShownAtRef.current = Date.now();
     await wait(MIN_VERDICT_VISIBLE_MS);
@@ -77,7 +78,7 @@ export function AccessScanProvider({
   const processScan = useCallback(async (rawData) => {
     if (!enabled || processingRef.current || paused) return;
 
-    const trimmed = String(rawData || '').trim();
+    const trimmed = normalizeScanForSend(rawData);
     if (!trimmed) return;
 
     const preview = parseScanData(trimmed);

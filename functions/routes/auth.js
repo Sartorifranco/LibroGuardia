@@ -24,6 +24,7 @@ const { resolveApiBaseUrl } = require('../lib/lectores');
 const { seedInitialUsers, isBootstrapCompleted, INITIAL_USERS } = require('../seedUsers');
 const { changeOwnPassword } = require('../lib/changePassword');
 const { selfRegisterEmployee } = require('../lib/selfRegister');
+const { verifyEmailToken, resendVerification } = require('../lib/emailVerification');
 const {
   getPasswordVersion,
   cacheUserAuthState
@@ -113,10 +114,13 @@ router.post('/api/auth/self-register', async (req, res) => {
     const user = await selfRegisterEmployee({
       email: req.body?.email,
       password: req.body?.password,
-      nombre: req.body?.nombre || req.body?.name
+      nombre: req.body?.nombre || req.body?.name,
+      req
     });
     res.status(201).json({
-      message: 'Cuenta creada. Ya podés iniciar sesión.',
+      message: user.verificationSent
+        ? 'Cuenta creada. Te mandamos un mail para confirmar tu dirección: hasta confirmarla no vas a poder invitar visitas.'
+        : 'Cuenta creada. Ya podés iniciar sesión. Para invitar visitas, un administrador tiene que confirmar tu mail.',
       user
     });
   } catch (err) {
@@ -127,6 +131,55 @@ router.post('/api/auth/self-register', async (req, res) => {
       message: err.message || 'Error en el autoregistro',
       code: err.code
     });
+  }
+});
+
+/** Límite por IP en memoria (sin lecturas a Firestore): 10 intentos cada 15 min. */
+const VERIFY_LIMIT = 10;
+const VERIFY_WINDOW_MS = 15 * 60 * 1000;
+const verifyAttempts = new Map();
+const verifyRateLimited = (ip, now = Date.now()) => {
+  const key = String(ip || 'unknown');
+  const entry = verifyAttempts.get(key);
+  if (!entry || now >= entry.resetAt) {
+    if (verifyAttempts.size > 5000) verifyAttempts.clear();
+    verifyAttempts.set(key, { count: 1, resetAt: now + VERIFY_WINDOW_MS });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > VERIFY_LIMIT;
+};
+
+router.post('/api/public/empleado/verificar', async (req, res) => {
+  if (verifyRateLimited(getClientIp(req))) {
+    return res.status(429).json({ message: 'Demasiados intentos. Esperá unos minutos y probá de nuevo.' });
+  }
+  try {
+    await verifyEmailToken(req.body?.token);
+    return res.json({ message: 'Listo, tu mail quedó confirmado. Ya podés invitar visitas.' });
+  } catch (err) {
+    if ((Number(err.status) || 500) >= 500) {
+      return sendServerError(res, err, 'Error al confirmar el mail', 'public/empleado/verificar');
+    }
+    return res.status(err.status).json({ message: err.message, code: err.code });
+  }
+});
+
+router.post('/api/auth/resend-verification', auth, async (req, res) => {
+  try {
+    const result = await resendVerification({ req, userId: req.user.id });
+    return res.json({
+      message: result.sent
+        ? 'Te mandamos un mail nuevo. Revisá tu correo (y la carpeta de spam).'
+        : 'No se pudo mandar el mail porque el correo del sistema no está configurado. Pedile a un administrador que confirme tu cuenta.',
+      sent: result.sent
+    });
+  } catch (err) {
+    if ((Number(err.status) || 500) >= 500) {
+      return sendServerError(res, err, 'Error al reenviar el mail', 'auth/resend-verification');
+    }
+    if (err.retryAfterSeconds) res.set('Retry-After', String(err.retryAfterSeconds));
+    return res.status(err.status).json({ message: err.message, code: err.code });
   }
 });
 

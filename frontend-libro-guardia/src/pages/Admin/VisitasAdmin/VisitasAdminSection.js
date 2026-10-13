@@ -1,11 +1,22 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Check, Loader2, X } from 'lucide-react';
+import { Check, Loader2, Settings, X } from 'lucide-react';
 import { AdminBlock, AdminEmpty } from '../../../components/admin/AdminUi';
 import { hasPermission } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 import { apiFetch } from '../../../services/api';
 import { Modal, PageContainer } from '../../../components/admin-ui';
+import { duracionLabel, formatValidezCorta } from '../../../utils/visitaDuracion';
+
+const DOMAIN_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+
+/** "bacarsa.com.ar, @otra.com" → ['bacarsa.com.ar', 'otra.com'] (mismo criterio que el backend). */
+function parseDominios(text) {
+  return [...new Set(String(text || '')
+    .split(/[\s,;]+/)
+    .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+    .filter(Boolean))];
+}
 
 function VisitasAdminSection() {
   const { authToken, currentUser } = useAuth();
@@ -15,8 +26,62 @@ function VisitasAdminSection() {
   const [busyId, setBusyId] = useState(null);
   const [rejectId, setRejectId] = useState(null);
   const [note, setNote] = useState('');
+  const [dominios, setDominios] = useState(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [dominiosText, setDominiosText] = useState('');
+  const [configError, setConfigError] = useState('');
+  const [configSaving, setConfigSaving] = useState(false);
 
   const canApprove = hasPermission(currentUser, 'visitas.approve');
+
+  useEffect(() => {
+    if (!authToken || !canApprove) return undefined;
+    let cancelled = false;
+    apiFetch('/admin/visitas/settings', { token: authToken, allowForbidden: true })
+      .then((data) => {
+        if (!cancelled) setDominios(data.settings?.dominiosAnfitrion || []);
+      })
+      .catch(() => {
+        if (!cancelled) setDominios([]);
+      });
+    return () => { cancelled = true; };
+  }, [authToken, canApprove]);
+
+  const openConfig = () => {
+    setDominiosText((dominios || []).join(', '));
+    setConfigError('');
+    setConfigOpen(true);
+  };
+
+  const saveConfig = async () => {
+    const list = parseDominios(dominiosText);
+    const invalid = list.find((d) => !DOMAIN_RE.test(d));
+    if (invalid) {
+      setConfigError(`"${invalid}" no parece un dominio de mail. Escribilo así: bacarsa.com.ar`);
+      return;
+    }
+    if (!list.length) {
+      setConfigError('Indicá al menos un dominio de mail (por ejemplo bacarsa.com.ar).');
+      return;
+    }
+    setConfigSaving(true);
+    setConfigError('');
+    try {
+      const data = await apiFetch('/admin/visitas/settings', {
+        method: 'PUT',
+        token: authToken,
+        allowForbidden: true,
+        body: { dominiosAnfitrion: list }
+      });
+      setDominios(data.settings?.dominiosAnfitrion || list);
+      setConfigOpen(false);
+      showSuccess(data.message || 'Configuración de visitas guardada');
+    } catch (err) {
+      setConfigError(err.message || 'No se pudo guardar la configuración');
+    } finally {
+      setConfigSaving(false);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!authToken || !canApprove) return;
@@ -88,9 +153,26 @@ function VisitasAdminSection() {
         </p>
         <p>
           Quienes tienen <strong>cargar visitas autorizadas</strong> no pasan por esta cola:
-          al registrar ya quedan operativas.
+          al registrar ya quedan operativas. Los pases <strong>por mes</strong> siempre pasan por acá.
         </p>
       </aside>
+
+      <AdminBlock
+        title="Configuración"
+        description="Quién puede invitar visitas: solo el personal con mail de estos dominios."
+        action={(
+          <button type="button" className="btn btn-secondary btn-sm" onClick={openConfig} disabled={dominios === null}>
+            <Settings size={14} />
+            Cambiar dominios
+          </button>
+        )}
+      >
+        <p className="theme-section-desc">
+          {dominios === null
+            ? 'Cargando…'
+            : (dominios.length ? dominios.map((d) => `@${d}`).join(', ') : 'Sin dominios cargados')}
+        </p>
+      </AdminBlock>
 
       <AdminBlock title={`Pendientes de aprobación (${visitas.length})`}>
         {loading ? (
@@ -116,9 +198,11 @@ function VisitasAdminSection() {
                   <div className="theme-section-desc">
                     {v.destinoNombre || 'Sin destino'}
                     {v.empresaNombre ? ` · ${v.empresaNombre}` : ''}
-                    {v.fechaHoraEsperada
-                      ? ` · ${new Date(v.fechaHoraEsperada).toLocaleString('es-AR')}`
-                      : ''}
+                  </div>
+                  <div className="theme-section-desc">
+                    <strong>{duracionLabel(v.duracion)}</strong>
+                    {' · '}
+                    {formatValidezCorta(v)}
                   </div>
                   <div className="theme-section-desc">
                     Solicitó:
@@ -172,6 +256,35 @@ function VisitasAdminSection() {
           Por qué la rechazás
           <textarea className="input-field" aria-label="Por qué la rechazás" value={note} onChange={(event) => setNote(event.target.value)} rows={3} />
         </label>
+      </Modal>
+      <Modal
+        open={configOpen}
+        title="Configuración de visitas"
+        description="Solo el personal con mail de estos dominios puede invitar visitas. El admin siempre puede."
+        onClose={() => setConfigOpen(false)}
+        size="sm"
+        dirty={dominiosText !== (dominios || []).join(', ')}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" data-aui-cancel="true" disabled={configSaving}>Cancelar</button>
+            <button type="button" className="btn btn-primary" disabled={configSaving} onClick={saveConfig}>
+              {configSaving ? 'Guardando…' : 'Guardar'}
+            </button>
+          </>
+        )}
+      >
+        <label>
+          Dominios permitidos para invitar
+          <textarea
+            className="input-field"
+            aria-label="Dominios permitidos para invitar"
+            value={dominiosText}
+            onChange={(event) => setDominiosText(event.target.value)}
+            rows={3}
+          />
+        </label>
+        <p className="theme-section-desc">Separalos con comas. Ejemplo: bacarsa.com.ar, otraempresa.com</p>
+        {configError ? <p className="theme-section-desc" role="alert">{configError}</p> : null}
       </Modal>
     </div>
     </PageContainer>

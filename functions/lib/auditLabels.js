@@ -27,6 +27,7 @@ const ACTION_LABELS = {
   'authorization.delete': 'Desactivó una autorización',
   'vehicle.delete': 'Eliminó un vehículo autorizado',
   'visita.approve': 'Aprobó una solicitud de visita',
+  'visitas.settings.update': 'Cambió quién puede invitar visitas',
   'visita.reject': 'Rechazó una solicitud de visita',
   'visita.create': 'Registró una visita',
   'appearance.update': 'Actualizó la apariencia del sistema'

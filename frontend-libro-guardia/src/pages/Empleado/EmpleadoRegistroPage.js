@@ -16,24 +16,30 @@ function EmpleadoRegistroPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     clearMessages();
     setLoading(true);
     try {
-      await apiFetch('/auth/self-register', {
+      const emailNorm = String(email || '').trim().toLowerCase();
+      const result = await apiFetch('/auth/self-register', {
         method: 'POST',
         token: null,
         skipSessionExpiry: true,
         body: {
-          email: String(email || '').trim().toLowerCase(),
+          email: emailNorm,
           nombre: String(nombre || '').trim(),
           password
         }
       });
-      showSuccess('Cuenta creada. Ya podés iniciar sesión.');
-      setTimeout(() => navigate('/empleado/login', { replace: true }), 600);
+      if (result?.user?.verificationSent === false) {
+        showSuccess(result.message || 'Cuenta creada. Ya podés iniciar sesión.');
+        setTimeout(() => navigate('/empleado/login', { replace: true }), 600);
+        return;
+      }
+      setDone({ email: emailNorm });
     } catch (err) {
       showError(err.message || 'No se pudo completar el registro');
     } finally {
@@ -67,10 +73,25 @@ function EmpleadoRegistroPage() {
           </div>
         </div>
 
+        {done ? (
+          <div role="status">
+            <p className="auth-help-text">
+              Te mandamos un mail a <strong>{done.email}</strong> para confirmar tu cuenta.
+            </p>
+            <p className="auth-help-text">
+              Abrí el link del mail (revisá también la carpeta de spam). Hasta confirmarlo no vas a poder invitar visitas.
+            </p>
+            <Link to="/empleado/login" className="btn btn-primary w-full">Ir a iniciar sesión</Link>
+          </div>
+        ) : (
+        <>
         <p className="auth-help-text">
           Usá el email corporativo de tu empresa (el dominio tiene que estar habilitado por administración).
           Después iniciá sesión para cargar visitas / personas autorizadas a ingresar.
         </p>
+        <div className="empleado-callout" role="note">
+          <p>Solo se aceptan mails <strong>@bacarsa.com.ar</strong> para invitar visitas.</p>
+        </div>
 
         {error && (
           <div className="error-message auth-inline-message" role="alert">
@@ -138,6 +159,8 @@ function EmpleadoRegistroPage() {
           ¿Ya tenés cuenta?{' '}
           <Link to="/empleado/login" className="text-red-600 underline">Iniciar sesión</Link>
         </p>
+        </>
+        )}
       </div>
     </div>
   );

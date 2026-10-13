@@ -222,7 +222,7 @@ const exteriorArea = (snap, areaId) => {
 };
 
 /** Pase de visita (D9/D10). → {ok, pass, reason, effect} */
-const evaluatePasses = (passes, { snap, door, side, sideDef, at, clockTrusted, presence }) => {
+const evaluatePasses = (passes, { snap, door, side, sideDef, at, tz, clockTrusted, presence }) => {
   const failures = [];
   for (const p of passes) {
     const validFrom = toMs(p.validFrom);
@@ -236,9 +236,11 @@ const evaluatePasses = (passes, { snap, door, side, sideDef, at, clockTrusted, p
       const closes = exteriorArea(snap, sideDef?.zoneTo);
       return { ok: true, pass: p, reason: 'egreso_visita', effect: closes ? { id: p.id, status: 'egreso_registrado' } : null };
     }
-    if (p.status === 'egreso_registrado') { failures.push('pase_utilizado'); continue; }
+    const limited = Number.isFinite(p.maxUses);
+    // Sin maxUses (por horas, día o mes) se vuelve a entrar después de salir.
+    if (p.status === 'egreso_registrado' && limited) { failures.push('pase_utilizado'); continue; }
     const firstIngress = p.status !== 'ingreso_registrado';
-    if (firstIngress && Number.isFinite(p.maxUses) && (Number(p.uses) || 0) >= p.maxUses) {
+    if (firstIngress && limited && (Number(p.uses) || 0) >= p.maxUses) {
       failures.push('pase_utilizado');
       continue;
     }
@@ -246,6 +248,12 @@ const evaluatePasses = (passes, { snap, door, side, sideDef, at, clockTrusted, p
     if (validFrom == null || validTo == null || at > validTo) { failures.push('pase_vencido'); continue; }
     if (at < validFrom) { failures.push('visita_antes_de_ventana'); continue; }
     if (!onDoor) { failures.push('puerta_no_autorizada'); continue; }
+    if (p.scheduleId) {
+      const sch = snap.schedule(String(p.scheduleId));
+      if (!sch) { failures.push('fuera_de_horario'); continue; }
+      const ev = evaluateSchedule(sch, at, tz, { isHoliday: (ymd, setId) => snap.isHoliday(ymd, setId) });
+      if (!ev.ok) { failures.push(ev.reason === 'feriado' ? 'feriado' : 'fuera_de_horario'); continue; }
+    }
     return {
       ok: true,
       pass: p,
@@ -413,7 +421,7 @@ const decide = (input = {}) => {
     }
     if (!matched && passCandidates.length) {
       const p = evaluatePasses(passCandidates, {
-        snap, door, side, sideDef, at, clockTrusted, presence: state.presence
+        snap, door, side, sideDef, at, tz, clockTrusted, presence: state.presence
       });
       if (p.ok) {
         matched = { source: 'pass', id: p.pass.id, scheduleId: null };

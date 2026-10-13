@@ -91,6 +91,7 @@ const userToJSON = (doc, permissions = null) => {
     empresaId: data.empresaId || null,
     nombre: data.nombre || null,
     email: data.email || null,
+    emailVerified: data.emailVerified !== false,
     puesto: data.puesto || null,
     lastLoginAt: data.lastLoginAt || null
   };

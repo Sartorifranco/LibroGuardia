@@ -18,7 +18,7 @@
  *  - citación → grant del día (ventana ±15, la política no estricta la abre a
  *    todo el día con aviso); rango (visita/temporal) → un grant por día del rango
  *    dentro de la ventana D-1..D+7 (00:00 a 23:59:59.999 local).
- *  - visitas → pases (validFrom = esperada − 2 h, validTo = fin del día local).
+ *  - visitas → pases con la ventana de su duración (visitPassWindow).
  */
 
 const { hashCredential, credentialKeyId, DEFAULT_POLICY } = require('../accessEngine/snapshotSchema');
@@ -38,6 +38,8 @@ const CITACION_TOLERANCE_MIN = 15;
 const SHIFT_EARLY_MIN = 30;               // lib/accessNominaMessages.js SHIFT_EARLY_MINUTES
 const SHIFT_LATE_MIN = 15;                // lib/accessNominaMessages.js SHIFT_LATE_MINUTES
 const VISITA_EARLY_MS = 2 * 60 * 60 * 1000; // lib/visitasAccess.js EARLY_MS
+const VISITA_HORAS_EARLY_MS = 15 * 60 * 1000;
+const VISITA_DURACIONES = ['un_ingreso', 'horas', 'dia', 'mes'];
 const NO_SHIFT_SCHEDULE = Object.freeze({ id: 'sch_sin_turno', intervals: [] });
 const RANGE_TYPES = new Set(['visita', 'visit', 'temporal']);
 const PASS_STATES = new Set(['pendiente', 'autorizada', 'ingreso_registrado', 'egreso_registrado']);
@@ -573,34 +575,77 @@ const buildDoorsChunk = ({
 
 // ───────────────────────────── Visitas ────────────────────────────────
 
+/** Id del pase (= contenido del QR): passCode opaco; visitas viejas usan qrId o el id del doc. */
+const passIdOf = (visita) => String(visita.passCode || visita.qrId || visita.id);
+
 /**
- * Visita → { pass|null, revoked|null } (lib/visitasAccess.js: ventana esperada − 2 h
- * hasta fin del día local). Pendientes de aprobación no generan pase.
+ * Ventana de validez de una visita según `duracion` (docs/VISITAS-DISENO.md §3.0).
+ * Sin `duracion` = 'un_ingreso' (visitas anteriores).
+ *  - un_ingreso: esperada − 2 h → validoHasta (mismo día) o fin del día; maxUses 1.
+ *  - horas: esperada − 15 min → validoHasta (mismo día).
+ *  - dia: 00:00 → 23:59:59.999 del día.
+ *  - mes: 00:00 del día de inicio → 23:59:59.999 del día de validoHasta; scheduleId opcional.
+ * @returns {{duracion:string, validFrom:number, validTo:number, maxUses:number|null, scheduleId:string|null}|null}
+ */
+const visitPassWindow = (visita, tz = DEFAULT_TZ) => {
+  const expected = toMs(visita && visita.fechaHoraEsperada);
+  if (expected == null) return null;
+  const duracion = VISITA_DURACIONES.includes(visita.duracion) ? visita.duracion : 'un_ingreso';
+  const day = ymdOf(expected, tz);
+  const startOfDay = dayStartMs(day, tz);
+  const endOfDay = dayEndMs(day, tz);
+  const until = toMs(visita.validoHasta);
+  const untilSameDay = until != null && ymdOf(until, tz) === day && until > expected ? until : null;
+  const out = { duracion, maxUses: null, scheduleId: null };
+  if (duracion === 'horas') {
+    return { ...out, validFrom: expected - VISITA_HORAS_EARLY_MS, validTo: untilSameDay ?? endOfDay };
+  }
+  if (duracion === 'dia') return { ...out, validFrom: startOfDay, validTo: endOfDay };
+  if (duracion === 'mes') {
+    const validTo = until != null && until > expected ? dayEndMs(ymdOf(until, tz), tz) : endOfDay;
+    const scheduleId = visita.scheduleId ? String(visita.scheduleId) : null;
+    return { ...out, validFrom: startOfDay, validTo, scheduleId };
+  }
+  return { ...out, validFrom: expected - VISITA_EARLY_MS, validTo: untilSameDay ?? endOfDay, maxUses: 1 };
+};
+
+/**
+ * Visita → { pass|null, revoked|null, revokedPrevious[] } con la ventana de visitPassWindow.
+ * Pendientes de aprobación no generan pase.
+ * `revokedPrevious`: códigos reemplazados al editar la visita (ya no sirven).
+ * maxUses solo en 'un_ingreso'; el egreso no consume usos.
  */
 const buildPass = (visita, { key = null, tz = DEFAULT_TZ } = {}) => {
-  if (!visita || !visita.id) return { pass: null, revoked: null };
+  if (!visita || !visita.id) return { pass: null, revoked: null, revokedPrevious: [] };
   const estado = visita.estado || 'pendiente';
-  const id = String(visita.qrId || visita.id);
-  if (PASS_REVOKED_STATES.has(estado)) return { pass: null, revoked: `pass:${id}` };
-  if (!PASS_STATES.has(estado)) return { pass: null, revoked: null };
-  const expected = toMs(visita.fechaHoraEsperada);
-  if (expected == null) return { pass: null, revoked: null };
+  const id = passIdOf(visita);
+  const revokedPrevious = (Array.isArray(visita.previousPassCodes) ? visita.previousPassCodes : [])
+    .map(String)
+    .filter((code) => code && code !== id)
+    .map((code) => `pass:${code}`);
+  if (PASS_REVOKED_STATES.has(estado)) return { pass: null, revoked: `pass:${id}`, revokedPrevious };
+  if (!PASS_STATES.has(estado)) return { pass: null, revoked: null, revokedPrevious };
+  const win = visitPassWindow(visita, tz);
+  if (!win) return { pass: null, revoked: null, revokedPrevious };
   const dni = normalizeDni(visita.dniVisitanteNormalized || visita.dniVisitante || '');
   const pass = {
     id,
     visitaId: String(visita.id),
     name: String(visita.nombreVisitante || '').trim() || undefined,
     doors: normalizeAllowedDoorIds(visita.allowedDoorIds),
-    validFrom: expected - VISITA_EARLY_MS,
-    validTo: dayEndMs(ymdOf(expected, tz), tz),
+    validFrom: win.validFrom,
+    validTo: win.validTo,
     status: estado
   };
+  if (visita.duracion) pass.duracion = win.duracion;
+  if (win.maxUses != null) pass.maxUses = win.maxUses;
+  if (win.scheduleId) pass.scheduleId = win.scheduleId;
   if (dni) {
     if (key) pass.dniHash = hashCredential('dni', dni, key);
     else pass.dni = dni;
   }
   if (visita.personId) pass.cardholderId = String(visita.personId);
-  return { pass, revoked: null };
+  return { pass, revoked: null, revokedPrevious };
 };
 
 // ───────────────────────────── Operadores ─────────────────────────────
@@ -661,6 +706,8 @@ module.exports = {
   buildInterlockGroups,
   buildDoor,
   buildDoorsChunk,
+  VISITA_DURACIONES,
+  visitPassWindow,
   buildPass,
   buildOperators,
   buildSecretsChunk,
