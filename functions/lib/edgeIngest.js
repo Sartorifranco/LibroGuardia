@@ -22,7 +22,7 @@ const crypto = require('crypto');
 const { db, FieldValue, Timestamp } = require('../firestore');
 const { getArgentinaDateParts } = require('./normalize');
 const { DEVICES_COLLECTION, httpError, toMillis, appendDeviceLog } = require('./devices');
-const { problemSignature, problemLabels } = require('./deviceHealth');
+const { problemSignature, problemLabels, CLOCK_SKEW_MS } = require('./deviceHealth');
 
 const MAX_EVENTS_PER_BATCH = 200;
 const MAX_EVENT_PAYLOAD_BYTES = 2048;
@@ -324,8 +324,11 @@ const stableJson = (value) => {
 };
 
 const MAX_REPORTED_CONTROLLERS = 64;
-/** Aunque no cambie nada, el estado de cada controlador se refresca cada 30 min (lastSeenAt). */
-const CONTROLLER_STATUS_REFRESH_MS = 30 * 60 * 1000;
+/**
+ * Aunque no cambie nada, el estado de cada controlador se refresca cada 10 min (lastSeenAt).
+ * Tiene que ser menor que OFFLINE_AFTER_MS (15 min) o el controlador se ve "Sin conexión".
+ */
+const CONTROLLER_STATUS_REFRESH_MS = 10 * 60 * 1000;
 
 /** `controllers` del heartbeat del hub → { id: {configVersionApplied, online, lastSeenAt, lastError} }. */
 const normalizeReportedControllers = (raw) => {
@@ -353,7 +356,7 @@ const controllerStatusChanged = (prev, cur, now) => !prev
 
 /**
  * Estado de controladores informado por el hub → `devices/{ctl}` SOLO de los que cambiaron
- * (configVersionApplied / online / lastError, o refresco cada 30 min). Lo último informado
+ * (configVersionApplied / online / lastError, o refresco cada 10 min). Lo último informado
  * queda en el doc del hub (`controllersReported`, ya leído) para comparar sin leer cada
  * controlador. Por cada cambio: 1 lectura (validar sitio/tipo/estado) + 1 escritura.
  */
@@ -377,11 +380,12 @@ const applyReportedControllers = async ({ hubData, hubId, siteId, reported, now 
       ignored += 1;
       continue;
     }
+    // En línea según el hub: se usa la hora del servidor (lo informado puede tener minutos).
     // eslint-disable-next-line no-await-in-loop
     await ref.set({
       configVersionApplied: cur.configVersionApplied,
       online: cur.online,
-      lastSeenAt: cur.lastSeenAt,
+      lastSeenAt: cur.online ? now : cur.lastSeenAt,
       lastError: cur.lastError,
       reportedBy: hubId,
       statusUpdatedAt: now
@@ -422,6 +426,13 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
 
   const configVersionApplied = body.configVersionApplied == null ? null : Number(body.configVersionApplied);
   const checks = body.checks && typeof body.checks === 'object' ? JSON.parse(JSON.stringify(body.checks)) : null;
+  // clockMs (hora del equipo) se convierte en desfase contra la hora del servidor al recibir.
+  // Con reloj bien queda en 0, así el doc no cambia en cada heartbeat.
+  if (checks && typeof checks.clockMs === 'number' && Number.isFinite(checks.clockMs)) {
+    const skew = checks.clockMs - now;
+    delete checks.clockMs;
+    checks.clockOffsetMs = Math.abs(skew) > CLOCK_SKEW_MS ? Math.round(skew / 1000) * 1000 : 0;
+  }
   const prevProblems = problemSignature(d.checks, now);
   const nextProblems = problemSignature(checks, now);
   if (checks && Buffer.byteLength(JSON.stringify(checks)) > 8192) throw httpError(400, 'checks demasiado grande');

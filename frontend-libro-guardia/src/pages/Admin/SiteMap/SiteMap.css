@@ -45,206 +45,172 @@
   color: var(--text-muted);
 }
 
-.site-map__scroll {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 10px);
-  background: var(--panel-muted, transparent);
-  padding: 8px;
-}
-
-.site-map__svg {
-  display: block;
-  font-family: inherit;
-}
-
-.site-map__col-title {
-  fill: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.site-map__line {
-  fill: none;
-  stroke: var(--text-muted);
-  stroke-width: 2;
-}
-
-.site-map__line--gate {
-  stroke: var(--info-text, var(--text-muted));
-  stroke-width: 4;
-  stroke-dasharray: 10 5;
-}
-
-.site-map__line.is-off {
-  opacity: 0.45;
-  stroke-dasharray: 3 5;
-}
-
-.site-map__place,
-.site-map__door {
-  cursor: pointer;
-  outline: none;
-}
-
-.site-map__place rect {
-  fill: var(--panel, #fff);
-  stroke: var(--border);
-  stroke-width: 1.5;
-}
-
-.site-map__place.is-exterior rect {
-  stroke-dasharray: 6 4;
-  stroke: var(--text-muted);
-}
-
-.site-map__place.is-airlock rect {
-  fill: var(--accent-soft, var(--panel));
-  stroke: var(--accent, var(--border));
-  stroke-width: 2;
-}
-
-.site-map__place.is-alone rect {
-  stroke: var(--warn-text, var(--border));
-  stroke-width: 2;
-}
-
-.site-map__place:hover rect,
-.site-map__place:focus-visible rect,
-.site-map__door:hover rect,
-.site-map__door:focus-visible rect {
-  stroke: var(--accent, var(--text));
-  stroke-width: 2.5;
-}
-
-.site-map__place-name {
-  fill: var(--text);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.site-map__place-tag {
-  fill: var(--accent, var(--text-muted));
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.site-map__door rect {
-  fill: var(--panel, #fff);
-  stroke: var(--border);
-}
-
-.site-map__door text {
-  fill: var(--text);
-  font-size: 11px;
-}
-
-.site-map__door.is-off text {
-  fill: var(--text-muted);
-}
-
-.site-map__legend {
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin: 8px 0 0;
-  padding: 0;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.site-map__legend li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.site-map__swatch {
-  display: inline-block;
-  width: 18px;
-  height: 12px;
-  border-radius: 3px;
-  border: 1.5px solid var(--border);
-  background: var(--panel, #fff);
-}
-
-.site-map__swatch.is-airlock {
-  border-color: var(--accent, var(--border));
-  background: var(--accent-soft, var(--panel));
-}
-
-.site-map__stroke {
-  display: inline-block;
-  width: 26px;
-  border-top: 2px solid var(--text-muted);
-}
-
-.site-map__stroke.is-gate {
-  border-top: 4px dashed var(--info-text, var(--text-muted));
-}
-
-.site-map__stroke.is-off {
-  border-top: 2px dotted var(--text-muted);
-  opacity: 0.6;
-}
-
-.site-tree {
+.site-route-view {
   color: var(--text);
 }
 
-.site-tree__list {
+.site-route__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.site-route,
+.site-route__children,
+.site-route__doors {
   list-style: none;
-  margin: 4px 0 0 10px;
+  margin: 0;
+  padding: 0;
+}
+
+.site-route__branch {
+  margin: 0 0 10px;
+}
+
+.site-route__children {
+  margin: 10px 0 0 22px;
   padding-left: 12px;
-  border-left: 2px solid var(--border);
+  border-left: 1px solid var(--border);
 }
 
-.site-tree__list li {
-  margin: 6px 0;
+.site-route__card {
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel, transparent);
 }
 
-.site-tree__node > summary {
-  cursor: pointer;
+.site-route__card.is-exterior {
+  border-style: dashed;
 }
 
-.site-tree__place,
-.site-tree__door {
+.site-route__card.is-airlock {
+  border: 2px solid var(--accent, var(--border));
+  background: var(--accent-soft, var(--panel));
+}
+
+.site-route__card.is-alone {
+  border-color: var(--warn-text, var(--border));
+}
+
+.site-route__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.site-route__link {
   background: none;
   border: 0;
-  padding: 4px 0;
+  padding: 2px 0;
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.site-tree__place {
-  font-weight: 600;
+.site-route__link:hover,
+.site-route__link:focus-visible {
+  color: var(--accent, var(--text));
+  text-decoration: underline;
 }
 
-.site-tree__door {
-  color: var(--text-muted);
+.site-route__place {
+  font-size: 1.05rem;
+  font-weight: 700;
 }
 
-.site-tree__tag {
-  margin-left: 8px;
+.site-route__tag {
   padding: 1px 8px;
   border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--accent, var(--text));
-  background: var(--accent-soft, transparent);
+  border: 1px solid var(--accent, var(--border));
 }
 
-.site-tree__repeat {
-  margin: 0;
+.site-route__toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px 8px;
   color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.site-route__doors {
+  margin-top: 6px;
+}
+
+.site-route__door {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+
+.site-route__icon {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--text-muted);
+}
+
+.site-route__door-main {
+  min-width: 0;
+}
+
+.site-route__door-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.site-route__door-name {
+  font-weight: 700;
+}
+
+.site-route__arrow {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.site-route__door.is-off,
+.site-route__door.is-off .site-route__link {
+  color: var(--text-muted);
+}
+
+.site-route__off {
   font-size: 13px;
 }
 
-.site-tree__alone {
-  margin-top: 16px;
+.site-route__repeat {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.site-route__alone {
+  margin-top: 20px;
+}
+
+@media (max-width: 699px) {
+  .site-route__children {
+    margin-left: 12px;
+    padding-left: 8px;
+  }
+
+  .site-route__card {
+    padding: 8px 10px;
+  }
 }

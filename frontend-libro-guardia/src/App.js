@@ -67,6 +67,7 @@ import { AccessScanProvider } from './components/GlobalAccessScanner';
 import LiveAlertsToaster from './components/LiveAlertsToaster';
 import RuntimeModeBadge from './components/RuntimeModeBadge';
 import LanUnavailable from './components/LanUnavailable';
+import LanAdminButton from './components/LanAdminButton';
 import CriticalAlarmBanner from './components/CriticalAlarmBanner';
 import GuardAlarmsPanel from './components/GuardAlarmsPanel';
 import {
@@ -188,6 +189,9 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
             <Settings size={16} /> Panel admin
           </button>
         )
+      )}
+      {runtimeMode === 'lan' && canAccessAdmin(currentUser) && (
+        <LanAdminButton currentUser={currentUser} onDone={closeMenu} />
       )}
       {canAccessGuardia(currentUser) && canAccessAdmin(currentUser) && (
         <Link to="/" className="btn-onboarding-link" title="Cambiar de área" onClick={closeMenu}>
