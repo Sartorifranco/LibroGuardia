@@ -27,7 +27,7 @@ Recorrido de **guardia** y **administración** en mss-guard.web.app, tema oscuro
 | R.12 | Personal | Al entrar, el botón dice "Guardando…" varios segundos (en realidad está cargando la lista de personal) | Mostrar "Cargando…" o dejar "Registrar personal" deshabilitado | 🆓 |
 | R.13 | Personal / Vehículos / Flota (celular) | Reloj + barra empujan el formulario a 290 px; hay que bajar para empezar a cargar | Achicar la franja del reloj en celular | 🆓 |
 | R.14 | Autorizados | "Pre-registrar visita" es un formulario fijo en la pantalla (la regla es ventana emergente) y la tabla no entra en celular. Texto "Solo consulta. Para ingreso excepcional usá la pestaña Personal" confunde. Ver `g-autorizados.jpg` | Botón "Pre-registrar visita" que abre Modal; tabla → tarjetas en celular; texto: "Para dejar pasar a alguien que no está en la lista, usá Personal" | 🆓 |
-| R.15 | Autorizaciones | Botones "Aprobadas" e "Historial" blancos sobre blanco (invisibles). Ver `g-autorizaciones.jpg` | Mismo estilo de pestañas que el resto | 🆓 |
+| R.15 | Autorizaciones | Botones "Aprobadas" e "Historial" blancos sobre blanco (invisibles). Ver `g-autorizaciones.jpg` | Mismo estilo de pestañas que el resto | ✅ 2026-10-14 (pestañas y tarjetas con colores del tema) |
 | R.16 | Vehículos autorizados | Campos sin etiqueta (solo texto gris adentro, que desaparece al escribir) | Etiqueta arriba de cada campo, como en Vehículos | 🆓 |
 | R.17 | Flota | Sin texto de ayuda (las demás pantallas lo tienen); "Hora programada" pide fecha y hora completas. Ver `g-flota.jpg` | Una línea de ayuda; solo hora (fecha = hoy) | 🆓 |
 | R.18 | Historial | 22 botones de puertas + 5 de origen + 4 de fecha: pared de botones. Ver `g-historial.jpg` | Puerta y origen como listas desplegables | 🆓 |
