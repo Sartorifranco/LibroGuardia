@@ -15,8 +15,9 @@ const { openGuardDoor } = require('./openDoor');
 const { listEntries } = require('./entries');
 const { listLiveAlerts, listAlarms, ackAlarm } = require('./alarms');
 const { attachSse } = require('./sse');
+const { listApprovals, resolveGuardApproval } = require('./visitors');
 
-const CAPABILITIES = ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan'];
+const CAPABILITIES = ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan', 'approvals'];
 
 const UNSUPPORTED = { code: 'EDGE_UNSUPPORTED', message: 'Disponible solo con internet' };
 const CHANGE_PASSWORD = { code: 'EDGE_UNSUPPORTED', message: 'Cambiá tu contraseña cuando haya internet' };
@@ -181,6 +182,26 @@ class LanApi {
       const auth = requireOperator(this.hub, bearer(req));
       if (auth.error) return fail(auth.error.status, auth.error.body);
       const out = listLiveAlerts(this.hub, auth.op);
+      return fail(out.status, out.body);
+    }
+
+    if (pathname === '/api/guard/approvals') {
+      if (method !== 'GET') return fail(405, { message: 'Método no permitido' });
+      const auth = requireOperator(this.hub, bearer(req));
+      if (auth.error) return fail(auth.error.status, auth.error.body);
+      const out = listApprovals(this.hub, auth.op);
+      return fail(out.status, out.body);
+    }
+
+    const approval = pathname.match(/^\/api\/guard\/approvals\/([^/]+)$/);
+    if (approval) {
+      if (method !== 'POST') return fail(405, { message: 'Método no permitido' });
+      const auth = requireOperator(this.hub, bearer(req));
+      if (auth.error) return fail(auth.error.status, auth.error.body);
+      const body = await readJson(req);
+      let approvalId = approval[1];
+      try { approvalId = decodeURIComponent(approvalId); } catch (_) { /* id crudo */ }
+      const out = await resolveGuardApproval(this.hub, auth.op, approvalId, body);
       return fail(out.status, out.body);
     }
 

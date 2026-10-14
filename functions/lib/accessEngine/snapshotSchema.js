@@ -46,6 +46,7 @@
  * @property {number} [unlockSec=3]
  * @property {number} [heldOpenSec=30]
  * @property {boolean} [requireGuardApproval=false]   D16 → decision 'needs_approval' en modo scan
+ * @property {boolean} [notifyGuardOnVisitor=false]   aviso al guardia (hub) cuando pasa una visita o un externo
  * @property {boolean} [sensorsRequired=true]         interlock 'sensor': exige DPS cerrado + bond trabado
  * @property {boolean} [enabled=true]
  * @property {boolean} [lockdown=false]

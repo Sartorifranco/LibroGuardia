@@ -66,6 +66,7 @@ import EmpleadoVisitasPage from './pages/Empleado/EmpleadoVisitasPage';
 import VisitaInvitacionPage from './pages/Empleado/VisitaInvitacionPage';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
 import LiveAlertsToaster from './components/LiveAlertsToaster';
+import VisitorAlertModal from './components/VisitorAlertModal';
 import RuntimeModeBadge from './components/RuntimeModeBadge';
 import LanUnavailable from './components/LanUnavailable';
 import LanAdminButton from './components/LanAdminButton';
@@ -500,6 +501,9 @@ function GuardiaLayout() {
         onAuthorizeManual={handleAuthorizeFromScan}
       >
         <LiveAlertsToaster />
+        {hasPermission(currentUser, 'access.manual_open') && (
+          <VisitorAlertModal authToken={authToken} onMismatch={() => navigateToTab('novedad')} />
+        )}
         <div className="app-shell app-shell--with-nav">
           <ToastStack
             error={error}

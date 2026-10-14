@@ -301,6 +301,9 @@ const normalizeDoor = (door = {}, index = 0, { strict = false } = {}) => {
   else if (door.requireGuardApproval === false) normalized.requireGuardApproval = false;
   else delete normalized.requireGuardApproval;
 
+  if (door.notifyGuardOnVisitor === true) normalized.notifyGuardOnVisitor = true;
+  else delete normalized.notifyGuardOnVisitor;
+
   const heldRaw = door.heldOpenSec;
   if (normalized.sensorsRequired === true && heldRaw != null && heldRaw !== '') {
     const held = Number(heldRaw);

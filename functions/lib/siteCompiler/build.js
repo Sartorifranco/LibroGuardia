@@ -483,6 +483,7 @@ const buildDoor = (door, groupByDoor) => {
   if (door.controllerId) out.controllerId = String(door.controllerId);
   if (Number(door.heldOpenSec) > 0) out.heldOpenSec = Number(door.heldOpenSec);
   if (door.requireGuardApproval === true) out.requireGuardApproval = true;
+  if (door.notifyGuardOnVisitor === true) out.notifyGuardOnVisitor = true;
   if (door.sensorsRequired === false) out.sensorsRequired = false;
   if (door.lockdown === true) out.lockdown = true;
   if (door.inputs && typeof door.inputs === 'object') out.inputs = door.inputs;
@@ -638,6 +639,13 @@ const buildPass = (visita, { key = null, tz = DEFAULT_TZ } = {}) => {
     status: estado
   };
   if (visita.duracion) pass.duracion = win.duracion;
+  // 1b: el cartel del guardia muestra a quién visita.
+  const hostName = String(visita.createdByNombre || '').trim();
+  const hostCompany = String(visita.empresaNombre || '').trim();
+  const destination = String(visita.destinoNombre || '').trim();
+  if (hostName) pass.hostName = hostName.slice(0, 120);
+  if (hostCompany) pass.hostCompany = hostCompany.slice(0, 120);
+  if (destination) pass.destination = destination.slice(0, 120);
   if (win.maxUses != null) pass.maxUses = win.maxUses;
   if (win.scheduleId) pass.scheduleId = win.scheduleId;
   if (dni) {

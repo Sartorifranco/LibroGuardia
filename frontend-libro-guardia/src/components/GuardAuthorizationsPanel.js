@@ -18,10 +18,19 @@ const VISITA_ESTADO_LABELS = {
   egreso_registrado: 'Egreso registrado'
 };
 
+/** "Ingresó 15:40" cuando la nube ya recibió el paso por la puerta (1b). */
+const visitaEstadoLabel = (item) => {
+  if (item.estado === 'ingreso_registrado' && item.ingresoAt) {
+    const hora = new Date(item.ingresoAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `Ingresó ${hora}`;
+  }
+  return VISITA_ESTADO_LABELS[item.estado] || item.estado || '';
+};
+
 const formatAuthSchedule = (item) => {
   const type = item.type === 'visit' ? 'visita' : item.type;
   if (type === 'visita_empleado') {
-    const estado = VISITA_ESTADO_LABELS[item.estado] || item.estado || '';
+    const estado = visitaEstadoLabel(item);
     if (item.fechaHoraEsperada) {
       const when = new Date(item.fechaHoraEsperada).toLocaleString('es-AR', {
         dateStyle: 'short',

@@ -13,7 +13,7 @@ Lista única de lo que falta. Para retomar algo: abrir una sesión nueva y decir
 | 1.2 | ✅ Supervisor ya aprueba visitas. Falta sumarle "Ver las alarmas del sitio" si corresponde | Jefe de seguridad sin alarmas | 👤 (Roles y permisos) |
 | 1.3 | ✅ Probado 2026-10-14 en el banco: invitación directa abre; pedido → aprobación de Surly → abre; cancelar → rechaza en segundos. Falta probar el pase "un ingreso" (segunda pasada rechazada) | Cierra el paso 3 | 👤 |
 | 1.3c | Al cancelar una visita, la puerta dice "credencial desconocida": mostrar "visita cancelada" para que el guardia entienda | Claridad en garita | 🔒 (borde) |
-| 1.3b | **No existe pantalla para que el guardia apruebe ingresos** de puertas con "¿El guardia tiene que aprobar cada ingreso?" (`requireGuardApproval`). Con esa opción la puerta nunca abre por credencial (`needs_approval`). Construirla (desde el panel de Guardia, vía hub) o no usar la opción | Bloquea portones de clientes | 🧠 diseño + 🔒 |
+| 1.3b | 🟡 Hecho en la red del predio (ver 1b), falta la nube. **No existía pantalla para que el guardia apruebe ingresos** de puertas con "¿El guardia tiene que aprobar cada ingreso?" (`requireGuardApproval`). Con esa opción la puerta nunca abre por credencial (`needs_approval`). Construirla (desde el panel de Guardia, vía hub) o no usar la opción | Bloquea portones de clientes | 🧠 diseño + 🔒 |
 | 1.4 | Si todo da bien: merge `integracion/revision-2026-10` → `main` y push | `main` está atrás | 🧠 con tu OK |
 
 ## 1b. Aviso al guardia cuando pasa una visita (pedido 2026-10-14)
@@ -26,7 +26,17 @@ Propuesta (una sola función, que también resuelve el 1.3b):
 3. **En vivo desde el hub** (red del predio, funciona sin internet); en la nube llega con unos segundos de atraso.
 4. **La visita pasa a "Ingresó 15:40"** cuando la nube recibe el evento de la puerta (arregla "Esperando ingreso" en Autorizados y en Mis visitas).
 
-Quién: 🧠 diseño; 🔒 hub/eventos; 🆓 ventana emergente y textos.
+**✅ Hecho 2026-10-14 (falta probar en el banco):**
+- Opción por puerta `notifyGuardOnVisitor` en Puertas ("¿Avisar al guardia cuando pasa una visita o un externo?"), compilada al borde. Externo = pase de visita o autorización temporal/citación/visita; empleados no avisan.
+- Hub: evento SSE `visitor` (lanApi/visitors.js) y `GET/POST /api/guard/approvals` → controlador `/edge/approvals/:id`. Resuelve el 1.3b en la red del predio.
+- Pantalla del guardia: `VisitorAlertModal` con sonido, "Es la persona" / "No coincide" (lleva a Novedad) y "Abrir" / "No abrir". Solo para quien puede abrir puertas (`access.manual_open`).
+- Nube: `edgeIngest` marca la visita `ingreso_registrado` con `ingresoAt` (y `egreso_registrado`/`egresoAt`); Autorizados y Mis visitas muestran "Ingresó 15:40". El hub agrega `visitaId` al subir. Llega cuando el hub sube eventos (cada ~2 min).
+
+**Falta:**
+- Actualizar hub y controlador del banco, desplegar functions + web, y probar: visita por Ingreso Principal con aviso, y una puerta con aprobación.
+- Foto en el cartel (no hay foto en el pase).
+- Cartel sin hub (modo nube): sumar tipo `visitor_pass` en `liveAlerts.js` y un comando `approve` en la nube (hoy solo `open`). Hasta entonces, aprobar ingresos solo funciona desde la red del predio.
+- "No coincide" abre Novedad vacía: precargar los datos de la visita.
 
 ## 2. Arreglos chicos
 

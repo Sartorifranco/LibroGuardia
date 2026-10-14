@@ -194,6 +194,35 @@ describe('Edge: eventos, heartbeat, comandos, head y live', () => {
     assert.ok(entry.timestamp);
   });
 
+  it('1b: el paso de una visita la marca "ingreso_registrado" con hora; cancelada no se toca', async () => {
+    mem.setDoc('visitas', 'vis-1', { estado: 'autorizada', nombreVisitante: 'Juan Visita' });
+    mem.setDoc('visitas', 'vis-2', { estado: 'autorizada', passCode: 'QR-2' });
+    mem.setDoc('visitas', 'vis-3', { estado: 'cancelada', passCode: 'QR-3' });
+    const visit = (n, payload, extra = {}) => ev(n, { cardholderId: null, credType: 'qr', payload: { name: 'Visita', ...payload }, ...extra });
+    const events = [
+      visit(60, { passId: 'QR-1', visitaId: 'vis-1', doorName: 'Ingreso Principal' }),
+      visit(61, { passId: 'QR-2' }),
+      visit(62, { passId: 'QR-3' }),
+      visit(63, { passId: 'QR-1', visitaId: 'vis-1' }, { decision: 'deny', reason: 'fuera_de_horario' })
+    ];
+    const res = await postEvents({ hubId: 'hub-1', events, hubSeqFrom: 60, hubSeqTo: 63 });
+    assert.equal(res.status, 200, res.text);
+    const v1 = mem.getDoc('visitas', 'vis-1');
+    assert.equal(v1.estado, 'ingreso_registrado');
+    assert.equal(v1.ingresoDoorName, 'Ingreso Principal');
+    assert.ok(v1.ingresoAt, 'guarda la hora de ingreso');
+    assert.equal(mem.getDoc('visitas', 'vis-2').estado, 'ingreso_registrado', 'se encuentra por passCode');
+    assert.equal(mem.getDoc('visitas', 'vis-3').estado, 'cancelada');
+
+    const firstAt = v1.ingresoAt;
+    const out = await postEvents({ hubId: 'hub-1', events: [visit(64, { passId: 'QR-1', visitaId: 'vis-1' }, { side: 'out' })], hubSeqFrom: 64, hubSeqTo: 64 });
+    assert.equal(out.status, 200, out.text);
+    const after = mem.getDoc('visitas', 'vis-1');
+    assert.equal(after.estado, 'egreso_registrado');
+    assert.deepEqual(after.ingresoAt, firstAt, 'la hora de ingreso no se pisa');
+    assert.ok(after.egresoAt);
+  });
+
   it('presupuesto: 1 lectura + (1 + entries + alarmas + 1) escrituras; duplicado = 1 lectura y 0 escrituras', async () => {
     const events = [
       ev(10),

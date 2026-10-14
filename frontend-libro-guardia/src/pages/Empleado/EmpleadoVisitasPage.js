@@ -25,6 +25,15 @@ const ESTADO_LABEL = {
   egreso_registrado: 'Egreso registrado'
 };
 
+/** "Ingresó 15:40" cuando la nube ya recibió el paso por la puerta (1b). */
+const estadoLabel = (v) => {
+  if (v.estado === 'ingreso_registrado' && v.ingresoAt) {
+    const hora = new Date(v.ingresoAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `Ingresó ${hora}`;
+  }
+  return ESTADO_LABEL[v.estado] || v.estado;
+};
+
 const HOST_EDITABLE_ESTADOS = new Set(['pendiente_aprobacion', 'autorizada', 'pendiente']);
 
 const HOST_DENIED_CODES = new Set(['dominio_no_permitido', 'email_no_verificado']);
@@ -469,7 +478,7 @@ function EmpleadoVisitasPage() {
                     {v.motivo ? <div className="empleado-meta">{v.motivo}</div> : null}
                     <div className="empleado-visita-actions">
                       <span className={`empleado-estado empleado-estado-${v.estado}`}>
-                        {ESTADO_LABEL[v.estado] || v.estado}
+                        {estadoLabel(v)}
                       </span>
                       {canShowQr(v) && (
                         <button

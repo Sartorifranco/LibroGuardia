@@ -92,7 +92,7 @@ describe('API LAN del hub para la app de guardia', { skip: k.SKIP }, () => {
     assert.equal(runtime.data.hubId, 'hub-1');
     assert.equal(runtime.data.cloudOnline, false);
     assert.equal(typeof runtime.data.configVersion, 'number');
-    assert.deepEqual(runtime.data.capabilities, ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan']);
+    assert.deepEqual(runtime.data.capabilities, ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan', 'approvals']);
     const other = await api(built.url, '/api/guard/citados/today');
     assert.equal(other.status, 501);
     assert.equal(other.data.code, 'EDGE_UNSUPPORTED');
@@ -394,5 +394,92 @@ describe('API LAN del hub para la app de guardia', { skip: k.SKIP }, () => {
     assert.match(buf, /Ana Pérez/);
     assert.match(buf, /apb_advertencia/);
     ac.abort();
+  });
+  it('1b: el SSE avisa al guardia una visita en puerta con aviso y una aprobación; un empleado no', async () => {
+    const db = built.hub.edge.db;
+    db.run('UPDATE doors SET json = ? WHERE id = ?', JSON.stringify({ id: 'p1', name: 'Portón', enabled: true, controllerId: 'ctl-a', sides: ['in', 'out'], notifyGuardOnVisitor: true }), 'p1');
+    const ac = new AbortController();
+    const res = await fetch(`${built.url}/api/live?token=${encodeURIComponent(token)}`, { signal: ac.signal });
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    const pull = async () => {
+      const { value, done } = await reader.read();
+      if (!done && value) buf += dec.decode(value, { stream: true });
+    };
+    await pull();
+    const t = Date.now();
+    built.hub.ingestFromController('ctl-a', {
+      events: [
+        { seq: 201, ts: t, doorId: 'p1', side: 'in', type: 'access', decision: 'grant', reason: 'puerta_directa', payload: { name: 'Empleado Uno', matched: { source: 'direct' } } },
+        { seq: 202, ts: t + 1, doorId: 'p1', side: 'in', type: 'access', decision: 'grant', reason: 'visita', payload: { name: 'Juan Visita', passId: 'QR-9', matched: { source: 'pass', id: 'QR-9' } } },
+        { seq: 203, ts: t + 2, doorId: 'p2', side: 'in', type: 'approval_pending', decision: 'needs_approval', reason: 'requiere_aprobacion_guardia', payload: { name: 'Cliente Dos', approvalId: 'apr-sse' } }
+      ]
+    });
+    const deadline = Date.now() + 2000;
+    while ((buf.match(/event: visitor/g) || []).length < 2 && Date.now() < deadline) await pull();
+    ac.abort();
+    const visitors = buf.split('\n\n').filter((b) => b.startsWith('event: visitor')).map((b) => JSON.parse(b.split('data: ')[1]));
+    assert.equal(visitors.length, 2, buf);
+    assert.equal(visitors[0].kind, 'visita');
+    assert.equal(visitors[0].name, 'Juan Visita');
+    assert.equal(visitors[0].doorName, 'Portón');
+    assert.equal(visitors[1].kind, 'aprobacion');
+    assert.equal(visitors[1].approvalId, 'apr-sse');
+    assert.ok(!visitors.some((v) => v.name === 'Empleado Uno'));
+  });
+
+  it('1.3b: el guardia lista y aprueba un ingreso pendiente; resuelta ya no aparece', async () => {
+    const t = Date.now();
+    built.hub.ingestFromController('ctl-a', {
+      events: [{ seq: 301, ts: t, doorId: 'p2', side: 'in', type: 'approval_pending', decision: 'needs_approval', reason: 'requiere_aprobacion_guardia', payload: { name: 'Cliente Tres', approvalId: 'apr-1' } }]
+    });
+    const list = await api(built.url, '/api/guard/approvals', { token });
+    assert.equal(list.status, 200);
+    const item = list.data.approvals.find((a) => a.approvalId === 'apr-1');
+    assert.ok(item, JSON.stringify(list.data));
+    assert.equal(item.name, 'Cliente Tres');
+    assert.equal(item.doorName, 'Oficinas');
+
+    const notMine = await api(built.url, '/api/guard/approvals', { token: tokenPuesto });
+    assert.ok(!notMine.data.approvals.some((a) => a.approvalId === 'apr-1'), 'otro puesto no la ve');
+
+    const ok = await api(built.url, '/api/guard/approvals/apr-1', { method: 'POST', token, body: { approve: true } });
+    assert.equal(ok.status, 200, JSON.stringify(ok.data));
+    assert.equal(ok.data.ok, true);
+    const sent = ctl.approvals.at(-1);
+    assert.equal(sent.approvalId, 'apr-1');
+    assert.equal(sent.approve, true);
+    assert.equal(sent.requestedBy.username, 'guardia');
+    assert.deepEqual(sent.permissions, PERMS);
+
+    built.hub.ingestFromController('ctl-a', {
+      events: [{ seq: 302, ts: t + 5, doorId: 'p2', side: 'in', type: 'approval_resolved', decision: 'grant', reason: 'apertura_manual', payload: { approvalId: 'apr-1' } }]
+    });
+    const after = await api(built.url, '/api/guard/approvals', { token });
+    assert.ok(!after.data.approvals.some((a) => a.approvalId === 'apr-1'));
+    const again = await api(built.url, '/api/guard/approvals/apr-1', { method: 'POST', token, body: { approve: false } });
+    assert.equal(again.status, 404);
+  });
+
+  it('1.3b: rechazar se reenvía y el estanco ocupado responde 409', async () => {
+    const t = Date.now();
+    built.hub.ingestFromController('ctl-a', {
+      events: [
+        { seq: 401, ts: t, doorId: 'p1', side: 'in', type: 'approval_pending', decision: 'needs_approval', reason: 'requiere_aprobacion_guardia', payload: { approvalId: 'apr-2' } },
+        { seq: 402, ts: t + 1, doorId: 'p1', side: 'in', type: 'approval_pending', decision: 'needs_approval', reason: 'requiere_aprobacion_guardia', payload: { approvalId: 'apr-3' } }
+      ]
+    });
+    const no = await api(built.url, '/api/guard/approvals/apr-2', { method: 'POST', token, body: { approve: false } });
+    assert.equal(no.status, 200);
+    assert.equal(no.data.message, 'Ingreso rechazado.');
+    assert.equal(ctl.approvals.at(-1).approve, false);
+
+    ctl.approvalResponse = { status: 409, ok: false, code: 'AIRLOCK_OTHER_OPEN', message: 'La otra puerta del estanco está abierta.', forcible: true };
+    const busy = await api(built.url, '/api/guard/approvals/apr-3', { method: 'POST', token, body: { approve: true } });
+    ctl.approvalResponse = null;
+    assert.equal(busy.status, 409);
+    assert.equal(busy.data.code, 'AIRLOCK_OTHER_OPEN');
+    assert.match(busy.data.message, /estanco/);
   });
 });

@@ -48,9 +48,11 @@ function enrichForCloud(e, snapshot) {
       const ch = snapshot.cardholder(e.cardholderId);
       if (ch && ch.name) payload.name = String(ch.name).slice(0, 160);
     }
-    if (!payload.name && payload.passId) {
+    if (payload.passId) {
       const p = snapshot.pass(payload.passId);
-      if (p && p.name) payload.name = String(p.name).slice(0, 160);
+      if (!payload.name && p && p.name) payload.name = String(p.name).slice(0, 160);
+      // 1b: la nube marca la visita como ingresada sin buscarla por código de pase.
+      if (!payload.visitaId && p && p.visitaId) payload.visitaId = String(p.visitaId).slice(0, 120);
     }
     if (!payload.doorName && e.doorId) {
       const d = snapshot.door(e.doorId);

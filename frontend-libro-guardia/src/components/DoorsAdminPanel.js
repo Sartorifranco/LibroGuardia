@@ -98,6 +98,7 @@ const normalizeDoorLocal = (door = {}, fallbackCode = 'P1') => {
     sensorsRequired: door.sensorsRequired === true,
     heldOpenSec: Number(door.heldOpenSec) > 0 ? Number(door.heldOpenSec) : 60,
     requireGuardApproval: door.requireGuardApproval === true,
+    notifyGuardOnVisitor: door.notifyGuardOnVisitor === true,
     device: {
       driver: door.device?.driver === 'generic_http' ? 'generic_http' : 'sr201',
       bridgeUrl: '',
@@ -284,6 +285,7 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
         sensorsRequired,
         heldOpenSec: sensorsRequired ? Math.round(Number(door.heldOpenSec) || 60) : null,
         requireGuardApproval: door.requireGuardApproval === true,
+        notifyGuardOnVisitor: door.notifyGuardOnVisitor === true,
         readers,
         readerIds: readers.map((reader) => reader.id),
         pulseMode: 'timed',
@@ -815,6 +817,13 @@ function DoorsAdminPanel({ authToken, pendingAction, onPending, onSuccess, onErr
               <span>
                 ¿El guardia tiene que aprobar cada ingreso?
                 <HelpTip text="Sirve en el portón de clientes: la persona llega y el guardia confirma antes de abrir." />
+              </span>
+            </label>
+            <label className="aui-check">
+              <input type="checkbox" checked={draft.notifyGuardOnVisitor === true} onChange={(event) => patchDraft({ notifyGuardOnVisitor: event.target.checked })} />
+              <span>
+                ¿Avisar al guardia cuando pasa una visita o un externo?
+                <HelpTip text="Al guardia le aparece un cartel con sonido para que confirme que es la persona. Los empleados no avisan." />
               </span>
             </label>
             <label className="aui-check">

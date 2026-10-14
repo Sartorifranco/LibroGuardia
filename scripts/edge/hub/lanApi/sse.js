@@ -3,9 +3,11 @@
 /**
  * SSE de la app de guardia. El token va en ?token= porque EventSource no manda headers.
  * Keep-alive `: ping` cada 20 s. Los eventos salen del bus del hub (ingesta, config, nube, ack).
+ * `visitor`: aviso al guardia (visita/externo en puerta con aviso, o ingreso a aprobar), ver visitors.js.
  */
 
 const { maskIdNumber } = require('./entries');
+const { visitorAlert } = require('./visitors');
 
 const PING_MS = 20 * 1000;
 
@@ -85,7 +87,13 @@ function publishIngested(hub, res, events) {
           accessAuthorized: ev.decision === 'grant',
           timestamp: ev.ts ? new Date(Number(ev.ts)).toISOString() : null
         });
-      } else if (isAlarm(ev)) {
+      }
+      if (ev.type === 'approval_pending' || ev.type === 'access') {
+        // 1b: cartel con sonido en la pantalla del guardia (visita, externo o aprobación).
+        const alert = visitorAlert(hub, ev);
+        if (alert) sendEvent(res, 'visitor', alert);
+      }
+      if (isAlarm(ev)) {
         const type = ev.type === 'alarm' ? (ev.reason || 'alarm') : (ev.payload && ev.payload.alarmType) || ev.type;
         sendEvent(res, 'alarm', {
           id: `${type}:${ev.doorId || ev.deviceId || 'sitio'}`,

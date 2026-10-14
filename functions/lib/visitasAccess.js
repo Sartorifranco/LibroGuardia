@@ -239,6 +239,7 @@ const visitaToAuthorizationRow = (visita, meta = {}) => {
     fechaHoraEsperada: expected ? expected.toISOString() : null,
     source: 'empleado',
     estado: v.estado || 'pendiente',
+    ingresoAt: toDate(v.ingresoAt) ? toDate(v.ingresoAt).toISOString() : null,
     active: true
   };
 };

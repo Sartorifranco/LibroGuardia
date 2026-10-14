@@ -44,7 +44,9 @@ const serializeVisita = (v) => ({
   fechaHoraEsperada: isoOf(v.fechaHoraEsperada),
   aprobadoAt: isoOf(v.aprobadoAt),
   inviteExpiresAt: isoOf(v.inviteExpiresAt),
-  validoHasta: isoOf(v.validoHasta)
+  validoHasta: isoOf(v.validoHasta),
+  ingresoAt: isoOf(v.ingresoAt),
+  egresoAt: isoOf(v.egresoAt)
 });
 
 /** 403 si el usuario no puede invitar (dominio del mail o mail sin confirmar); null si puede. */

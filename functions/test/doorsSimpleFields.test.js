@@ -14,6 +14,7 @@ test('la puerta simple guarda lados, tipo, sensor, aviso y aprobación', () => {
       sensorsRequired: true,
       heldOpenSec: 60,
       requireGuardApproval: true,
+      notifyGuardOnVisitor: true,
       manualOpenAllowed: true,
       sides: {
         in: { zoneFrom: 'exterior', zoneTo: 'planta' },
@@ -28,6 +29,7 @@ test('la puerta simple guarda lados, tipo, sensor, aviso y aprobación', () => {
   assert.equal(door.sensorsRequired, true);
   assert.equal(door.heldOpenSec, 60);
   assert.equal(door.requireGuardApproval, true);
+  assert.equal(door.notifyGuardOnVisitor, true);
   assert.deepEqual(door.sides, {
     in: { zoneFrom: 'exterior', zoneTo: 'planta' },
     out: { zoneFrom: 'planta', zoneTo: 'exterior' }

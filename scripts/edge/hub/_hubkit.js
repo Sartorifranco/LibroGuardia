@@ -149,7 +149,7 @@ async function startFakeCloud({ hubPublicKey, refreshToken = 'rt-0', deviceId = 
 
 /** Controlador falso: verifica la firma del hub y registra lo que recibe. */
 async function startFakeController({ deviceId, hubDeviceId, hubPublicKey, configVersionApplied = 0 }) {
-  const ctl = { deviceId, notifies: [], opens: [], statusCalls: 0, rejected: 0, configVersionApplied, openResponse: null };
+  const ctl = { deviceId, notifies: [], opens: [], approvals: [], statusCalls: 0, rejected: 0, configVersionApplied, openResponse: null, approvalResponse: null };
   const verifier = new LanVerifier({ publicKeyFor: (id) => (id === hubDeviceId ? hubPublicKey : null) });
   const server = http.createServer(async (req, res) => {
     const parts = [];
@@ -173,6 +173,13 @@ async function startFakeController({ deviceId, hubDeviceId, hubPublicKey, config
     if (m) {
       ctl.opens.push({ doorId: decodeURIComponent(m[1]), ...body });
       return send(res, 200, ctl.openResponse || { ok: true, relayConfirmed: true, doorOpened: true });
+    }
+    const a = req.url.match(/^\/edge\/approvals\/([^/]+)$/);
+    if (a) {
+      ctl.approvals.push({ approvalId: decodeURIComponent(a[1]), ...body });
+      const r = ctl.approvalResponse || { ok: true, relayConfirmed: true, eventId: `${deviceId}:apr` };
+      const { status, ...rest } = r;
+      return send(res, status || 200, rest);
     }
     return send(res, 404, { code: 'NOT_FOUND' });
   });

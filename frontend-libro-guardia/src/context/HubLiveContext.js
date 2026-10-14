@@ -16,7 +16,7 @@ const HubLiveContext = createContext({
   subscribe: () => () => {}
 });
 
-const LIVE_EVENTS = ['door', 'access', 'alarm', 'config', 'runtime'];
+const LIVE_EVENTS = ['door', 'access', 'alarm', 'config', 'runtime', 'visitor'];
 
 export function HubLiveProvider({ children }) {
   const { authToken } = useAuth();

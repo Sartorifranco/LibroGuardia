@@ -160,6 +160,7 @@ function presentDoor(door, { stateRow, controllerOnline, group, stateOf, pulse, 
     pulseSeconds: door.pulseSeconds ?? door.unlockSec ?? null,
     heldOpenSec: door.heldOpenSec ?? null,
     requireGuardApproval: door.requireGuardApproval === true,
+    notifyGuardOnVisitor: door.notifyGuardOnVisitor === true,
     controllerId: door.controllerId || null,
     relayMode: (door.output && door.output.relayMode) || door.relayMode || null,
     live: {

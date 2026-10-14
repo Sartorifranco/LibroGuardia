@@ -144,7 +144,7 @@ describe('hub: sync de configuración', { skip: k.SKIP }, () => {
     assert.equal(runtime.hubId, 'hub-1');
     assert.equal(runtime.configVersion, built.hub.configSync.configVersion());
     assert.equal(runtime.cloudOnline, true);
-    assert.deepEqual(runtime.capabilities, ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan']);
+    assert.deepEqual(runtime.capabilities, ['auth', 'doors', 'open', 'entries', 'alarms', 'live', 'scan', 'approvals']);
     const other = await fetch(`${built.url}/api/admin/users`);
     assert.equal(other.status, 501);
     assert.equal((await other.json()).code, 'EDGE_UNSUPPORTED');

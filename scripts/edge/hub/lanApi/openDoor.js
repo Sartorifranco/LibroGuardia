@@ -147,4 +147,4 @@ async function openGuardDoor(hub, op, body) {
   return { status: mapped.http, body: payload };
 }
 
-module.exports = { openGuardDoor, MIN_FORCE_REASON };
+module.exports = { openGuardDoor, mapResult, messageFor, MIN_FORCE_REASON };

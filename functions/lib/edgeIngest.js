@@ -124,6 +124,82 @@ const normalizeEvent = (raw, index) => {
 /** Concedido que cuenta como paso. La lectura repetida se archiva en el journal, sin fila en entries. */
 const isGrantedMovement = (ev) => ev.decision === 'grant' && ev.reason !== 'lectura_repetida' && !alarmTypeOf(ev);
 
+/**
+ * 1b: la visita pasa a "Ingresó HH:MM" cuando llega el paso de su pase. El hub agrega
+ * `payload.visitaId` (eventUploader); si falta, se busca por id de pase (= id del doc o passCode).
+ * Presupuesto: 1 lectura + ≤1 escritura por visita del lote. Sin markDirty: el borde ya aplicó
+ * el uso del pase y `ingreso_registrado`/`egreso_registrado` siguen generando pase.
+ * Nunca hace fallar la ingesta (el lote ya está confirmado).
+ */
+const VISITAS_COLLECTION = 'visitas';
+const VISITA_CLOSED_STATES = new Set(['cancelada', 'rechazada', 'revocada']);
+
+const visitaMovementsOf = (events) => {
+  const byKey = new Map();
+  events.forEach((ev) => {
+    if (!isGrantedMovement(ev)) return;
+    const p = ev.payload || {};
+    const visitaId = p.visitaId ? String(p.visitaId) : null;
+    const passId = p.passId ? String(p.passId) : null;
+    if (!visitaId && !passId) return;
+    const key = visitaId ? `v:${visitaId}` : `p:${passId}`;
+    const cur = byKey.get(key) || { visitaId, passId, firstInTs: null, firstInDoorId: null, firstInDoorName: null, lastTs: 0, lastSide: null };
+    if (ev.side !== 'out' && cur.firstInTs == null) {
+      cur.firstInTs = ev.ts;
+      cur.firstInDoorId = ev.doorId || null;
+      cur.firstInDoorName = p.doorName ? String(p.doorName).slice(0, 120) : null;
+    }
+    if (ev.ts >= cur.lastTs) {
+      cur.lastTs = ev.ts;
+      cur.lastSide = ev.side === 'out' ? 'out' : 'in';
+    }
+    byKey.set(key, cur);
+  });
+  return [...byKey.values()];
+};
+
+const findVisitaRef = async (mv) => {
+  const col = db.collection(VISITAS_COLLECTION);
+  if (mv.visitaId) {
+    const snap = await col.doc(mv.visitaId).get();
+    return snap.exists ? snap : null;
+  }
+  const byId = await col.doc(mv.passId).get();
+  if (byId.exists) return byId;
+  const q = await col.where('passCode', '==', mv.passId).limit(1).get();
+  return q.empty ? null : q.docs[0];
+};
+
+const markVisitasFromEvents = async (events, { log = console } = {}) => {
+  let marked = 0;
+  for (const mv of visitaMovementsOf(events)) {
+    try {
+      const snap = await findVisitaRef(mv);
+      if (!snap) continue;
+      const data = snap.data() || {};
+      if (VISITA_CLOSED_STATES.has(data.estado)) continue;
+      const patch = { updatedAt: FieldValue.serverTimestamp() };
+      if (mv.firstInTs != null && !data.ingresoAt) {
+        patch.ingresoAt = Timestamp.fromDate(new Date(mv.firstInTs));
+        patch.ingresoDoorId = mv.firstInDoorId;
+        patch.ingresoDoorName = mv.firstInDoorName;
+      }
+      if (mv.lastSide === 'out') {
+        patch.estado = 'egreso_registrado';
+        patch.egresoAt = Timestamp.fromDate(new Date(mv.lastTs));
+      } else {
+        patch.estado = 'ingreso_registrado';
+      }
+      if (patch.estado === data.estado && !patch.ingresoAt && !patch.egresoAt) continue;
+      await db.collection(VISITAS_COLLECTION).doc(snap.id).set(patch, { merge: true });
+      marked += 1;
+    } catch (err) {
+      if (log && log.warn) log.warn(`[edge] no se pudo marcar la visita ${mv.visitaId || mv.passId}: ${err.message}`);
+    }
+  }
+  return marked;
+};
+
 const maskIdNumber = (ev) => {
   const p = ev.payload || {};
   if (p.idNumber) return String(p.idNumber).slice(0, 20);
@@ -227,7 +303,7 @@ const notifyCriticalAlarm = (notifySafe, ev, alarm) => {
 
 /**
  * Ingesta de un lote del hub.
- * @returns {Promise<{ackHubSeq:number, duplicate:boolean, journalId:string, entries:number, alarms:number, notified:number}>}
+ * @returns {Promise<{ackHubSeq:number, duplicate:boolean, journalId:string, entries:number, alarms:number, notified:number, visitas:number}>}
  */
 const ingestEventBatch = async ({ siteId, hubId, body = {}, notifySafe = null, now = Date.now() }) => {
   if (body.hubId != null && String(body.hubId) !== String(hubId)) {
@@ -306,7 +382,9 @@ const ingestEventBatch = async ({ siteId, hubId, body = {}, notifySafe = null, n
     if (notifyCriticalAlarm(notifySafe, ev, alarm)) notified += 1;
   });
 
-  return { ackHubSeq: hubSeqTo, duplicate: false, journalId, entries, alarms: alarms.length, notified };
+  const visitas = await markVisitasFromEvents(normalized);
+
+  return { ackHubSeq: hubSeqTo, duplicate: false, journalId, entries, alarms: alarms.length, notified, visitas };
 };
 
 const sanitizeLanUrl = (value) => {

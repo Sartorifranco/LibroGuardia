@@ -14,11 +14,13 @@ Errores: `{message, code?}`, textos en español simple. CORS solo si el `Origin`
 | `POST /api/auth/change-password` | **501** `Cambiá tu contraseña cuando haya internet`. Hace falta token. |
 | `GET /api/guard/doors` | Puertas del puesto, con `live`, `health`, `lastPulse` y `airlock` si corresponde. |
 | `POST /api/guard/open-door` | Reenvía al controlador dueño. |
+| `GET /api/guard/approvals` | Ingresos que esperan el OK del guardia (puertas con `requireGuardApproval`), del journal del hub. |
+| `POST /api/guard/approvals/:id` | `{approve}`: abre (como apertura manual, respeta el estanco) o rechaza. Exige `access.manual_open`. |
 | `GET /api/entries` | Pasos del journal en forma de `entries`. |
 | `GET /api/guard/live-alerts` | Alarmas abiertas, cada una con `kind:'alarm'`. |
 | `GET /api/guard/alarms?status=&type=&doorId=&limit=` | Misma forma `{alerts, queriedAt}`. `status` abierto por defecto; `recent` incluye reconocidas. `limit` ≤ 50. |
 | `POST /api/guard/alarms/:id/ack` | `{note}` (mínimo 3 caracteres) → `{ok}`. `close:true` la deja cerrada. |
-| `GET /api/live?token=` | SSE. Eventos `door`, `access`, `alarm`, `config`, `runtime`. `: ping` cada 20 s. |
+| `GET /api/live?token=` | SSE. Eventos `door`, `access`, `alarm`, `config`, `runtime` y `visitor` (cartel al guardia: visita/externo en puerta con `notifyGuardOnVisitor`, o ingreso a aprobar; ver `visitors.js`). `: ping` cada 20 s. |
 | Cualquier otra `/api/*` | **501** `{code:'EDGE_UNSUPPORTED', message:'Disponible solo con internet'}`. |
 
 `capabilities` es `['auth','doors','open','entries','alarms','live','scan']`. `scan` se anuncia para que la app sepa que el modo planta existe, pero **no hay** ruta de escaneo en este contrato: `/api/access/validar` y el resto siguen en 501.
