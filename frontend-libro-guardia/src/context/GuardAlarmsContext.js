@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import { apiFetch } from '../services/api';
 import { useAuth } from './AuthContext';
+import { hasPermission } from '../utils/permissions';
 import { useHubLive } from './HubLiveContext';
 import { useRuntime } from './RuntimeContext';
 import {
@@ -32,7 +33,9 @@ function collectAlarms(data) {
 }
 
 export function GuardAlarmsProvider({ children }) {
-  const { authToken } = useAuth();
+  const { authToken: rawToken, currentUser } = useAuth();
+  // Sin permiso de ver alarmas no se consulta (evita 403 cada 15 s y lecturas de más).
+  const authToken = hasPermission(currentUser, 'alarmas.ver') ? rawToken : null;
   const { mode } = useRuntime();
   const { connected, subscribe } = useHubLive();
   const [alarms, setAlarms] = useState([]);

@@ -41,6 +41,12 @@ const addDaysToYmd = (ymd, days) => {
 // Cada sección solo se incluye si el usuario tiene el permiso de lectura correspondiente.
 const SEARCH_PERMISSIONS = ['master.personal.read', 'master.vehicles.read', 'entries.view'];
 
+// La web pregunta si corre contra la nube o el hub del predio (el hub responde mode:'lan').
+// Sin lecturas de Firestore.
+router.get('/api/runtime', (_req, res) => {
+  res.json({ mode: 'cloud' });
+});
+
 router.get('/api/search', auth, requireAnyPermission(SEARCH_PERMISSIONS), async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
