@@ -293,7 +293,7 @@ function PersonalPage() {
     <div className="form-section">
       <form onSubmit={handlePersonalSubmit} className="space-y-4">
         <div className="section-heading">
-          <h2 className="text-2xl font-semibold text-red-700">Registro de Personal</h2>
+          <h2 className="text-2xl font-semibold text-gray-800">Registro de personal</h2>
           <p className="text-sm text-gray-600">
             Cargá a mano a quien no pasa por el lector.
             Si entra por la puerta y escanea el DNI, el ingreso queda registrado solo.

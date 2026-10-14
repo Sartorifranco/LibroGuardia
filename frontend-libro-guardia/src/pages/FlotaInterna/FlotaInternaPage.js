@@ -95,7 +95,7 @@ function FlotaInternaPage() {
   return (
     <div className="form-section">
       <form onSubmit={handleFlotaSubmit} className="space-y-4">
-        <h2 className="text-2xl font-semibold text-red-700 mb-4">Registro de Flota Interna</h2>
+        <h2 className="text-2xl font-semibold text-gray-800 mb-4">Registro de flota interna</h2>
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="flex-1">
             <label htmlFor="flotaMobile" className="block text-sm font-medium text-gray-700 mb-1">Móvil</label>
@@ -116,25 +116,25 @@ function FlotaInternaPage() {
         </div>
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="flex-1">
-            <label htmlFor="flotaScheduledTime" className="block text-sm font-medium text-gray-700 mb-1">Hora Programada</label>
+            <label htmlFor="flotaScheduledTime" className="block text-sm font-medium text-gray-700 mb-1">Hora programada</label>
             <input type="datetime-local" id="flotaScheduledTime" value={flotaScheduledTime} onChange={(e) => setFlotaScheduledTime(e.target.value)} className="input-field" required />
           </div>
           <div className="flex-1">
-            <label htmlFor="flotaActualTime" className="block text-sm font-medium text-gray-700 mb-1">Hora Real</label>
+            <label htmlFor="flotaActualTime" className="block text-sm font-medium text-gray-700 mb-1">Hora real</label>
             <input type="datetime-local" id="flotaActualTime" value={flotaActualTime} onChange={(e) => setFlotaActualTime(e.target.value)} className="input-field" required />
           </div>
         </div>
         <div>
-          <label htmlFor="flotaMovementType" className="block text-sm font-medium text-gray-700 mb-1">Tipo de Movimiento</label>
+          <label htmlFor="flotaMovementType" className="block text-sm font-medium text-gray-700 mb-1">Tipo de movimiento</label>
           <select id="flotaMovementType" value={flotaMovementType} onChange={(e) => setFlotaMovementType(e.target.value)} className="input-field bg-white">
             <option value="ingreso">Ingreso</option>
             <option value="egreso">Egreso</option>
-            <option value="ingreso auxilio">Ingreso Auxilio</option>
-            <option value="egreso auxilio">Egreso Auxilio</option>
+            <option value="ingreso auxilio">Ingreso auxilio</option>
+            <option value="egreso auxilio">Egreso auxilio</option>
           </select>
         </div>
         <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar Flota')}
+          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar flota')}
         </button>
       </form>
     </div>

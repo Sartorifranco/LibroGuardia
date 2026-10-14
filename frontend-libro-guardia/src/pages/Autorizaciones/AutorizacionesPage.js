@@ -200,7 +200,7 @@ function AutorizacionesPage() {
     <PageContainer width="medium">
     <div className="form-section auth-requests">
       <div className="section-heading">
-        <h2 className="text-2xl font-semibold text-red-700">Autorizaciones</h2>
+        <h2 className="text-2xl font-semibold text-gray-800">Autorizaciones</h2>
         <p className="text-sm text-gray-600">
           Pedí un ingreso y esperá a que lo apruebe el responsable de la empresa.
           Quien lo pide no puede aprobarlo.

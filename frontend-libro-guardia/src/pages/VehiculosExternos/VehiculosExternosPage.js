@@ -135,7 +135,7 @@ function VehiculosExternosPage() {
     <div className="form-section">
       <form onSubmit={handleVehicleSubmit} className="space-y-4">
         <div className="section-heading">
-          <h2 className="text-2xl font-semibold text-red-700">Registro de Vehículos Externos</h2>
+          <h2 className="text-2xl font-semibold text-gray-800">Registro de vehículos externos</h2>
           <p className="text-sm text-gray-600">Consulte la patente para verificar autorización o autorice en el momento.</p>
         </div>
 

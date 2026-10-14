@@ -1708,6 +1708,18 @@
   background: rgba(220, 38, 38, 0.25);
 }
 
+/* Tema oscuro: rojo lleno con texto blanco (contraste 6,5:1, no depende del color de marca) */
+[data-theme='dark'] .btn-danger-small {
+  background: #b91c1c;
+  color: #fff;
+  border-color: #b91c1c;
+}
+
+[data-theme='dark'] .btn-danger-small:hover:not(:disabled) {
+  background: #991b1b;
+  border-color: #991b1b;
+}
+
 /* ?? Inputs ?? */
 
 .input-field,

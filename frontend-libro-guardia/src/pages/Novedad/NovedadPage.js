@@ -38,17 +38,17 @@ function NovedadPage() {
   return (
     <div className="form-section">
       <form onSubmit={handleNovedadSubmit} className="space-y-4">
-        <h2 className="text-2xl font-semibold text-red-700 mb-4">Registro de Novedad</h2>
+        <h2 className="text-2xl font-semibold text-gray-800 mb-4">Registro de novedad</h2>
         <div>
           <label htmlFor="novedadDescription" className="block text-sm font-medium text-gray-700 mb-1">Descripción de la Novedad</label>
           <textarea id="novedadDescription" value={novedadDescription} onChange={(e) => setNovedadDescription(e.target.value)} rows="5" className="input-field resize-y" placeholder="Describa aquí la novedad: Ej. Corte de energía en sector C, Reparación de máquina X, Visita inesperada de..." required></textarea>
         </div>
         <div>
-          <label htmlFor="novedadEventTime" className="block text-sm font-medium text-gray-700 mb-1">Hora del Evento</label>
+          <label htmlFor="novedadEventTime" className="block text-sm font-medium text-gray-700 mb-1">Hora del evento</label>
           <input type="time" id="novedadEventTime" value={novedadEventTime} onChange={(e) => setNovedadEventTime(e.target.value)} className="input-field" required />
         </div>
         <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar Novedad')}
+          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar novedad')}
         </button>
       </form>
     </div>

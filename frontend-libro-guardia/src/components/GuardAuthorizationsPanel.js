@@ -145,7 +145,7 @@ function GuardAuthorizationsPanel({
   return (
     <div className="space-y-6">
       <div className="section-heading">
-        <h2 className="text-2xl font-semibold text-red-700">Autorizados</h2>
+        <h2 className="text-2xl font-semibold text-gray-800">Autorizados</h2>
         <p className="attendance-panel__purpose" style={{ marginTop: '0.35rem' }}>
           Permisos de acceso — quién está autorizado a entrar.
         </p>

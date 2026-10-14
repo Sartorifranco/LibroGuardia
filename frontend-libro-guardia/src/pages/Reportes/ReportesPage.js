@@ -192,7 +192,7 @@ function ReportesPage() {
 
   return (
     <section className="form-section reportes-page">
-      <h2 className="text-2xl font-semibold text-red-700 mb-2 flex items-center gap-2">
+      <h2 className="text-2xl font-semibold text-gray-800 mb-2 flex items-center gap-2">
         <BarChart3 size={24} /> Reportes
       </h2>
       <p className="theme-section-desc" style={{ marginBottom: '1.25rem' }}>

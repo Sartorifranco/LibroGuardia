@@ -265,7 +265,7 @@ function HistorialPage() {
       return { headers, data };
     }
 
-    const baseHeaders = ['Tipo de Registro', 'Fecha', 'Hora Registro', 'Hora Evento', 'Usuario que Registró'];
+    const baseHeaders = ['Tipo de registro', 'Fecha', 'Hora registro', 'Hora evento', 'Usuario que registró'];
     let headers = [...baseHeaders, 'Detalle 1', 'Detalle 2', 'Detalle 3', 'Detalle 4'];
 
     if (section.apiType === 'personal') {
@@ -273,7 +273,7 @@ function HistorialPage() {
     } else if (section.apiType === 'vehiculo') {
       headers = [...baseHeaders, 'Patente', 'Marca/Modelo', 'Empresa', 'Conductor'];
     } else if (section.apiType === 'flota') {
-      headers = [...baseHeaders, 'Móvil', 'Chofer', 'Hora Programada / Patente', 'Hora Real'];
+      headers = [...baseHeaders, 'Móvil', 'Chofer', 'Hora programada / patente', 'Hora real'];
     } else if (section.apiType === 'novedad') {
       headers = [...baseHeaders, 'Descripción'];
     }
@@ -399,7 +399,7 @@ function HistorialPage() {
 
   return (
     <section className="form-section">
-      <h2 className="text-2xl font-semibold text-red-700 mb-2 flex items-center gap-2">
+      <h2 className="text-2xl font-semibold text-gray-800 mb-2 flex items-center gap-2">
         <ClipboardList size={24} /> Historial
       </h2>
       <p className="theme-section-desc" style={{ marginBottom: '1rem' }}>
