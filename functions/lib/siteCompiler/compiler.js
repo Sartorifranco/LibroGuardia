@@ -633,7 +633,9 @@ const createSiteCompiler = (opts = {}) => {
     if (head) delete head.id;
     if (!compile) return head;
     const stale = !head || !head.version || headCompilerMismatch(head)
-      || head.day !== build.ymdOf(now(), head.tz || build.DEFAULT_TZ);
+      || head.day !== build.ymdOf(now(), head.tz || build.DEFAULT_TZ)
+      // Cambió la clave de firma (p. ej. se cargó el secreto): re-firmar todo.
+      || head.keyId !== signingKey().keyId;
     if (!dirtySnap.exists && !stale) return head;
     const res = await compileSite(siteId);
     return res.head;
