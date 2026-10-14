@@ -457,7 +457,9 @@ const recordHeartbeat = async ({ deviceId, siteId, deviceKind, body = {}, now = 
     const update = { lastSeenAt: now, configVersionApplied, checks };
     if (deviceKind === 'hub') update.lanUrl = lanUrl;
     if (controllers.mapChanged) update.controllersReported = controllers.nextMap;
-    await ref.set(update, { merge: true });
+    // update (no set merge): reemplaza `checks` entero. Con merge Firestore une los mapas
+    // y quedaban claves viejas (p. ej. un clockMs crudo => "Reloj desfasado" para siempre).
+    await ref.update(update);
     wrote = true;
   }
   if (deviceKind === 'hub' && lanUrl && (d.lanUrl || null) !== lanUrl) {
