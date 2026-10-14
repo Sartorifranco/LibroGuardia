@@ -47,11 +47,11 @@ Recorrido de **guardia** y **administración** en mss-guard.web.app, tema oscuro
 
 | # | Qué pasa | Quién |
 |---|---|---|
-| R.25 | Con una pantalla de guardia abierta la web hace ~14 pedidos por minuto (`/entries`, `/guard/alarms`, `/guard/live-alerts`, `/guard/fleet-gps/alerts`): ~20.000 por día por puesto. Confirmar que esas rutas responden de caché y no leen Firestore cada vez (tope US$ 10/mes). Relacionado con 2.3 | 🧠 revisar + 🔒 si hay que tocar |
+| R.25 | ✅ 2026-10-14. Pedidos a la nube con la pantalla de guardia abierta (modo nube, por minuto). **Antes** (pestaña visible): `/entries` cada 15 s (4), `/guard/alarms` 15 s (4, seguía con la pestaña oculta), `/guard/live-alerts` 15 s (4), `/guard/fleet-gps/alerts` 30 s (2) = **~14**; en Inicio además 4 indicadores cada 15 s (16) y `/doors` cada 20 s (3, seguía oculta) = **~31**. **Después**: `/entries` 2 min (0,5; lo propio se ve al instante y en LAN llega por SSE), alarmas 45 s (1,3; en LAN con hub conectado no se consulta, llegan por SSE), avisos en vivo 60 s (1), flota 150 s (0,4; el cron del GPS corre cada 5 min), indicadores de Inicio 6 min (0,7), puertas en la nube 2 min (0,5; en LAN por SSE) = **~3,2** en las pantallas de registro y **~4** en Inicio. **Pestaña oculta**: todo en pausa y al volver refresca enseguida; solo si el puesto activó los avisos del sistema siguen alarmas y avisos en vivo cada 3 min (~0,7). `usePolling` suma `hiddenIntervalMs`. Pendiente aparte: `/guard/alarms` no tiene caché en el servidor (lee Firestore en cada pedido) | ✅ |
 
 ## Orden sugerido
 
 1. R.15, R.3, R.12, R.4–R.6 (rápidos, se ven mucho).
 2. ~~R.1 + R.2 (barra de arriba)~~ ✅ 2026-10-14.
-3. R.25 (consumo) antes de dejar puestos abiertos todo el día.
+3. ~~R.25 (consumo) antes de dejar puestos abiertos todo el día.~~ ✅ 2026-10-14.
 4. Resto por pantalla, de a una tarea por pantalla.

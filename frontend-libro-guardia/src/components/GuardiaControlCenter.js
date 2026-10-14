@@ -109,8 +109,9 @@ function GuardiaControlCenter({
     }
   }, [authToken, canFleet, canAttendance, canAuthToday]);
 
-  // Se pausa con la pestaña oculta y refresca una vez al volver.
-  usePolling(reloadKpis, 15000, { enabled: Boolean(authToken) });
+  // Son 4 pedidos por vuelta y los números cambian despacio: cada 6 min, pausado con la
+  // pestaña oculta y refresca una vez al volver.
+  usePolling(reloadKpis, 360000, { enabled: Boolean(authToken) });
 
   if (!canFleet && !canDoors && !canNovedad && !canAttendance) return null;
 

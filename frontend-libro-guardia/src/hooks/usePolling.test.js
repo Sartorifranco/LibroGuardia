@@ -48,6 +48,19 @@ describe('usePolling', () => {
     expect(cb).toHaveBeenCalledTimes(2);
   });
 
+  it('con hiddenIntervalMs espacia las consultas mientras la pestaña está oculta', async () => {
+    const cb = jest.fn().mockResolvedValue(true);
+    renderHook(() => usePolling(cb, 15000, { pauseWhenHidden: false, hiddenIntervalMs: 60000 }));
+    await act(() => Promise.resolve());
+    await act(async () => { setVisibility('hidden'); });
+    await act(async () => { jest.advanceTimersByTime(15000); });
+    expect(cb).toHaveBeenCalledTimes(1);
+    await act(async () => { jest.advanceTimersByTime(45000); });
+    expect(cb).toHaveBeenCalledTimes(2);
+    await act(async () => { setVisibility('visible'); });
+    expect(cb).toHaveBeenCalledTimes(3);
+  });
+
   it('backoff: duplica la espera si el callback devuelve false', async () => {
     const cb = jest.fn().mockResolvedValue(false);
     renderHook(() => usePolling(cb, 15000, { maxBackoffMs: 60000 }));

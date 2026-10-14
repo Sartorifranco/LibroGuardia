@@ -20,6 +20,7 @@ import { useToast } from '../context/ToastContext';
 import { useRuntime } from '../context/RuntimeContext';
 import { useHubLive } from '../context/HubLiveContext';
 import { apiFetch } from '../services/api';
+import usePolling from '../hooks/usePolling';
 import { openManualDoorWithAirlock } from '../utils/openManualDoor';
 import { openControllerDoor } from '../utils/remoteDoorOpen';
 import { doorOpenUserMessage, lastPulseStatusWord } from '../utils/doorOpenStatus';
@@ -41,6 +42,7 @@ const AUTH_METHOD_META = {
   manual: { label: 'Manual', icon: Hand }
 };
 
+const CLOUD_MIN_POLL_SECONDS = 120;
 const VIEW_KEY = 'mss-guard-doors-view';
 
 function readSavedView() {
@@ -169,12 +171,13 @@ function DigitalDoorPanel({
     reload();
   }, [reload, configVersion]);
 
-  useEffect(() => {
-    const seconds = lan ? (connected ? 0 : 15) : pollSeconds;
-    if (!seconds || seconds < 5) return undefined;
-    const id = setInterval(reload, seconds * 1000);
-    return () => clearInterval(id);
-  }, [reload, pollSeconds, lan, connected]);
+  // LAN con el hub conectado: el estado llega por SSE. LAN sin SSE: el hub local cada 15 s.
+  // Nube: no menos de 2 min (las aperturas propias ya actualizan la lista). Pausado con la
+  // pestaña oculta y refresca al volver.
+  const pollMs = lan
+    ? (connected ? 0 : 15000)
+    : Math.max(Number(pollSeconds) || 0, CLOUD_MIN_POLL_SECONDS) * 1000;
+  usePolling(reload, pollMs, { enabled: pollMs > 0, immediate: false });
 
   const openDoor = useCallback(async (door) => {
     if (!door?.id || openingLockRef.current) return;

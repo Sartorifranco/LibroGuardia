@@ -12,6 +12,7 @@ import { useAuth } from './AuthContext';
 import { hasPermission } from '../utils/permissions';
 import { useHubLive } from './HubLiveContext';
 import { useRuntime } from './RuntimeContext';
+import usePolling from '../hooks/usePolling';
 import {
   applyAlarmEvent,
   guideFor,
@@ -19,6 +20,9 @@ import {
   nativeAlertsEnabled,
   playCriticalCue
 } from '../utils/alarmGuide';
+
+export const ALARMS_POLL_MS = 45000;
+export const ALARMS_HIDDEN_POLL_MS = 180000;
 
 const GuardAlarmsContext = createContext({
   alarms: [],
@@ -73,14 +77,20 @@ export function GuardAlarmsProvider({ children }) {
     reload().finally(() => {
       if (!cancelled) setLoading(false);
     });
-    const pollMs = mode === 'lan' && connected ? 0 : 15000;
-    if (!pollMs) return () => { cancelled = true; };
-    const id = setInterval(reload, pollMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
+    return () => { cancelled = true; };
   }, [authToken, mode, connected, reload]);
+
+  // En LAN con el hub conectado las alarmas llegan por SSE: no se consulta.
+  // En la nube: cada 45 s a la vista; con la pestaña oculta solo si están activos los
+  // avisos del sistema (suenan aunque no se mire), cada 3 min. Al volver, refresca enseguida.
+  const livePushed = mode === 'lan' && connected;
+  const backgroundAlerts = nativeAlertsEnabled();
+  usePolling(reload, ALARMS_POLL_MS, {
+    enabled: Boolean(authToken) && !livePushed,
+    immediate: false,
+    pauseWhenHidden: !backgroundAlerts,
+    hiddenIntervalMs: ALARMS_HIDDEN_POLL_MS
+  });
 
   useEffect(() => subscribe((event) => {
     if (event.type === 'alarm') {

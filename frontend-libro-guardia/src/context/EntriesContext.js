@@ -17,8 +17,10 @@ import { entryIdentity, normalizeAccessEntry } from '../utils/accessEventText';
 import usePolling from '../hooks/usePolling';
 
 const EntriesContext = createContext(null);
-const POLL_MIN_MS = 15000;
-const POLL_MAX_MS = 60000;
+// Los movimientos propios se ven al instante (se recarga al registrar); los de otros puestos,
+// en hasta 2 min. En LAN llegan además por SSE del hub.
+const POLL_MIN_MS = 120000;
+const POLL_MAX_MS = 300000;
 /** Varias pantallas llaman reloadEntries tras cada registro: como mucho 1 request cada 3 s. */
 export const RELOAD_MIN_INTERVAL_MS = 3000;
 
@@ -134,7 +136,7 @@ export function EntriesProvider({ children }) {
   }), [subscribe]);
 
   const pollEntries = useCallback(() => reloadEntries(true), [reloadEntries]);
-  // Pausa con la pestaña oculta; backoff 15 s → 60 s si falla.
+  // Pausa con la pestaña oculta; backoff 2 min → 5 min si falla.
   usePolling(pollEntries, POLL_MIN_MS, {
     enabled: Boolean(userKey && authToken),
     maxBackoffMs: POLL_MAX_MS,

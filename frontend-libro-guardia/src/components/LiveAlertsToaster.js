@@ -11,7 +11,9 @@ import {
 import IdentityVerificationModal from './IdentityVerificationModal';
 
 // El servidor cachea /guard/live-alerts 15 s: pedir más seguido no trae nada nuevo.
-const POLL_MS = 15000;
+const POLL_MS = 60000;
+// Con la pestaña oculta y los avisos del sistema activos, se sigue consultando pero más espaciado.
+const HIDDEN_POLL_MS = 180000;
 const DISPLAY_MS = 8000;
 const MAX_VISIBLE = 4;
 const NOTIF_PREF_KEY = 'mss.guard.nativeNotifications';
@@ -142,7 +144,8 @@ function LiveAlertsToaster({ enabled = true, pollMs = POLL_MS }) {
   // (que justamente se muestran cuando la pestaña no está a la vista).
   usePolling(pollAlerts, Math.max(3000, pollMs), {
     enabled: Boolean(enabled && authToken && currentUser),
-    pauseWhenHidden: !notifEnabled
+    pauseWhenHidden: !notifEnabled,
+    hiddenIntervalMs: HIDDEN_POLL_MS
   });
 
   useEffect(() => () => {

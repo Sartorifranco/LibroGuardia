@@ -12,18 +12,21 @@ const isPageHidden = () => typeof document !== 'undefined' && document.visibilit
  *   hasta ese tope; un éxito la vuelve a `intervalMs`.
  * - `resetKey`: cualquier valor que, al cambiar, reinicia el polling (p. ej. el id de usuario).
  * - `pauseWhenHidden: false`: sigue con la pestaña oculta (p. ej. avisos nativos del sistema).
+ * - `hiddenIntervalMs`: con `pauseWhenHidden: false`, la espera mientras la pestaña está oculta
+ *   (más larga que `intervalMs` para casi no consultar con el puesto en segundo plano).
  *
  * @param {() => any|Promise<any>} callback
  * @param {number} intervalMs
  * @param {{ enabled?: boolean, immediate?: boolean, maxBackoffMs?: number|null, resetKey?: any,
- *   pauseWhenHidden?: boolean }} [options]
+ *   pauseWhenHidden?: boolean, hiddenIntervalMs?: number|null }} [options]
  */
 export default function usePolling(callback, intervalMs, {
   enabled = true,
   immediate = true,
   maxBackoffMs = null,
   resetKey = null,
-  pauseWhenHidden = true
+  pauseWhenHidden = true,
+  hiddenIntervalMs = null
 } = {}) {
   useEffect(() => {
     const isHidden = () => pauseWhenHidden && isPageHidden();
@@ -42,7 +45,8 @@ export default function usePolling(callback, intervalMs, {
     const schedule = () => {
       clear();
       if (cancelled || isHidden()) return;
-      timer = setTimeout(tick, delay);
+      const wait = hiddenIntervalMs > 0 && isPageHidden() ? Math.max(delay, hiddenIntervalMs) : delay;
+      timer = setTimeout(tick, wait);
     };
 
     async function tick() {
@@ -66,6 +70,7 @@ export default function usePolling(callback, intervalMs, {
     const onVisibility = () => {
       if (isPageHidden()) {
         if (pauseWhenHidden) clear();
+        else if (hiddenIntervalMs > 0 && !running) schedule();
         return;
       }
       if (!running) {
@@ -87,7 +92,8 @@ export default function usePolling(callback, intervalMs, {
         document.removeEventListener('visibilitychange', onVisibility);
       }
     };
-  }, [callback, intervalMs, enabled, immediate, maxBackoffMs, resetKey, pauseWhenHidden]);
+  }, [callback, intervalMs, enabled, immediate, maxBackoffMs, resetKey, pauseWhenHidden,
+    hiddenIntervalMs]);
 }
 
 export { usePolling };

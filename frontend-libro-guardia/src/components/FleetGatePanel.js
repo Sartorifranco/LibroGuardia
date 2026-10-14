@@ -13,6 +13,9 @@ import { apiFetch } from '../services/api';
 import usePolling from '../hooks/usePolling';
 import { gpsProviderDisplayName } from '../utils/gpsProviderLabel';
 
+// El cron del servidor actualiza la foto del GPS cada 5 min: consultar más seguido no trae nada nuevo.
+const FLEET_MIN_POLL_SECONDS = 150;
+
 function FleetGatePanel({
   authToken,
   enabled = true,
@@ -29,7 +32,7 @@ function FleetGatePanel({
   const [error, setError] = useState('');
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [pollMs, setPollMs] = useState(Math.max(pollSeconds, 30) * 1000);
+  const [pollMs, setPollMs] = useState(Math.max(pollSeconds, FLEET_MIN_POLL_SECONDS) * 1000);
   const seenEntryIdsRef = useRef(new Set());
   const onMovementRegisteredRef = useRef(onMovementRegistered);
   onMovementRegisteredRef.current = onMovementRegistered;
@@ -52,7 +55,7 @@ function FleetGatePanel({
 
       const configuredPoll = Number(data.config?.pollIntervalSeconds);
       if (!Number.isNaN(configuredPoll) && configuredPoll >= 30) {
-        setPollMs(configuredPoll * 1000);
+        setPollMs(Math.max(configuredPoll, FLEET_MIN_POLL_SECONDS) * 1000);
       }
 
       const newlyRegistered = (data.registered || []).filter((item) => {
