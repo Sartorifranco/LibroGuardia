@@ -47,7 +47,8 @@ export function duracionFormFrom(visita = null, now = new Date()) {
     fecha: ymdLocal(expected),
     horaDesde: hmLocal(expected),
     horaHasta: duracion === 'horas' && until ? hmLocal(until) : hmLocal(defaultHasta),
-    fechaHasta: duracion === 'mes' && until ? ymdLocal(until) : ymdLocal(expected)
+    fechaHasta: duracion === 'mes' && until ? ymdLocal(until) : ymdLocal(expected),
+    scheduleId: duracion === 'mes' && visita?.scheduleId ? String(visita.scheduleId) : ''
   };
 }
 
@@ -61,10 +62,18 @@ const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 const HM_RE = /^\d{2}:\d{2}$/;
 
 /**
- * Valida igual que el backend y arma { fechaHoraEsperada, duracion, validoHasta }.
+ * Valida igual que el backend y arma { fechaHoraEsperada, duracion, validoHasta, scheduleId }.
+ * scheduleId solo aplica a "Por mes"; en el resto va null para borrar uno anterior al editar.
  * @returns {{ error: string }|{ payload: object }}
  */
 export function buildDuracionPayload(form) {
+  const built = buildDuracionBase(form);
+  if (built.error) return built;
+  const isMes = built.payload.duracion === 'mes';
+  return { payload: { ...built.payload, scheduleId: isMes && form?.scheduleId ? String(form.scheduleId) : null } };
+}
+
+function buildDuracionBase(form) {
   const duracion = normalizeDuracion(form?.duracion);
   const fecha = String(form?.fecha || '');
   if (!YMD_RE.test(fecha)) return { error: 'Elegí el día de la visita.' };
@@ -80,7 +89,6 @@ export function buildDuracionPayload(form) {
     if (fechaHasta > addDaysYmd(fecha, MAX_MES_DAYS - 1)) {
       return { error: `El pase por mes puede durar como máximo ${MAX_MES_DAYS} días.` };
     }
-    // TODO(visitas): horario del sitio (scheduleId) cuando haya un endpoint de horarios para empleados.
     return { payload: { fechaHoraEsperada: start.toISOString(), duracion, validoHasta: fechaHasta } };
   }
 
@@ -118,7 +126,10 @@ export function formatValidezCorta(visita, now = new Date()) {
   if (!start) return 'Sin fecha';
   const duracion = normalizeDuracion(visita?.duracion);
   const end = finDe(visita);
-  if (duracion === 'mes') return `Del ${diaCorto(start)} al ${diaCorto(end || start)}`;
+  if (duracion === 'mes') {
+    const rango = `Del ${diaCorto(start)} al ${diaCorto(end || start)}`;
+    return visita?.scheduleResumen ? `${rango} · ${visita.scheduleResumen}` : rango;
+  }
   if (duracion === 'dia') return `${diaRelativo(start, now)}, todo el día`;
   if (duracion === 'horas') {
     return end ? `${diaRelativo(start, now)} ${horaCorta(start)} a ${horaCorta(end)}` : `${diaRelativo(start, now)} desde ${horaCorta(start)}`;
@@ -137,7 +148,11 @@ export function formatValidezInvitacion(invite) {
   if (!start) return 'Sin fecha de vigencia';
   const duracion = normalizeDuracion(invite?.duracion);
   const end = finDe(invite);
-  if (duracion === 'mes') return `Válido del ${diaCorto(start)} al ${diaCorto(end || start)}`;
+  if (duracion === 'mes') {
+    const rango = `Válido del ${diaCorto(start)} al ${diaCorto(end || start)}`;
+    const horario = invite?.horario || invite?.scheduleResumen;
+    return horario ? `${rango}, ${horario}` : rango;
+  }
   if (duracion === 'dia') return `Válido todo el día ${diaCorto(start)}`;
   if (duracion === 'horas') {
     return end

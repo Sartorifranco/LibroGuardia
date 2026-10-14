@@ -4,8 +4,9 @@ import { DURACION_OPCIONES, MAX_MES_DAYS } from '../utils/visitaDuracion';
 /**
  * ¿Cuánto dura el pase? Cuatro tarjetas grandes y los campos de fecha/hora que pide cada una.
  * `value` tiene la forma de duracionFormFrom (utils/visitaDuracion.js).
+ * `horarios`: horarios del sitio [{ id, nombre, resumen }] para limitar un pase "Por mes".
  */
-function VisitaDuracionPicker({ value, onChange, disabled = false, idPrefix = 'dur' }) {
+function VisitaDuracionPicker({ value, onChange, disabled = false, idPrefix = 'dur', horarios = [] }) {
   const set = (patch) => onChange({ ...value, ...patch });
   const { duracion } = value;
   const isMes = duracion === 'mes';
@@ -86,7 +87,33 @@ function VisitaDuracionPicker({ value, onChange, disabled = false, idPrefix = 'd
               />
             </label>
           )}
+          {isMes && (
+            <label htmlFor={`${idPrefix}-horario`}>
+              Horario en que puede entrar
+              <select
+                id={`${idPrefix}-horario`}
+                className="input-field"
+                value={value.scheduleId || ''}
+                onChange={(e) => set({ scheduleId: e.target.value })}
+              >
+                <option value="">A cualquier hora</option>
+                {horarios.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.resumen ? `${h.nombre} (${h.resumen})` : h.nombre}
+                  </option>
+                ))}
+                {value.scheduleId && !horarios.some((h) => h.id === value.scheduleId) && (
+                  <option value={value.scheduleId}>Horario actual</option>
+                )}
+              </select>
+            </label>
+          )}
         </div>
+        {isMes && !horarios.length && (
+          <p className="empleado-hint">
+            Para limitar los días y horas de ingreso, Administración tiene que cargar los horarios en Accesos → Horarios.
+          </p>
+        )}
         {isMes && (
           <p className="empleado-hint">
             Como máximo {MAX_MES_DAYS} días. Seguridad lo tiene que aprobar antes de que sirva.
