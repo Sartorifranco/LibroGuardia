@@ -9,7 +9,7 @@ Lista única de lo que falta. Para retomar algo: abrir una sesión nueva y decir
 
 | # | Qué | Por qué importa | Quién |
 |---|---|---|---|
-| 1.1 | Cargar la clave de firma del borde en la nube (secreto `EDGE_SIGNING_PRIVATE_KEY`) | Sin ella la nube firma con una clave distinta cada vez y ningún equipo acepta la configuración (el QR no abre) | 🧠 + 👤 OK |
+| 1.1 | ✅ Hecho 2026-10-14: secreto `EDGE_SIGNING_PRIVATE_KEY` cargado (es la clave del banco) y hub apuntando a la nube. **Antes de producción: rotarla por una generada solo para la nube** | Sin ella ningún equipo acepta la configuración | 🔒 rotación |
 | 1.2 | Rol **Supervisor** en la base: sumarle "Aprobar o rechazar solicitudes de visita" y "Ver las alarmas del sitio" | La copia guardada del rol es vieja; Surly no puede aprobar | 👤 (Roles y permisos) |
 | 1.3 | Repetir la prueba: Debora invita → Surly aprueba → QR abre la puerta-p1 | Cierra el paso 3 | 👤 + 🧠 |
 | 1.4 | Si todo da bien: merge `integracion/revision-2026-10` → `main` y push | `main` está atrás | 🧠 con tu OK |
