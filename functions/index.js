@@ -12,6 +12,8 @@ exports.api = onRequest(
     region: 'southamerica-east1',
     timeoutSeconds: 300,
     memory: '1GiB',
+    // Clave Ed25519 con la que se firma la config del borde (lib/siteCompiler/signing.js).
+    secrets: ['EDGE_SIGNING_PRIVATE_KEY'],
   },
   app
 );
