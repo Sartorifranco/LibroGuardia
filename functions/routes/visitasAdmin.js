@@ -17,14 +17,10 @@ const router = express.Router();
 
 const newInviteToken = () => crypto.randomBytes(24).toString('hex');
 
-const serializeVisita = (v) => ({
-  ...v,
-  createdAt: v.createdAt?.toDate ? v.createdAt.toDate().toISOString() : v.createdAt,
-  fechaHoraEsperada: v.fechaHoraEsperada?.toDate
-    ? v.fechaHoraEsperada.toDate().toISOString()
-    : v.fechaHoraEsperada,
-  aprobadoAt: v.aprobadoAt?.toDate ? v.aprobadoAt.toDate().toISOString() : v.aprobadoAt
-});
+// Todo Timestamp de Firestore (createdAt, validoHasta, inviteExpiresAt, ...) sale como ISO.
+const serializeVisita = (v) => Object.fromEntries(
+  Object.entries(v).map(([k, val]) => [k, val?.toDate ? val.toDate().toISOString() : val])
+);
 
 const actorLabel = (user) => String(
   user?.nombre || user?.username || user?.email || user?.id || ''
