@@ -17,6 +17,7 @@ import {
   AdminTable
 } from '../../../components/admin/AdminUi';
 import { PageHeader, AdvancedSection, HelpTip, EmptyState, Modal, WizardModal, PageContainer } from '../../../components/admin-ui';
+import PermissionPicker from '../../../components/admin-ui/PermissionPicker';
 import { hasPermission, canManageTargetUser, PERMISSION_LABELS, isAccessStationAccount, ACCESS_STATION_ROLE_ID, ACCESS_STATION_ROLE_LABEL, humanRoleLabel, buildPermissionCategories } from '../../../utils/permissions';
 import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
@@ -859,21 +860,19 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                 <AdvancedSection title="Opciones avanzadas">
                   <h4 className="admin-block__title">Permisos extra</h4>
                   <p className="historial-meta">Se suman a lo que ya puede hacer por su puesto. Dejalos vacíos si el puesto alcanza.</p>
-                  {buildPermissionCategories(permissionKeys.length ? permissionKeys : Object.keys(PERMISSION_LABELS)).map((group) => (
-                    <fieldset key={group.id} style={{ border: 0, padding: 0, margin: 0 }}>
-                      <legend className="admin-block__title">{group.label}</legend>
-                      {group.permissions.map((permission) => (
-                        <label key={permission} className="admin-simple-sentence">
-                          <input
-                            type="checkbox"
-                            checked={editingUserPermissions.includes(permission)}
-                            onChange={() => toggleEditingUserPermission(permission)}
-                          />
-                          {PERMISSION_LABELS[permission] || 'Permiso adicional'}
-                        </label>
-                      ))}
-                    </fieldset>
-                  ))}
+                  {(() => {
+                    const role = (systemRoles || []).find((r) => r.id === editingUser.role);
+                    return (
+                      <PermissionPicker
+                        categories={buildPermissionCategories(permissionKeys.length ? permissionKeys : Object.keys(PERMISSION_LABELS))}
+                        labels={PERMISSION_LABELS}
+                        rolePermissions={role?.permissions || []}
+                        roleLabel={role?.label || humanRoleLabel(editingUser.role)}
+                        selected={editingUserPermissions}
+                        onToggle={toggleEditingUserPermission}
+                      />
+                    );
+                  })()}
                   <PendingButton
                     type="button"
                     actionId="saveUserPermissions"

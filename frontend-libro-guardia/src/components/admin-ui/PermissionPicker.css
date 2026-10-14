@@ -1,0 +1,139 @@
+.perm-picker-container {
+  font-family: sans-serif; /* Usar una fuente genérica, o la del proyecto */
+  padding: 1rem;
+}
+
+.perm-picker-header {
+  margin-bottom: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  border-bottom: 1px solid var(--color-border, rgba(148,163,184,.3));
+  padding-bottom: 1.5rem;
+}
+
+.perm-picker-search-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border, rgba(148,163,184,.3));
+  border-radius: 0.375rem; /* rounded-md */
+  font-size: 1rem;
+  background-color: var(--color-bg-input, #fff); /* Asumiendo una variable para fondo de input */
+  color: var(--color-text, #333);
+
+}
+
+.perm-picker-search-input::placeholder {
+  color: var(--color-text-muted, #94a3b8);
+}
+
+.perm-picker-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: var(--color-text, #333);
+}
+
+.perm-picker-toggle-checkbox {
+  /* Estilos básicos para checkbox, la app puede tener globales */
+  width: 1.15rem;
+  height: 1.15rem;
+  cursor: pointer;
+}
+
+.perm-picker-no-results {
+  color: var(--color-text-muted, #94a3b8);
+  text-align: center;
+  margin-top: 2rem;
+  font-style: italic;
+}
+
+.perm-picker-category-fieldset {
+  border: 1px solid var(--color-border, rgba(148,163,184,.3));
+  border-radius: 0.375rem; /* rounded-md */
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.perm-picker-category-legend {
+  font-size: 1.125rem; /* text-lg */
+  font-weight: 600; /* font-semibold */
+  padding: 0 0.5rem;
+  color: var(--color-text, #333);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.perm-picker-category-counter {
+  font-size: 0.875rem; /* text-sm */
+  color: var(--color-primary, #6366f1); /* Asumiendo una variable de color primario */
+  background-color: var(--color-primary-light, rgba(99,102,241,.1)); /* Fondo más claro */
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px; /* rounded-full */
+  font-weight: normal;
+}
+
+.perm-picker-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem 1.5rem; /* Espaciado vertical y horizontal */
+  margin-top: 1rem;
+}
+
+@media (min-width: 720px) {
+  .perm-picker-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.perm-picker-item {
+  display: flex;
+  align-items: flex-start; /* Alinea el checkbox arriba del texto si el texto es largo */
+  padding: 0.5rem 0;
+  min-height: 40px; /* Altura mínima clickeable */
+  cursor: pointer;
+}
+
+.perm-picker-item--disabled {
+  color: var(--color-text-muted, #94a3b8);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.perm-picker-item input[type="checkbox"] {
+  flex-shrink: 0; /* Evita que el checkbox se achique */
+  margin-top: 0.25rem; /* Ajuste para alinear con el texto */
+  margin-right: 0.75rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  cursor: inherit; /* Hereda el cursor del padre */
+}
+
+.perm-picker-item-label {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  cursor: inherit; /* Hereda el cursor del padre */
+  padding-top: 0.125rem; /* Ajuste fino para la altura mínima */
+  padding-bottom: 0.125rem;
+}
+
+.perm-picker-item--disabled .perm-picker-item-label {
+  color: inherit; /* Mantener el color atenuado del padre */
+}
+
+.perm-picker-item {
+  flex-wrap: wrap;
+}
+
+/* La nota va en su renglón, alineada con el texto (ancho del checkbox + margen). */
+.perm-picker-role-info {
+  flex-basis: 100%;
+  padding-left: calc(1.15rem + 0.75rem);
+  font-size: 0.75rem; /* text-xs */
+  color: var(--color-text-muted, #94a3b8);
+  margin-top: 0.2rem;
+}
