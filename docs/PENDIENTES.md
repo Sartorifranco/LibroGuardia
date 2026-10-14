@@ -16,6 +16,18 @@ Lista única de lo que falta. Para retomar algo: abrir una sesión nueva y decir
 | 1.3b | **No existe pantalla para que el guardia apruebe ingresos** de puertas con "¿El guardia tiene que aprobar cada ingreso?" (`requireGuardApproval`). Con esa opción la puerta nunca abre por credencial (`needs_approval`). Construirla (desde el panel de Guardia, vía hub) o no usar la opción | Bloquea portones de clientes | 🧠 diseño + 🔒 |
 | 1.4 | Si todo da bien: merge `integracion/revision-2026-10` → `main` y push | `main` está atrás | 🧠 con tu OK |
 
+## 1b. Aviso al guardia cuando pasa una visita (pedido 2026-10-14)
+
+Hoy, cuando una visita pasa su QR, el guardia no se entera y en "Autorizados" sigue diciendo "Esperando ingreso" (los eventos de la puerta no actualizan la visita).
+
+Propuesta (una sola función, que también resuelve el 1.3b):
+1. **Opción por puerta:** "Avisar al guardia cuando pasa una visita o un externo" (Ingreso Principal y portones). Los empleados no avisan, para no cansar al guardia.
+2. **Ventana emergente en la pantalla del guardia**, con sonido: nombre, foto si la hay, empresa, anfitrión, puerta y hora. Botones **"Es la persona"** / **"No coincide"** (abre una novedad). Si la puerta pide aprobación, el mismo cartel tiene **"Abrir"**/**"No abrir"** (1.3b).
+3. **En vivo desde el hub** (red del predio, funciona sin internet); en la nube llega con unos segundos de atraso.
+4. **La visita pasa a "Ingresó 15:40"** cuando la nube recibe el evento de la puerta (arregla "Esperando ingreso" en Autorizados y en Mis visitas).
+
+Quién: 🧠 diseño; 🔒 hub/eventos; 🆓 ventana emergente y textos.
+
 ## 2. Arreglos chicos
 
 | # | Qué | Quién |
