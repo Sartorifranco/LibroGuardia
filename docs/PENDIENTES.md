@@ -40,12 +40,11 @@ Lista única de lo que falta. Para retomar algo: abrir una sesión nueva y decir
 
 ## 4. Revisión completa del sistema (sesión aparte)
 
-Recorrer de punta a punta **guardia** y **administración**, en PC y celular, y anotar lo desprolijo. Ya marcado:
-- La barra de arriba (botones sueltos: tema, tutorial, usuario, contraseña, panel admin, áreas, salir).
-- La pantalla de Autorizaciones (botones "Aprobadas"/"Historial" casi invisibles en tema oscuro; mezcla con la de visitas).
-- Textos de grupos de permisos poco legibles en tema oscuro.
-
-Salida esperada: una lista de arreglos por pantalla, cada uno con captura chica y a quién va.
+✅ Recorrido hecho 2026-10-14: **25 arreglos** en `docs/REVISION-UI-2026-10.md` (por pantalla, con capturas en `docs/revision-ui/` y a quién va). Para seguir: "seguí con R.x de docs/REVISION-UI-2026-10.md".
+- Primero: R.15 (botones invisibles en Autorizaciones), R.3 (no vuelve arriba al cambiar de pantalla), R.12 ("Guardando…" falso en Personal), R.4–R.6 (títulos rojos, mayúsculas, rojo de Borrar).
+- Después: barra de arriba y franjas de admin (R.1, R.2), con diseño antes.
+- R.25: ~14 pedidos por minuto por puesto de guardia; revisar que no lean Firestore cada vez.
+- R.23 (grupos de permisos en tema oscuro) no se pudo confirmar a ojo: 👤 mirarlo.
 
 ## 5. Próximas etapas de visitas (`docs/VISITAS-DISENO.md` §4)
 
