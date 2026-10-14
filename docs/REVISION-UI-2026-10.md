@@ -10,7 +10,7 @@ Recorrido de **guardia** y **administración** en mss-guard.web.app, tema oscuro
 |---|---|---|---|
 | R.1 | Barra de arriba con 8 botones sueltos (tema, tutorial, usuario, contraseña, panel admin, áreas, salir, buscador). En celular ocupa casi un tercio de pantalla. Ver `g-personal.jpg` | Dejar buscador + estado "En línea" + un botón de usuario que abra un menú con tema, tutorial, contraseña, áreas y salir. Diseño primero | 🧠 diseño + 🆓 |
 | R.2 | En admin, "Volver a operación" aparece dos veces (barra de arriba y franja de abajo) y además está la franja "Panel de control / Configuración del sistema". El contenido empieza a 240 px de arriba. Ver `a-primeros-pasos.jpg` | Sacar la franja "Volver…" (queda el botón de la barra) y achicar "Panel de control" a una línea | 🆓 |
-| R.3 | Al cambiar de pantalla no vuelve arriba: se abre con el scroll de la pantalla anterior. Ver `g-citados.jpg` | `window.scrollTo(0,0)` al cambiar de ruta (un componente `ScrollToTop`) | 🧠 (pocas líneas) |
+| R.3 | Al cambiar de pantalla no vuelve arriba: se abre con el scroll de la pantalla anterior. Ver `g-citados.jpg` | `window.scrollTo(0,0)` al cambiar de ruta (un componente `ScrollToTop`) | ✅ 2026-10-14 (`ScrollToTop` en `App.js`) |
 | R.4 | Títulos de guardia en rojo ("Registro de Personal", "Autorizaciones", "Historial"): parecen error | Usar el color de título normal; rojo solo para alertas | 🆓 |
 | R.5 | Mayúsculas mezcladas: "Tipo de Movimiento", "Hora Real", "Registrar Flota", "Registro de Novedad" | Solo la primera palabra en mayúscula | 🆓 |
 | R.6 | Botones rojos "Borrar"/"Eliminar" con poco contraste en tema oscuro (2,3:1; mínimo 4,5:1) — Lugares, Estancos, Usuarios, Roles | Aclarar el rojo del texto o usar fondo rojo con texto blanco | 🆓 |

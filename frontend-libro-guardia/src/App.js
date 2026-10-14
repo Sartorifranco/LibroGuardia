@@ -846,9 +846,19 @@ function AppRoutes() {
   );
 }
 
+// Al cambiar de pantalla, arrancar desde arriba (no heredar el scroll de la anterior).
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+}
+
 function App() {
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <ToastProvider>
         <ConfirmProvider>
           <AuthProvider>
