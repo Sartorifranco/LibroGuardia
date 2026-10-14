@@ -133,6 +133,39 @@ describe('EmpleadoVisitasPage — duración del pase', () => {
     expect(postBody()).toEqual(expect.objectContaining({ ...esperado, destinoId: 'd1', nombreVisitante: 'Juan Gómez' }));
   });
 
+  it('"Por mes" deja elegir el horario del sitio y lo manda como scheduleId', async () => {
+    mockApi({
+      'GET /empleado/horarios': () => Promise.resolve({
+        horarios: [{ id: 'sch_oficina', nombre: 'Oficina', resumen: 'lun a vie 8:00 a 17:00' }]
+      }),
+      'POST /empleado/visitas': () => Promise.resolve({ message: 'ok', visita: { id: 'v9', estado: 'pendiente_aprobacion' } })
+    });
+    renderPage();
+    await fillAlta();
+    fireEvent.click(screen.getByRole('radio', { name: /Por mes/ }));
+    fireEvent.change(screen.getByLabelText('Desde el día'), { target: { value: '2026-10-14' } });
+    fireEvent.change(screen.getByLabelText('Hasta el día'), { target: { value: '2026-11-13' } });
+    const horario = screen.getByLabelText('Horario en que puede entrar');
+    await screen.findByRole('option', { name: 'Oficina (lun a vie 8:00 a 17:00)' });
+    fireEvent.change(horario, { target: { value: 'sch_oficina' } });
+    submitAlta();
+    await waitFor(() => expect(postBody()).toBeDefined());
+    expect(postBody()).toEqual(expect.objectContaining({ duracion: 'mes', scheduleId: 'sch_oficina' }));
+  });
+
+  it('sin horarios cargados, "Por mes" vale a cualquier hora y lo explica', async () => {
+    mockApi({
+      'POST /empleado/visitas': () => Promise.resolve({ message: 'ok', visita: { id: 'v9', estado: 'pendiente_aprobacion' } })
+    });
+    renderPage();
+    await fillAlta();
+    fireEvent.click(screen.getByRole('radio', { name: /Por mes/ }));
+    expect(screen.getByText(/Administración tiene que cargar los horarios/)).toBeInTheDocument();
+    submitAlta();
+    await waitFor(() => expect(postBody()).toBeDefined());
+    expect(postBody().scheduleId).toBeNull();
+  });
+
   it('no deja pedir un pase por mes de más de 31 días', async () => {
     mockApi();
     renderPage();

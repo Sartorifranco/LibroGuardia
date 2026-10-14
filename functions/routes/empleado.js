@@ -24,6 +24,8 @@ const { generatePassCode } = require('../lib/visitPassCode');
 const { logAdminAction } = require('../lib/auditLog');
 const { resolveVisitDuration, inviteExpiresAtOf } = require('../lib/visitDuration');
 const { checkVisitHost } = require('../lib/visitasSettings');
+const { isReservedScheduleId } = require('../lib/accessModel');
+const { scheduleResumen } = require('../lib/scheduleResumen');
 
 const router = express.Router();
 
@@ -54,15 +56,25 @@ const denyIfNotHost = async (req, res, profile) => {
   return true;
 };
 
-/** Duración + horario del sitio (si viene) → { error } o la duración resuelta. */
+/**
+ * Duración + horario del sitio (si viene) → { error } o la duración resuelta, con
+ * scheduleNombre/scheduleResumen para mostrar sin volver a leer el horario.
+ */
 const resolveDuracion = async (input) => {
   const dur = resolveVisitDuration(input);
   if (dur.error) return dur;
-  if (dur.scheduleId) {
-    const sch = await db.collection('schedules').doc(dur.scheduleId).get();
-    if (!sch.exists) return { error: 'El horario elegido no existe. Elegí otro o dejalo sin horario.' };
+  if (!dur.scheduleId) return { ...dur, scheduleNombre: null, scheduleResumen: null };
+  if (isReservedScheduleId(dur.scheduleId)) {
+    return { error: 'El horario elegido no existe. Elegí otro o dejalo sin horario.' };
   }
-  return dur;
+  const sch = await db.collection('schedules').doc(dur.scheduleId).get();
+  if (!sch.exists) return { error: 'El horario elegido no existe. Elegí otro o dejalo sin horario.' };
+  const data = sch.data() || {};
+  return {
+    ...dur,
+    scheduleNombre: String(data.name || '').trim() || null,
+    scheduleResumen: scheduleResumen(data.intervals) || null
+  };
 };
 
 /** Solo los últimos 3 dígitos del DNI (la página pública no muestra el DNI completo). */
@@ -117,6 +129,27 @@ router.get(
       res.json({ destinos });
     } catch (err) {
       sendServerError(res, err, 'Error al listar destinos');
+    }
+  }
+);
+
+/** Horarios del sitio (id, nombre y resumen) para limitar un pase "Por mes". Solo lectura. */
+router.get(
+  '/api/empleado/horarios',
+  auth,
+  requireAnyPermission(['visitas.create', 'visitas.request']),
+  async (_req, res) => {
+    try {
+      const snap = await db.collection('schedules').orderBy('name').limit(50).get();
+      const horarios = snap.docs
+        .filter((d) => !isReservedScheduleId(d.id))
+        .map((d) => {
+          const data = d.data() || {};
+          return { id: d.id, nombre: String(data.name || d.id), resumen: scheduleResumen(data.intervals) };
+        });
+      res.json({ horarios });
+    } catch (err) {
+      sendServerError(res, err, 'Error al listar horarios');
     }
   }
 );
@@ -236,6 +269,8 @@ router.post(
         duracion: dur.duracion,
         validoHasta: Timestamp.fromDate(dur.validoHasta),
         scheduleId: dur.scheduleId,
+        scheduleNombre: dur.scheduleNombre,
+        scheduleResumen: dur.scheduleResumen,
         motivo,
         destinoId,
         destinoNombre: destino.nombre || '',
@@ -447,6 +482,8 @@ router.patch(
         duracion: dur.duracion,
         validoHasta: Timestamp.fromDate(dur.validoHasta),
         scheduleId: dur.scheduleId,
+        scheduleNombre: dur.scheduleNombre,
+        scheduleResumen: dur.scheduleResumen,
         motivo: hasMotivo ? String(body.motivo || '').trim() : (data.motivo || ''),
         destinoId,
         destinoNombre: destino.nombre || '',
@@ -540,6 +577,8 @@ router.get('/api/public/visita-invite/:token', async (req, res) => {
         destinoNombre: v.destinoNombre || '',
         fechaHoraEsperada: v.fechaHoraEsperada,
         duracion: v.duracion || 'un_ingreso',
+        validoHasta: v.validoHasta || null,
+        horario: v.scheduleResumen || null,
         inviteExpiresAt: expiresAt ? expiresAt.toISOString() : null,
         motivo: v.motivo || '',
         estado

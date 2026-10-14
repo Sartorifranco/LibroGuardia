@@ -54,6 +54,7 @@ function EmpleadoVisitasPage() {
   const canSubmit = canCreate || canRequest;
 
   const [destinos, setDestinos] = useState([]);
+  const [horarios, setHorarios] = useState([]);
   const [visitas, setVisitas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -85,10 +86,15 @@ function EmpleadoVisitasPage() {
       if (canSubmit) {
         tasks.unshift(apiFetch('/empleado/destinos', { token: authToken }));
       }
+      if (canSubmit) {
+        // Sin horarios el formulario sigue andando ("a cualquier hora").
+        tasks.push(apiFetch('/empleado/horarios', { token: authToken }).catch(() => ({ horarios: [] })));
+      }
       const results = await Promise.all(tasks);
       if (canSubmit) {
         setDestinos(results[0].destinos || []);
         setVisitas(results[1].visitas || []);
+        setHorarios(results[2]?.horarios || []);
       } else {
         setDestinos([]);
         setVisitas(results[0].visitas || []);
@@ -414,6 +420,7 @@ function EmpleadoVisitasPage() {
                 onChange={setDurForm}
                 disabled={!destinos.length || saving}
                 idPrefix="alta-dur"
+                horarios={horarios}
               />
               <div className="empleado-form-full">
                 <PersonPhotoField
@@ -547,6 +554,7 @@ function EmpleadoVisitasPage() {
             onChange={(dur) => setEditForm((f) => ({ ...f, dur }))}
             disabled={actionBusy}
             idPrefix="editar-dur"
+            horarios={horarios}
           />
           <label className="empleado-form-full">
             Destino
