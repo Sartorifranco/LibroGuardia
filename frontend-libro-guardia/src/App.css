@@ -2735,7 +2735,7 @@ input[type="datetime-local"].input-field {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 1.25rem 1.5rem;
+  padding: 0.6rem 1.25rem;
   background: linear-gradient(90deg, var(--accent-soft), transparent 55%);
   border-bottom: 1px solid var(--border);
 }
@@ -2755,8 +2755,11 @@ input[type="datetime-local"].input-field {
 }
 
 .admin-panel-top h2 {
-  margin: 0.35rem 0 0;
-  font-size: 1.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: 1rem;
   font-weight: 700;
   color: var(--text);
 }
@@ -7229,6 +7232,110 @@ body {
   gap: 0.45rem;
 }
 
+.app-header-drawer__nav-extra {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.app-header-drawer__nav-extra:empty {
+  display: none;
+}
+
+/* Menú de usuario (R.1): un solo botón con tema, tutorial, contraseña, áreas y salir */
+.user-menu {
+  position: relative;
+}
+
+.user-menu__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 44px;
+  max-width: 14rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 650;
+  font-size: 0.9rem;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.user-menu__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-menu__list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 60;
+  min-width: 15rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 0.5rem);
+  box-shadow: var(--shadow-card);
+}
+
+.user-menu__who {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 0.3rem;
+  padding: 0.45rem 0.6rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.user-menu__who span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.user-menu__list > button,
+.user-menu__list > a {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm, 0.5rem);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.user-menu__list > button:hover,
+.user-menu__list > a:hover,
+.user-menu__list > button:focus-visible,
+.user-menu__list > a:focus-visible {
+  background: var(--accent-soft);
+}
+
+.user-menu__list > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.user-menu__logout {
+  margin-top: 0.3rem;
+  border-top: 1px solid var(--border) !important;
+  border-radius: 0 !important;
+}
+
 .app-header-drawer .app-sidebar-link,
 .app-header-drawer .btn-onboarding-link,
 .app-header-drawer .btn-admin-panel,
@@ -7284,6 +7391,10 @@ body {
 
   .app-header-drawer__account {
     display: flex;
+  }
+
+  .user-menu__name {
+    display: none;
   }
 
   .app-header,

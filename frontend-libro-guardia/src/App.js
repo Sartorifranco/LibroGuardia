@@ -1,4 +1,4 @@
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useRef, useState, Suspense } from 'react';
 import {
   BrowserRouter,
   Routes,
@@ -11,7 +11,7 @@ import {
   useSearchParams,
   Link
 } from 'react-router-dom';
-import { Settings, LogOut, Sun, Moon, ArrowLeft, CloudOff, CircleHelp, KeyRound, Menu, X } from 'lucide-react';
+import { Settings, LogOut, Sun, Moon, ArrowLeft, CloudOff, CircleHelp, KeyRound, Menu, X, UserRound, ChevronDown, LayoutGrid } from 'lucide-react';
 import AccessKiosk from './components/AccessKiosk';
 import ToastStack from './components/ToastStack';
 import AppSidebar from './components/AppSidebar';
@@ -91,6 +91,93 @@ function RouteFallback() {
   return <p className="route-fallback" role="status">Cargando…</p>;
 }
 
+// Botón de usuario de la barra: junta tema, tutorial, contraseña, áreas y salir en un menú.
+function UserMenu({
+  currentUser,
+  isDark,
+  onToggleTheme,
+  onTutorial,
+  onChangePassword,
+  passwordDisabled,
+  showAreas,
+  onLogout
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const location = useLocation();
+
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('touchstart', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('touchstart', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const run = (fn) => () => {
+    setOpen(false);
+    fn();
+  };
+
+  return (
+    <div className="user-menu" ref={wrapRef}>
+      <button
+        type="button"
+        className="user-menu__btn"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls="user-menu-list"
+        title="Mi cuenta"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <UserRound size={18} aria-hidden />
+        <span className="user-menu__name">{currentUser.username}</span>
+        <ChevronDown size={16} aria-hidden />
+      </button>
+      {open && (
+        <div id="user-menu-list" className="user-menu__list" role="menu" aria-label="Mi cuenta">
+          <p className="user-menu__who">
+            <strong>{currentUser.username}</strong>
+            <span>{displayRoleLabel(currentUser)}</span>
+          </p>
+          <button type="button" role="menuitem" onClick={run(onToggleTheme)}>
+            {isDark ? <Sun size={16} aria-hidden /> : <Moon size={16} aria-hidden />}
+            {isDark ? 'Modo claro' : 'Modo oscuro'}
+          </button>
+          <button type="button" role="menuitem" onClick={run(onTutorial)}>
+            <CircleHelp size={16} aria-hidden /> Ver tutorial
+          </button>
+          <button type="button" role="menuitem" onClick={run(onChangePassword)} disabled={passwordDisabled}>
+            <KeyRound size={16} aria-hidden /> Cambiar mi contraseña
+          </button>
+          {showAreas && (
+            <Link to="/" role="menuitem" onClick={() => setOpen(false)}>
+              <LayoutGrid size={16} aria-hidden /> Cambiar de área
+            </Link>
+          )}
+          <button type="button" role="menuitem" className="user-menu__logout" onClick={run(onLogout)}>
+            <LogOut size={16} aria-hidden /> Salir
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AppHeader({ isAdminMode, activeAdminMeta }) {
   const chrome = useAppChrome();
   const location = useLocation();
@@ -123,49 +210,10 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
 
   const closeMenu = () => setMenuOpen(false);
 
-  const accountControls = (extraClass) => (
-    <div className={extraClass}>
-      <button
-        type="button"
-        className="theme-toggle-btn"
-        onClick={toggleTheme}
-        aria-label={isDark ? 'Activar modo claro' : 'Activar modo oscuro'}
-        title={isDark ? 'Modo claro' : 'Modo oscuro'}
-      >
-        {isDark ? <Sun size={18} /> : <Moon size={18} />}
-        <span className="header-drawer-label">{isDark ? 'Modo claro' : 'Modo oscuro'}</span>
-      </button>
-      <button
-        type="button"
-        className="btn-onboarding-link"
-        onClick={() => {
-          setTourAuto(false);
-          setTourOpen(true);
-          closeMenu();
-        }}
-        title="Ver tutorial"
-        aria-label="Ver tutorial"
-      >
-        <CircleHelp size={16} />
-        <span className="btn-onboarding-link__label">Ver tutorial</span>
-      </button>
-      <span className="user-info-tag">
-        {currentUser.username} · {displayRoleLabel(currentUser)}
-      </span>
-      <button
-        type="button"
-        className="btn-onboarding-link"
-        onClick={() => {
-          setChangePasswordOpen(true);
-          closeMenu();
-        }}
-        title="Cambiar mi contraseña"
-        aria-label="Cambiar mi contraseña"
-        disabled={mustChangePassword}
-      >
-        <KeyRound size={16} />
-        <span className="btn-onboarding-link__label">Mi contraseña</span>
-      </button>
+  // Botón para ir y volver de administración. En guardia, en compu ya está en la barra lateral,
+  // así que solo aparece en el menú del celular; en admin queda en la barra.
+  const adminNavButton = () => (
+    <>
       {runtimeMode !== 'lan' && canAccessAdmin(currentUser) && (
         isAdminMode ? (
           <button
@@ -194,19 +242,7 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
       {runtimeMode === 'lan' && canAccessAdmin(currentUser) && (
         <LanAdminButton currentUser={currentUser} onDone={closeMenu} />
       )}
-      {canAccessGuardia(currentUser) && canAccessAdmin(currentUser) && (
-        <Link to="/" className="btn-onboarding-link" title="Cambiar de área" onClick={closeMenu}>
-          Áreas
-        </Link>
-      )}
-      <button
-        type="button"
-        onClick={handleLogout}
-        className="btn-logout-link"
-      >
-        <LogOut size={16} /> Salir
-      </button>
-    </div>
+    </>
   );
 
   return (
@@ -272,7 +308,24 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
             {menuOpen ? <X size={20} /> : <Menu size={20} />}
             <span>Menú</span>
           </button>
-          {accountControls('app-header-actions__bar')}
+          {isAdminMode && <div className="app-header-actions__bar">{adminNavButton()}</div>}
+          <UserMenu
+            currentUser={currentUser}
+            isDark={isDark}
+            onToggleTheme={toggleTheme}
+            onTutorial={() => {
+              closeMenu();
+              setTourAuto(false);
+              setTourOpen(true);
+            }}
+            onChangePassword={() => {
+              closeMenu();
+              setChangePasswordOpen(true);
+            }}
+            passwordDisabled={mustChangePassword}
+            showAreas={canAccessGuardia(currentUser) && canAccessAdmin(currentUser)}
+            onLogout={handleLogout}
+          />
         </div>
       </div>
       {menuOpen && (
@@ -298,7 +351,7 @@ function AppHeader({ isAdminMode, activeAdminMeta }) {
               </ul>
             </nav>
           )}
-          {accountControls('app-header-drawer__account')}
+          <div className="app-header-drawer__nav-extra">{adminNavButton()}</div>
         </div>
       )}
       {isAdminMode && activeAdminMeta ? (
@@ -666,18 +719,6 @@ function AdminLayout() {
             <AppHeader isAdminMode activeAdminMeta={activeAdminMeta} />
             <div className="app-layout">
               <div className="app-content">
-                <div className="admin-mode-bar">
-                  <button type="button" className="admin-mode-back" onClick={exitAdminPanel}>
-                    <ArrowLeft size={18} /> Volver a operación de guardia
-                  </button>
-                  <div className="admin-mode-breadcrumb">
-                    <span>Operación</span>
-                    <span className="admin-mode-sep">/</span>
-                    <span className="admin-mode-current">Administración</span>
-                    <span className="admin-mode-sep">/</span>
-                    <span className="admin-mode-current">{activeAdminMeta.title}</span>
-                  </div>
-                </div>
                 <main className="app-main-inner">
                   {runtime.mode === 'lan' ? (
                     <LanUnavailable title="Administración" />

@@ -146,11 +146,7 @@ function AdminPage({ adminSection, adminQuery = {}, onSectionChange, onExit, onA
   return (
     <div className="admin-panel">
       <div className="admin-panel-top">
-        <div>
-          <span className="admin-panel-badge"><Settings size={12} /> Administración</span>
-          <h2>Panel de control</h2>
-          <p>Configuración del sistema.</p>
-        </div>
+        <h2><Settings size={16} aria-hidden /> Panel de control</h2>
         {pendingAction && (
           <div className="admin-action-indicator">
             <Loader2 className="animate-spin" size={18} />

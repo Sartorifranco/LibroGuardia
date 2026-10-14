@@ -8,8 +8,8 @@ Recorrido de **guardia** y **administración** en mss-guard.web.app, tema oscuro
 
 | # | Qué pasa | Arreglo propuesto | Quién |
 |---|---|---|---|
-| R.1 | Barra de arriba con 8 botones sueltos (tema, tutorial, usuario, contraseña, panel admin, áreas, salir, buscador). En celular ocupa casi un tercio de pantalla. Ver `g-personal.jpg` | Dejar buscador + estado "En línea" + un botón de usuario que abra un menú con tema, tutorial, contraseña, áreas y salir. Diseño primero | 🧠 diseño + 🆓 |
-| R.2 | En admin, "Volver a operación" aparece dos veces (barra de arriba y franja de abajo) y además está la franja "Panel de control / Configuración del sistema". El contenido empieza a 240 px de arriba. Ver `a-primeros-pasos.jpg` | Sacar la franja "Volver…" (queda el botón de la barra) y achicar "Panel de control" a una línea | 🆓 |
+| R.1 | Barra de arriba con 8 botones sueltos (tema, tutorial, usuario, contraseña, panel admin, áreas, salir, buscador). En celular ocupa casi un tercio de pantalla. Ver `g-personal.jpg` | Dejar buscador + estado "En línea" + un botón de usuario que abra un menú con tema, tutorial, contraseña, áreas y salir. Diseño primero | ✅ 2026-10-14 (menú de usuario en `App.js`; "Panel admin" queda en la barra lateral y en el menú del celular) |
+| R.2 | En admin, "Volver a operación" aparece dos veces (barra de arriba y franja de abajo) y además está la franja "Panel de control / Configuración del sistema". El contenido empieza a 240 px de arriba. Ver `a-primeros-pasos.jpg` | Sacar la franja "Volver…" (queda el botón de la barra) y achicar "Panel de control" a una línea | ✅ 2026-10-14 (sin franja "Volver…"; "Panel de control" en una línea) |
 | R.3 | Al cambiar de pantalla no vuelve arriba: se abre con el scroll de la pantalla anterior. Ver `g-citados.jpg` | `window.scrollTo(0,0)` al cambiar de ruta (un componente `ScrollToTop`) | ✅ 2026-10-14 (`ScrollToTop` en `App.js`) |
 | R.4 | Títulos de guardia en rojo ("Registro de Personal", "Autorizaciones", "Historial"): parecen error | Usar el color de título normal; rojo solo para alertas | ✅ 2026-10-14 (8 títulos de guardia con color normal) |
 | R.5 | Mayúsculas mezcladas: "Tipo de Movimiento", "Hora Real", "Registrar Flota", "Registro de Novedad" | Solo la primera palabra en mayúscula | ✅ 2026-10-14 (Flota, Novedad, títulos y exportación de Historial) |
@@ -52,6 +52,6 @@ Recorrido de **guardia** y **administración** en mss-guard.web.app, tema oscuro
 ## Orden sugerido
 
 1. R.15, R.3, R.12, R.4–R.6 (rápidos, se ven mucho).
-2. R.1 + R.2 (barra de arriba): diseño y después 🆓.
+2. ~~R.1 + R.2 (barra de arriba)~~ ✅ 2026-10-14.
 3. R.25 (consumo) antes de dejar puestos abiertos todo el día.
 4. Resto por pantalla, de a una tarea por pantalla.

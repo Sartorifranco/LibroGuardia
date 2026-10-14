@@ -55,7 +55,7 @@ Quién: 🧠 diseño; 🔒 hub/eventos; 🆓 ventana emergente y textos.
 
 ✅ Recorrido hecho 2026-10-14: **25 arreglos** en `docs/REVISION-UI-2026-10.md` (por pantalla, con capturas en `docs/revision-ui/` y a quién va). Para seguir: "seguí con R.x de docs/REVISION-UI-2026-10.md".
 - Primero: ~~R.15~~ (hecho 2026-10-14), R.3 (no vuelve arriba al cambiar de pantalla), R.12 ("Guardando…" falso en Personal), R.4–R.6 (títulos rojos, mayúsculas, rojo de Borrar).
-- Después: barra de arriba y franjas de admin (R.1, R.2), con diseño antes.
+- ~~Después: barra de arriba y franjas de admin (R.1, R.2)~~ (hecho 2026-10-14; 👤 falta mirarlo con usuario logueado, en compu y celular).
 - R.25: ~14 pedidos por minuto por puesto de guardia; revisar que no lean Firestore cada vez.
 - R.23 (grupos de permisos en tema oscuro) no se pudo confirmar a ojo: 👤 mirarlo.
 
