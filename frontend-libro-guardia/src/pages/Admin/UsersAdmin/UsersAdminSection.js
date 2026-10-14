@@ -101,6 +101,9 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
   const canDelete = hasPermission(currentUser, 'users.delete');
   const canUnlock = canEdit || hasPermission(currentUser, 'lectores.manage');
   const canPerms = hasPermission(currentUser, 'settings.permissions');
+  const sameSet = (a = [], b = []) => a.length === b.length && a.every((p) => b.includes(p));
+  const extraPermissionsChanged = Boolean(editingUser && canPerms
+    && !sameSet(editingUserPermissions, editingUser.customPermissions || []));
 
   const reloadUsers = useCallback(async () => {
     if (!currentUser || !hasPermission(currentUser, 'users.view')) {
@@ -281,6 +284,14 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
           token: authToken,
           body: updateData
         });
+        // Los permisos extra se guardan con el mismo botón (antes tenían uno aparte).
+        if (extraPermissionsChanged) {
+          await apiFetch(`/admin/users/${editingUser.id}/permissions`, {
+            method: 'PUT',
+            token: authToken,
+            body: { permissions: editingUserPermissions }
+          });
+        }
         setEditingUser(null);
         showSuccess('Guardado');
         await reloadUsers();
@@ -368,24 +379,6 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
     setEditingUserPermissions((prev) =>
       prev.includes(permission) ? prev.filter((item) => item !== permission) : [...prev, permission]
     );
-  };
-
-  const handleSaveUserPermissions = async () => {
-    if (!editingUser) return;
-    await runAction('saveUserPermissions', async () => {
-      try {
-        const data = await apiFetch(`/admin/users/${editingUser.id}/permissions`, {
-          method: 'PUT',
-          token: authToken,
-          body: { permissions: editingUserPermissions }
-        });
-        showSuccess('Permisos personalizados guardados.');
-        setUsers((prev) => prev.map((user) => (user.id === data.user.id ? data.user : user)));
-        setEditingUser((prev) => (prev && prev.id === data.user.id ? data.user : prev));
-      } catch (err) {
-        showError(err.message || 'Error al guardar permisos del usuario');
-      }
-    });
   };
 
   if (!hasPermission(currentUser, 'users.view')) return null;
@@ -782,6 +775,7 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
           || editedUserRole !== editingUser.role
           || editedUserActive !== (editingUser.active !== false)
           || (editedEmpresaId || '') !== (editingUser.empresaId || '')
+          || extraPermissionsChanged
         ))}
         footer={editingUser ? (
           <>
@@ -873,16 +867,6 @@ function UsersAdminSection({ pendingAction, runAction, permissionKeys }) {
                       />
                     );
                   })()}
-                  <PendingButton
-                    type="button"
-                    actionId="saveUserPermissions"
-                    pendingAction={pendingAction}
-                    className="btn btn-secondary mt-3"
-                    pendingLabel="Guardando..."
-                    onClick={handleSaveUserPermissions}
-                  >
-                    Guardar permisos extra
-                  </PendingButton>
                   {canUnlock ? (
                     <button type="button" className="btn btn-secondary" onClick={() => handleClearLoginFailures(editingUser)}>
                       Destrabar ingreso
