@@ -27,6 +27,7 @@ const { CommandRouter } = require('./commands');
 const { LanVerifier } = require('./lanSignCompat');
 const { createLanServer } = require('./lanServer');
 const { watchCloudOnline } = require('./lanApi');
+const { visitorAlert } = require('./lanApi/visitors');
 const { makeHeadVerifier } = require('./headSignature');
 
 const DEFAULTS = {
@@ -179,6 +180,10 @@ class Hub {
     });
     const alarm = fresh.length ? this.live.applyEvents(fresh) : false;
     this.controllers.markSeen(deviceId, { configVersionApplied: data.configVersionApplied ?? null });
+    // 1b: el cartel del guardia en modo nube necesita el evento ya (sin esperar los 2 min).
+    let visitor = false;
+    try { visitor = fresh.some((e) => visitorAlert(this, e)); } catch (_) { visitor = false; }
+    if (visitor && !alarm && this.uploader) this.uploader.kick();
     if (alarm) {
       if (this.uploader) this.uploader.kick();
       this.live.maybePost().catch(() => {});

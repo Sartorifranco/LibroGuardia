@@ -211,6 +211,10 @@ describe('Edge: eventos, heartbeat, comandos, head y live', () => {
     assert.equal(v1.estado, 'ingreso_registrado');
     assert.equal(v1.ingresoDoorName, 'Ingreso Principal');
     assert.ok(v1.ingresoAt, 'guarda la hora de ingreso');
+    const entry = mem.getDoc('entries', 'edge_hub-1_ctl-a_60');
+    assert.equal(entry.visitorKind, 'visita');
+    assert.equal(entry.visitaId, 'vis-1');
+    assert.equal(mem.getDoc('entries', 'edge_hub-1_ctl-a_1').visitorKind, undefined, 'empleado sin datos de visita');
     assert.equal(mem.getDoc('visitas', 'vis-2').estado, 'ingreso_registrado', 'se encuentra por passCode');
     assert.equal(mem.getDoc('visitas', 'vis-3').estado, 'cancelada');
 

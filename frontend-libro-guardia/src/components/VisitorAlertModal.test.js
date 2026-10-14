@@ -350,4 +350,12 @@ describe('VisitorAlertModal', () => {
     expect(screen.getByText('Puerta Secundaria · salida')).toBeInTheDocument();
     expect(screen.getByText('18:00')).toBeInTheDocument();
   });
+  it('modo nube: el evento de ventana mss:visitor muestra el cartel y no se repite con el del hub', () => {
+    render(<VisitorAlertModal authToken="t" />);
+    const data = { id: 'ctl:9', kind: 'visita', name: 'Por la Nube', doorName: 'Ingreso Principal', side: 'in', at: '2026-10-14T16:43:00-03:00' };
+    act(() => { window.dispatchEvent(new CustomEvent('mss:visitor', { detail: data })); });
+    expect(screen.getByText('Por la Nube')).toBeInTheDocument();
+    triggerVisitorEvent(data);
+    expect(screen.queryByText(/avisos? más/)).not.toBeInTheDocument();
+  });
 });

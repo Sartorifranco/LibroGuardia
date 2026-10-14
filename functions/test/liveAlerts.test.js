@@ -106,3 +106,32 @@ test('buildLiveAlertsFromDocs: identity_verification genera alerta de verificaci
   assert.equal(identity.meta.name, 'Juan Pérez');
   assert.equal(identity.meta.photoUrl, 'data:image/jpeg;base64,abc');
 });
+
+test('buildLiveAlertsFromDocs: visita del borde en puerta con aviso → visitor_pass (1b)', () => {
+  const now = Date.parse('2026-10-14T19:45:00Z');
+  const base = {
+    type: 'personal',
+    tipoMovimiento: 'ingreso',
+    entrySource: 'edge',
+    timestamp: '2026-10-14T19:41:00Z',
+    createdAt: '2026-10-14T19:44:30Z'
+  };
+  const alerts = buildLiveAlertsFromDocs({
+    nowMs: now,
+    notifyDoorIds: new Set(['p1']),
+    doorNamesById: { p1: 'Ingreso Principal' },
+    movementEntries: [
+      { ...base, id: 'a', name: 'Juan Visita', doorId: 'p1', visitorKind: 'visita', hostName: 'Ana', edge: { eventId: 'ctl:1' } },
+      { ...base, id: 'b', name: 'Otra Visita', doorId: 'p2', visitorKind: 'visita', edge: { eventId: 'ctl:2' } },
+      { ...base, id: 'c', name: 'Vieja', doorId: 'p1', visitorKind: 'visita', createdAt: '2026-10-14T19:40:30Z', edge: { eventId: 'ctl:3' } }
+    ]
+  });
+  const visitors = alerts.filter((a) => a.type === 'visitor_pass');
+  assert.equal(visitors.length, 1, 'solo la puerta con aviso y llegada reciente');
+  assert.equal(visitors[0].id, 'visitor:ctl:1');
+  assert.equal(visitors[0].meta.id, 'ctl:1', 'mismo id que el SSE del hub, para no repetir el cartel');
+  assert.equal(visitors[0].meta.kind, 'visita');
+  assert.equal(visitors[0].meta.doorName, 'Ingreso Principal');
+  assert.equal(visitors[0].meta.hostName, 'Ana');
+  assert.ok(!alerts.some((a) => a.type === 'movement' && a.meta.entryId === 'a'), 'no duplica con el aviso de movimiento');
+});

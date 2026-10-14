@@ -4,6 +4,8 @@ import { useHubLive } from '../context/HubLiveContext';
 import apiFetch from '../services/api';
 
 const MAX_ALERTS = 10;
+/** Evento de ventana con el aviso que llega por la nube (lo dispara LiveAlertsToaster). */
+export const VISITOR_WINDOW_EVENT = 'mss:visitor';
 
 // Helper para formatear la hora
 const formatTime = (isoString) => {
@@ -75,6 +77,23 @@ export function VisitorAlertModal({ authToken, onMismatch }) {
     setAlerts((prevAlerts) => prevAlerts.slice(1));
     setApprovalError(null); // Limpiar el error cuando se descarta una alerta
   }, []);
+
+  const pushAlert = useCallback((data) => {
+    if (!data || !data.id) return;
+    setAlerts((prevAlerts) => {
+      if (prevAlerts.some((alert) => alert.id === data.id)) return prevAlerts;
+      const next = [...prevAlerts, data];
+      return next.length > MAX_ALERTS ? next.slice(next.length - MAX_ALERTS) : next;
+    });
+  }, []);
+
+  // Modo nube: LiveAlertsToaster reenvía las alertas 'visitor_pass' como evento de ventana.
+  // Mismo id que el SSE del hub, así no se repite el cartel si llegan por los dos caminos.
+  useEffect(() => {
+    const onWindowVisitor = (event) => pushAlert(event.detail);
+    window.addEventListener(VISITOR_WINDOW_EVENT, onWindowVisitor);
+    return () => window.removeEventListener(VISITOR_WINDOW_EVENT, onWindowVisitor);
+  }, [pushAlert]);
 
   useEffect(() => {
     const unsubscribe = subscribe((event) => {

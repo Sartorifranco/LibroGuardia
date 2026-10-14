@@ -9,6 +9,7 @@ import {
   subscribeAlertSeen
 } from '../utils/liveAlertDedupe';
 import IdentityVerificationModal from './IdentityVerificationModal';
+import { VISITOR_WINDOW_EVENT } from './VisitorAlertModal';
 
 // El servidor cachea /guard/live-alerts 15 s: pedir más seguido no trae nada nuevo.
 const POLL_MS = 60000;
@@ -85,7 +86,15 @@ function LiveAlertsToaster({ enabled = true, pollMs = POLL_MS }) {
     if (!fresh.length) return;
 
     const identity = fresh.filter((a) => a.type === 'identity_verification');
-    const toasts = fresh.filter((a) => a.type !== 'identity_verification');
+    const visitors = fresh.filter((a) => a.type === 'visitor_pass');
+    const toasts = fresh.filter((a) => a.type !== 'identity_verification' && a.type !== 'visitor_pass');
+
+    // 1b: visita/externo en puerta con aviso → cartel con sonido (VisitorAlertModal).
+    visitors.forEach((a) => {
+      memorySeen.current.add(a.id);
+      if (notifEnabled) showNativeNotification(a);
+      window.dispatchEvent(new CustomEvent(VISITOR_WINDOW_EVENT, { detail: a.meta }));
+    });
 
     if (identity.length) {
       identity.forEach((a) => {

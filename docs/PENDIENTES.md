@@ -35,7 +35,7 @@ Propuesta (una sola función, que también resuelve el 1.3b):
 **Falta:**
 - Actualizar hub y controlador del banco, desplegar functions + web, y probar: visita por Ingreso Principal con aviso, y una puerta con aprobación.
 - Foto en el cartel (no hay foto en el pase).
-- Cartel sin hub (modo nube): sumar tipo `visitor_pass` en `liveAlerts.js` y un comando `approve` en la nube (hoy solo `open`). Hasta entonces, aprobar ingresos solo funciona desde la red del predio.
+- ✅ Cartel en modo nube (mss-guard.web.app): `liveAlerts` arma `visitor_pass` con las entries del borde y el hub sube esos pasos al instante; llega en hasta ~1 min (la web consulta cada 60 s). Falta: aprobar ingresos desde la nube (comando `approve`; hoy solo en la red del predio).
 - "No coincide" abre Novedad vacía: precargar los datos de la visita.
 
 ## 2. Arreglos chicos

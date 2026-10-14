@@ -207,6 +207,29 @@ const maskIdNumber = (ev) => {
   return ev.credHash ? '***' : '';
 };
 
+/** Fuentes de empleados (no avisan al guardia). Igual que scripts/edge/hub/lanApi/visitors.js. */
+const EMPLOYEE_SOURCES = new Set(['accessAll', 'group', 'direct']);
+
+/** 1b: datos de visita/externo para el cartel del guardia en modo nube (liveAlerts). */
+const visitorFieldsOf = (ev) => {
+  const p = ev.payload || {};
+  const source = p.matched && p.matched.source;
+  let visitorKind = null;
+  if (p.passId) visitorKind = 'visita';
+  else if (source && !EMPLOYEE_SOURCES.has(source)) visitorKind = 'externo';
+  if (!visitorKind) return {};
+  const v = p.visitor || {};
+  const str = (x, n) => (x ? String(x).slice(0, n) : null);
+  return {
+    visitorKind,
+    passId: str(p.passId, 120),
+    visitaId: str(p.visitaId, 120),
+    hostName: str(v.hostName, 120),
+    hostCompany: str(v.hostCompany, 120),
+    destination: str(v.destination, 120)
+  };
+};
+
 /** Doc `entries` compatible con el libro actual (ver accessControl.js writeAccessEntry). */
 const buildEntryDoc = (ev, { siteId, hubId }) => {
   const p = ev.payload || {};
@@ -243,6 +266,7 @@ const buildEntryDoc = (ev, { siteId, hubId }) => {
     guardId: p.actor || null,
     notes: null,
     edge: { siteId, hubId, deviceId: ev.deviceId || null, eventId: ev.id, seq: ev.seq, hubSeq: ev.hubSeq },
+    ...visitorFieldsOf(ev),
     createdAt: FieldValue.serverTimestamp()
   };
 };

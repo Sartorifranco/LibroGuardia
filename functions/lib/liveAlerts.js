@@ -8,6 +8,9 @@ const { db } = require('../firestore');
 const { getNotificationsConfig } = require('./notifications/config');
 const { getDoorsConfig } = require('./doorsConfig');
 
+/** 1b: el cartel de visita vive 4 min desde que llegó a la nube (la web consulta cada 60 s, 180 s oculta; no se repite: id por evento). */
+const VISITOR_WINDOW_MS = 4 * 60 * 1000;
+
 const toIso = (value) => {
   if (!value) return null;
   if (typeof value.toDate === 'function') return value.toDate().toISOString();
@@ -30,6 +33,7 @@ const buildLiveAlertsFromDocs = ({
   exceptionalEntries = [],
   movementEntries = [],
   doorNamesById = {},
+  notifyDoorIds = new Set(),
   denialThreshold = 3,
   denialWindowMinutes = 10,
   nowMs = Date.now()
@@ -57,6 +61,37 @@ const buildLiveAlertsFromDocs = ({
   for (const entry of movementEntries) {
     const at = toIso(entry.timestamp) || toIso(entry.createdAt);
     const atMs = toMs(entry.timestamp) || toMs(entry.createdAt);
+    // 1b: visita o externo en una puerta con "avisar al guardia" → cartel (VisitorAlertModal).
+    // Cuenta desde que llegó a la nube (createdAt): el hub puede subirlo con atraso.
+    if (entry.visitorKind && entry.doorId && notifyDoorIds.has(entry.doorId)) {
+      const arrivedMs = toMs(entry.createdAt) || atMs;
+      if (arrivedMs && arrivedMs < nowMs - VISITOR_WINDOW_MS) continue;
+      const eventId = (entry.edge && entry.edge.eventId) || entry.id;
+      const doorName = entry.doorName || doorNamesById[entry.doorId] || entry.doorId;
+      alerts.push({
+        id: `visitor:${eventId}`,
+        type: 'visitor_pass',
+        severity: 'info',
+        title: entry.visitorKind === 'visita' ? 'Pasó una visita' : 'Pasó una persona externa',
+        message: `${entry.name || 'Sin nombre'} · ${doorName}`,
+        at,
+        meta: {
+          id: eventId,
+          kind: entry.visitorKind,
+          approvalId: null,
+          name: entry.name || '',
+          idNumber: entry.idNumber || '',
+          hostName: entry.hostName || null,
+          hostCompany: entry.hostCompany || null,
+          destination: entry.destination || null,
+          doorId: entry.doorId,
+          doorName,
+          side: /egreso/.test(String(entry.tipoMovimiento || '')) ? 'out' : 'in',
+          at
+        }
+      });
+      continue;
+    }
     if (atMs && atMs < nowMs - 2 * 60 * 1000) continue;
     const type = String(entry.type || '').toLowerCase();
     const direction = String(entry.direction || entry.movementType || '').toLowerCase();
@@ -271,6 +306,8 @@ const getLiveAlerts = async ({
         if (!['personal', 'persona', 'vehiculo', 'vehículo', 'externo', 'flota', 'blindado'].includes(t)) {
           return false;
         }
+        // Las visitas del borde cuentan desde que llegaron a la nube (el hub sube con atraso).
+        if (row.visitorKind && toMs(row.createdAt) >= Date.now() - VISITOR_WINDOW_MS) return true;
         return toMs(row.timestamp) >= minMs;
       });
   } catch {
@@ -278,11 +315,13 @@ const getLiveAlerts = async ({
   }
 
   let doorNamesById = {};
+  let notifyDoorIds = new Set();
   try {
     const doorsConfig = await getDoorsConfig();
     doorNamesById = Object.fromEntries(
       (doorsConfig.doors || []).map((d) => [d.id, d.name || d.id])
     );
+    notifyDoorIds = new Set((doorsConfig.doors || []).filter((d) => d.notifyGuardOnVisitor === true).map((d) => d.id));
   } catch {
     doorNamesById = {};
   }
@@ -294,6 +333,7 @@ const getLiveAlerts = async ({
     exceptionalEntries,
     movementEntries,
     doorNamesById,
+    notifyDoorIds,
     denialThreshold: threshold,
     denialWindowMinutes: windowMinutes
   });

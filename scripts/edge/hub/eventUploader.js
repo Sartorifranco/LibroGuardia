@@ -53,6 +53,9 @@ function enrichForCloud(e, snapshot) {
       if (!payload.name && p && p.name) payload.name = String(p.name).slice(0, 160);
       // 1b: la nube marca la visita como ingresada sin buscarla por código de pase.
       if (!payload.visitaId && p && p.visitaId) payload.visitaId = String(p.visitaId).slice(0, 120);
+      if (!payload.visitor && p && (p.hostName || p.hostCompany || p.destination)) {
+        payload.visitor = { hostName: p.hostName || null, hostCompany: p.hostCompany || null, destination: p.destination || null };
+      }
     }
     if (!payload.doorName && e.doorId) {
       const d = snapshot.door(e.doorId);
