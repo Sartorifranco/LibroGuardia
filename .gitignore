@@ -69,3 +69,6 @@ scripts/configuracion-estacion.backup-*.json
 
 # Worktrees y config local de Claude Code
 .claude/
+
+# Aider (Gemini)
+.aider*

@@ -31,3 +31,4 @@ Control de acceso empresarial (puertas, portones, estancos, visitas, vehículos,
 - Tareas **cortas y concretas**: un objetivo, los archivos involucrados y el criterio de "terminado". Pocos reintentos: si algo falla dos veces, frená y reportá.
 - No leer archivos enteros si alcanza con una búsqueda. No pegar logs largos ni capturas grandes.
 - Las tareas de Cursor se lanzan con `C:\Users\Admin\.cursor-uso\cursor-tarea.ps1`, que registra el consumo de cada una.
+- Las tareas chicas y no sensibles van a Gemini gratis con `C:\Users\Admin\.cursor-uso\gemini-tarea.ps1`. A Gemini **nunca** le van secretos, la config real del predio ni lo crítico (`accessEngine`, `siteCompiler`/firmas, `permissions.js`, `scripts/edge/controller`): eso va a Cursor. El reparto completo está en el CLAUDE.md global.
