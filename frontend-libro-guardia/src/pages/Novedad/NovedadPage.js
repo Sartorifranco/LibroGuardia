@@ -48,7 +48,7 @@ function NovedadPage() {
           <input type="time" id="novedadEventTime" value={novedadEventTime} onChange={(e) => setNovedadEventTime(e.target.value)} className="input-field" required />
         </div>
         <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-          <Save size={20} /> {busy ? 'Guardando...' : 'Registrar Novedad'}
+          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar Novedad')}
         </button>
       </form>
     </div>

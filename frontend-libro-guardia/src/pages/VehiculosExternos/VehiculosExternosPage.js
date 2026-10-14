@@ -224,7 +224,7 @@ function VehiculosExternosPage() {
         </div>
 
         <button type="submit" className="btn btn-primary w-full md:w-auto" disabled={busy}>
-          <Save size={20} /> {busy ? 'Guardando...' : 'Registrar vehículo'}
+          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar vehículo')}
         </button>
       </form>
     </div>

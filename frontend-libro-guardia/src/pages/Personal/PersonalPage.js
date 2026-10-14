@@ -443,7 +443,7 @@ function PersonalPage() {
         </div>
 
         <button type="submit" className="btn btn-primary w-full md:w-auto" disabled={busy}>
-          <Save size={20} /> {busy ? 'Guardando...' : 'Registrar personal'}
+          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar personal')}
         </button>
       </form>
     </div>

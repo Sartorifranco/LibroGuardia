@@ -134,7 +134,7 @@ function FlotaInternaPage() {
           </select>
         </div>
         <button type="submit" className="btn btn-primary w-full" disabled={busy}>
-          <Save size={20} /> {busy ? 'Guardando...' : 'Registrar Flota'}
+          <Save size={20} /> {loading ? 'Guardando...' : (entriesLoading ? 'Cargando...' : 'Registrar Flota')}
         </button>
       </form>
     </div>
