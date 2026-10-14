@@ -276,7 +276,8 @@ const wrapCollection = (collection) => {
     get(target, prop) {
       if (prop === '__usageWrapped') return true;
       if (prop === '__raw') return target;
-      if (prop === 'doc') return (id) => wrapDoc(target.doc(id));
+      // Sin argumento = id automático: no pasar `undefined` (Firestore lo rechaza).
+      if (prop === 'doc') return (...args) => wrapDoc(target.doc(...args));
       if (prop === 'add') {
         return async (data) => {
           const ref = await target.add(data);

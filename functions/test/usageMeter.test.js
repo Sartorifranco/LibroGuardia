@@ -129,6 +129,13 @@ describe('medidor de consumo', () => {
     assert.equal(again.flushed, false);
   });
 
+  it('collection.doc() sin argumento no le pasa undefined a Firestore (id automático)', () => {
+    const calls = [];
+    const raw = { collection: () => ({ doc: (...args) => { calls.push(args.length); return { id: 'auto' }; } }) };
+    wrapFirestore(raw).collection('empresas').doc();
+    assert.deepEqual(calls, [0]);
+  });
+
   it('descuenta la cuota gratis del día', () => {
     assert.equal(PRICING_VERIFIED_ON, '2026-10-08');
     assert.equal(PRICING_SOURCE, 'https://cloud.google.com/firestore/pricing');
