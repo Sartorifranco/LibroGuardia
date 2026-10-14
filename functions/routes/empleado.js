@@ -16,7 +16,6 @@ const {
   sendRouteError
 } = require('../middleware/auth');
 const { normalizeDni } = require('../lib/normalize');
-const { isSelfRegisteredUser } = require('../lib/selfRegister');
 const { validateDestinationDoorIds } = require('../lib/empresasDestinos');
 const { getDoorsConfig } = require('../lib/doorsConfig');
 const { filterOwnVisitas, toDate } = require('../lib/visitasAccess');
@@ -244,11 +243,10 @@ router.post(
 
       const dniVisitanteNormalized = normalizeDni(dniVisitante);
       const isApprover = isAdmin || permissions.includes('visitas.approve');
-      // create gana sobre request si tiene ambos, salvo usuarios autoregistrados:
-      // sus visitas siempre quedan pendientes de aprobación (admin/supervisor).
+      // Decide el rol: visitas.create autoriza directo; solo visitas.request va a Seguridad
+      // (el autoregistro entra con request hasta que un admin le cambie el rol).
       // El pase por mes siempre lo aprueba Seguridad (visitas.approve o admin).
-      const autoAuthorize = canCreate && !isSelfRegisteredUser(user)
-        && (!dur.requiresApproval || isApprover);
+      const autoAuthorize = canCreate && (!dur.requiresApproval || isApprover);
       const estado = autoAuthorize ? 'autorizada' : 'pendiente_aprobacion';
       const inviteToken = autoAuthorize ? newInviteToken() : null;
       const { normalizePhotoDataUrl } = require('../lib/personPhoto');
@@ -469,7 +467,7 @@ router.patch(
       // Mismo criterio que el alta: solo con visitas.request vuelve a aprobación;
       // el pase por mes siempre lo aprueba Seguridad.
       const keepEstado = isAdmin || isApprover
-        || (permissions.includes('visitas.create') && !isSelfRegisteredUser(editor) && !dur.requiresApproval);
+        || (permissions.includes('visitas.create') && !dur.requiresApproval);
       const estado = keepEstado ? (data.estado || 'pendiente') : 'pendiente_aprobacion';
 
       const previousPassCodes = [

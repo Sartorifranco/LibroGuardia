@@ -55,11 +55,11 @@ describe('Autoregistro: visitas quedan pendientes de aprobación', () => {
     assert.equal(reg.status, 201, reg.text);
     const stored = mem.getDoc('users', 'nuevo@bacarsa.com.ar');
     assert.equal(stored.selfRegistered, true);
-    assert.equal(stored.role, 'empleado-visitas');
+    assert.equal(stored.role, 'empleado-solicitar-visitas');
     assert.equal(stored.emailVerified, false);
     assert.match(stored.emailVerifyTokenHash, /^[0-9a-f]{64}$/);
 
-    const token = signTestToken({ id: 'nuevo@bacarsa.com.ar', role: 'empleado-visitas' });
+    const token = signTestToken({ id: 'nuevo@bacarsa.com.ar', role: 'empleado-solicitar-visitas' });
     const denied = await srv.request('POST', '/api/empleado/visitas', { token, body: visitaBody });
     assert.equal(denied.status, 403);
     assert.equal(denied.body.error, 'Confirmá tu mail para poder invitar visitas. Revisá tu correo.');
@@ -71,21 +71,29 @@ describe('Autoregistro: visitas quedan pendientes de aprobación', () => {
     assert.equal(res.body.visita.inviteToken, null);
   });
 
-  it('autoregistrados legacy (sin flag, con email) también quedan pendientes', async () => {
-    mem.setDoc('users', 'viejo@bacarsa.com.ar', {
-      username: 'viejo@bacarsa.com.ar',
-      email: 'viejo@bacarsa.com.ar',
+  it('autoregistrado habilitado por un admin (rol empleado-visitas) autoriza directo', async () => {
+    mem.setDoc('users', 'habilitado@bacarsa.com.ar', {
+      username: 'habilitado@bacarsa.com.ar',
+      email: 'habilitado@bacarsa.com.ar',
+      selfRegistered: true,
+      emailVerified: true,
       role: 'empleado-visitas',
       active: true,
       passwordVersion: 1,
       empresaId: 'cliente'
     });
-    const res = await srv.request('POST', '/api/empleado/visitas', {
-      token: signTestToken({ id: 'viejo@bacarsa.com.ar', role: 'empleado-visitas' }),
-      body: visitaBody
-    });
+    const token = signTestToken({ id: 'habilitado@bacarsa.com.ar', role: 'empleado-visitas' });
+    const res = await srv.request('POST', '/api/empleado/visitas', { token, body: visitaBody });
     assert.equal(res.status, 201, res.text);
-    assert.equal(res.body.visita.estado, 'pendiente_aprobacion');
+    assert.equal(res.body.visita.estado, 'autorizada');
+
+    // El pase por mes sigue yendo a Seguridad.
+    const mes = await srv.request('POST', '/api/empleado/visitas', {
+      token,
+      body: { ...visitaBody, dniVisitante: '28999777', duracion: 'mes', validoHasta: '2026-10-20' }
+    });
+    assert.equal(mes.status, 201, mes.text);
+    assert.equal(mes.body.visita.estado, 'pendiente_aprobacion');
   });
 
   it('usuario empleado-visitas creado por un admin sigue autorizando directo', async () => {

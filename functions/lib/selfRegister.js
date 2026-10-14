@@ -7,8 +7,12 @@ const { db, FieldValue } = require('../firestore');
 const { normalizeDomain } = require('./empresasDestinos');
 const { validateNewPassword } = require('./changePassword');
 const { newVerification, sendVerificationEmail } = require('./emailVerification');
+const { SYSTEM_ROLE_META } = require('../roles');
+const { DEFAULT_ROLE_PERMISSIONS } = require('../permissions');
 
-const EMPLEADO_ROLE = 'empleado-visitas';
+// El autoregistrado solo solicita: sus visitas van a Seguridad hasta que un admin
+// lo habilite cambiándole el rol a "Empleado — visitas" (visitas.create).
+const EMPLEADO_ROLE = 'empleado-solicitar-visitas';
 
 /**
  * @param {string} email
@@ -90,13 +94,14 @@ const selfRegisterEmployee = async ({ email, password, nombre, req = null }) => 
   const roleRef = db.collection('roles').doc(EMPLEADO_ROLE);
   const roleSnap = await roleRef.get();
   if (!roleSnap.exists) {
+    const meta = SYSTEM_ROLE_META[EMPLEADO_ROLE];
     await roleRef.set({
-      label: 'Empleado — visitas',
-      description: 'Autoregistro: solo carga y ve sus propias visitas de invitados.',
-      permissions: ['visitas.create', 'visitas.view.own'],
-      dashboardProfile: 'operational',
+      label: meta.label,
+      description: meta.description,
+      permissions: DEFAULT_ROLE_PERMISSIONS[EMPLEADO_ROLE],
+      dashboardProfile: meta.dashboardProfile,
       isSystem: true,
-      sortOrder: 20,
+      sortOrder: meta.sortOrder,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
@@ -114,8 +119,7 @@ const selfRegisterEmployee = async ({ email, password, nombre, req = null }) => 
     empresaId: empresa.id,
     nombre: name,
     email: emailNorm,
-    // Las visitas de usuarios autoregistrados siempre quedan pendientes de aprobación
-    // (ver isSelfRegisteredUser / routes/empleado.js).
+    // Solo informativo: la aprobación la decide el rol (visitas.request vs visitas.create).
     selfRegistered: true,
     // Sin confirmar el mail no puede invitar visitas (lib/visitasSettings.js checkVisitHost).
     ...verification.fields,
@@ -144,21 +148,8 @@ const selfRegisterEmployee = async ({ email, password, nombre, req = null }) => 
   };
 };
 
-/**
- * true si el usuario se creó por autoregistro.
- * Legacy (sin flag): solo el autoregistro guarda `email` en users/{id}; un admin
- * puede marcar selfRegistered:false para confiar en la cuenta.
- */
-const isSelfRegisteredUser = (user = {}) => {
-  if (!user || typeof user !== 'object') return false;
-  if (user.selfRegistered === true) return true;
-  if (user.selfRegistered === false) return false;
-  return Boolean(user.email);
-};
-
 module.exports = {
   EMPLEADO_ROLE,
-  isSelfRegisteredUser,
   findEmpresaByEmailDomain,
   selfRegisterEmployee
 };
