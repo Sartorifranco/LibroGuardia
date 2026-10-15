@@ -14,7 +14,7 @@ Lista única de lo que falta. Para retomar algo: abrir una sesión nueva y decir
 | 1.3 | ✅ Probado 2026-10-14 en el banco: invitación directa abre; pedido → aprobación de Surly → abre; cancelar → rechaza en segundos. 2026-10-15: pase "un ingreso" probado (segunda pasada rechazada) | Cierra el paso 3 | 👤 |
 | 1.3c | Al cancelar una visita, la puerta dice "credencial desconocida": mostrar "visita cancelada" para que el guardia entienda | Claridad en garita | 🔒 (borde) |
 | 1.3b | 🟡 Probado 2026-10-15 en el banco en la red del predio (la puerta no abre sola; "Abrir" abre, "No abrir" no). Falta aprobar desde la nube (ver 1b). **No existía pantalla para que el guardia apruebe ingresos** de puertas con "¿El guardia tiene que aprobar cada ingreso?" (`requireGuardApproval`). Con esa opción la puerta nunca abre por credencial (`needs_approval`). Construirla (desde el panel de Guardia, vía hub) o no usar la opción | Bloquea portones de clientes | 🧠 diseño + 🔒 |
-| 1.4 | Si todo da bien: merge `integracion/revision-2026-10` → `main` y push | `main` está atrás | 🧠 con tu OK |
+| 1.4 | ✅ Hecho 2026-10-15: merge `integracion/revision-2026-10` → `main` (fast-forward) y push | — | 🧠 con tu OK |
 
 ## 1b. Aviso al guardia cuando pasa una visita (pedido 2026-10-14)
 
