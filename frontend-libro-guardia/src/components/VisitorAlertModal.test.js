@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { VisitorAlertModal } from './VisitorAlertModal';
+import { VisitorAlertModal, buildMismatchNovedad } from './VisitorAlertModal';
 import apiFetch from '../services/api';
 
 // Mock HubLiveContext
@@ -357,5 +357,27 @@ describe('VisitorAlertModal', () => {
     expect(screen.getByText('Por la Nube')).toBeInTheDocument();
     triggerVisitorEvent(data);
     expect(screen.queryByText(/avisos? más/)).not.toBeInTheDocument();
+  });
+});
+
+describe('buildMismatchNovedad', () => {
+  it('arma el texto de la novedad con los datos de la visita', () => {
+    const { time, description } = buildMismatchNovedad({
+      name: 'Ana Pérez',
+      idNumber: '30111222',
+      hostName: 'Surly',
+      hostCompany: 'Arcor',
+      doorName: 'Ingreso Principal',
+      at: '2026-10-14T18:40:00.000Z'
+    });
+    expect(time).toBe('15:40');
+    expect(description).toBe(
+      'La persona que pasó no coincide con el pase. Nombre: Ana Pérez, documento 30111222, '
+      + 'visita a Surly (Arcor), puerta Ingreso Principal, hora 15:40.'
+    );
+  });
+
+  it('sin datos devuelve vacío', () => {
+    expect(buildMismatchNovedad(null)).toEqual({ time: '', description: '' });
   });
 });

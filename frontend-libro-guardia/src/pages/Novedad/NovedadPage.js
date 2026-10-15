@@ -12,6 +12,7 @@ function NovedadPage() {
 
   useEffect(() => {
     if (!prefill || prefill.tab !== 'novedad') return;
+    if (prefill.description) setNovedadDescription(prefill.description);
     const time = consumePrefill('novedad');
     if (time) setNovedadEventTime(time);
   }, [prefill, consumePrefill]);

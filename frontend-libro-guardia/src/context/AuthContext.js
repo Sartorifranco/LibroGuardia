@@ -12,6 +12,10 @@ import {
   setSessionExpiredHandler
 } from '../services/api';
 import { useToast } from './ToastContext';
+import { hasPermission } from '../utils/permissions';
+
+// Mismos permisos que exige GET /api/admin/roles.
+const ROLES_VIEW_PERMISSIONS = ['roles.view', 'roles.manage', 'settings.permissions'];
 
 const AuthContext = createContext(null);
 
@@ -128,7 +132,9 @@ export function AuthProvider({ children }) {
   }, [authToken, logout, showError]);
 
   useEffect(() => {
-    if (!authToken || !currentUser) {
+    // Sin permiso de ver roles no se pide la lista (evita un 403 en cada carga).
+    const canViewRoles = ROLES_VIEW_PERMISSIONS.some((perm) => hasPermission(currentUser, perm));
+    if (!authToken || !currentUser || !canViewRoles) {
       setSystemRoles([]);
       return undefined;
     }

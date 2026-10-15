@@ -57,6 +57,23 @@ function playAttentionSound() {
   }
 }
 
+/** Hora y texto para precargar la Novedad cuando el guardia marca "No coincide". */
+export function buildMismatchNovedad(alert) {
+  if (!alert) return { time: '', description: '' };
+  const time = formatTime(alert.at);
+  const parts = [`Nombre: ${alert.name || 'sin nombre'}`];
+  if (alert.idNumber) parts.push(`documento ${alert.idNumber}`);
+  if (alert.hostName || alert.hostCompany) {
+    parts.push(`visita a ${[alert.hostName, alert.hostCompany && `(${alert.hostCompany})`].filter(Boolean).join(' ')}`);
+  }
+  if (alert.doorName) parts.push(`puerta ${alert.doorName}`);
+  if (time) parts.push(`hora ${time}`);
+  return {
+    time,
+    description: `La persona que pasó no coincide con el pase. ${parts.join(', ')}.`
+  };
+}
+
 export function VisitorAlertModal({ authToken, onMismatch }) {
   const { subscribe } = useHubLive();
   const [alerts, setAlerts] = useState([]);

@@ -14,11 +14,11 @@ const ClockPrefillContext = createContext(null);
 
 export function ClockPrefillProvider({ children }) {
   const [prefill, setPrefill] = useState(null);
-  // { tab: 'personal'|'vehiculo'|'flota'|'novedad', time: 'HH:MM', nonce: number }
+  // { tab: 'personal'|'vehiculo'|'flota'|'novedad', time: 'HH:MM', description?: string, nonce: number }
 
-  const setClockPrefill = useCallback((tab, time) => {
-    if (!tab || !time) return;
-    setPrefill({ tab, time, nonce: Date.now() });
+  const setClockPrefill = useCallback((tab, time, description = '') => {
+    if (!tab || (!time && !description)) return;
+    setPrefill({ tab, time: time || '', description: description || '', nonce: Date.now() });
   }, []);
 
   const consumePrefill = useCallback((tab) => {

@@ -45,7 +45,7 @@ import { ToastProvider } from './context/ToastContext';
 import { ConfirmProvider } from './context/ConfirmContext';
 import { OfflineQueueProvider } from './context/OfflineQueueContext';
 import { EntriesProvider } from './context/EntriesContext';
-import { ClockPrefillProvider } from './context/ClockPrefillContext';
+import { ClockPrefillProvider, useClockPrefill } from './context/ClockPrefillContext';
 import { RuntimeProvider, useRuntime } from './context/RuntimeContext';
 import { HubLiveProvider } from './context/HubLiveContext';
 import { GuardAlarmsProvider } from './context/GuardAlarmsContext';
@@ -66,7 +66,7 @@ import EmpleadoVisitasPage from './pages/Empleado/EmpleadoVisitasPage';
 import VisitaInvitacionPage from './pages/Empleado/VisitaInvitacionPage';
 import { AccessScanProvider } from './components/GlobalAccessScanner';
 import LiveAlertsToaster from './components/LiveAlertsToaster';
-import VisitorAlertModal from './components/VisitorAlertModal';
+import VisitorAlertModal, { buildMismatchNovedad } from './components/VisitorAlertModal';
 import RuntimeModeBadge from './components/RuntimeModeBadge';
 import LanUnavailable from './components/LanUnavailable';
 import LanAdminButton from './components/LanAdminButton';
@@ -408,6 +408,7 @@ function ForcePasswordGate({ children }) {
 
 function GuardiaLayout() {
   const chrome = useAppChrome();
+  const { setClockPrefill } = useClockPrefill();
   const runtime = useRuntime();
   const { tabSegment } = useParams();
   const lanBlocked = (featureId) => runtime.status === 'ready'
@@ -502,7 +503,14 @@ function GuardiaLayout() {
       >
         <LiveAlertsToaster />
         {hasPermission(currentUser, 'access.manual_open') && (
-          <VisitorAlertModal authToken={authToken} onMismatch={() => navigateToTab('novedad')} />
+          <VisitorAlertModal
+            authToken={authToken}
+            onMismatch={(alert) => {
+              const { time, description } = buildMismatchNovedad(alert);
+              navigateToTab('novedad');
+              setClockPrefill('novedad', time, description);
+            }}
+          />
         )}
         <div className="app-shell app-shell--with-nav">
           <ToastStack

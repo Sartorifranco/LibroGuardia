@@ -1,7 +1,7 @@
 # Pendientes — MSS Guard
 
 Lista única de lo que falta. Para retomar algo: abrir una sesión nueva y decir
-"seguí con el punto X de docs/PENDIENTES.md". Actualizada: 2026-10-14.
+"seguí con el punto X de docs/PENDIENTES.md". Actualizada: 2026-10-15.
 
 **A quién va:** 🆓 IA gratis (pantallas, textos, tests) · 🔒 Cursor (seguridad, permisos, borde) · 🧠 Claude (diseño, revisión, arreglos de pocas líneas) · 👤 Vos (decisiones, pruebas, cosas con contraseña).
 
@@ -36,7 +36,7 @@ Propuesta (una sola función, que también resuelve el 1.3b):
 - Actualizar hub y controlador del banco, desplegar functions + web, y probar: visita por Ingreso Principal con aviso, y una puerta con aprobación.
 - Foto en el cartel (no hay foto en el pase).
 - ✅ Cartel en modo nube (mss-guard.web.app): `liveAlerts` arma `visitor_pass` con las entries del borde y el hub sube esos pasos al instante; llega en hasta ~1 min (la web consulta cada 60 s). Falta: aprobar ingresos desde la nube (comando `approve`; hoy solo en la red del predio).
-- "No coincide" abre Novedad vacía: precargar los datos de la visita.
+- ✅ 2026-10-15: "No coincide" abre Novedad con nombre, documento, anfitrión, puerta y hora precargados.
 
 ## 2. Arreglos chicos
 
@@ -44,9 +44,9 @@ Propuesta (una sola función, que también resuelve el 1.3b):
 |---|---|---|
 | 2.1 | Botón "Configurar correo" arriba en Avisos por mail, con estado "Correo sin configurar / Correo: x" | 🆓 |
 | 2.2 | El aviso "Confirmá tu mail" sigue hasta volver a entrar después de confirmar | 🆓 |
-| 2.3 | La web consulta alarmas cada pocos segundos aunque el rol no pueda verlas (403 + consumo) | 🆓 |
-| 2.4 | La web pide la lista de roles aunque el usuario no pueda verla (403) | 🆓 |
-| 2.5 | `GET /api/runtime` da 404 en cada carga: sacarlo o crearlo | 🆓 |
+| 2.3 | ✅ Hecho (ca9961f): sin `alarmas.ver` no consulta. Falta desplegar web | 🆓 |
+| 2.4 | ✅ Hecho 2026-10-15: sin permiso de ver roles no pide la lista. Falta desplegar web | 🆓 |
+| 2.5 | ✅ Hecho (ca9961f): la nube responde `{mode:'cloud'}` sin leer Firestore. Falta desplegar functions | 🆓 |
 | 2.6 | El dominio permitido se configura en dos lugares (Autorizaciones → Configuración y Empresas). Unificar | 🧠 |
 | 2.7 | Usuarios: avisar si una cuenta tiene identificador distinto de su usuario (no puede entrar nunca) | 🆓 |
 | 2.8 | Roles del sistema guardados en la base no se actualizan cuando el código suma permisos | 🔒 |
