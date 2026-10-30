@@ -62,10 +62,14 @@ jobs:
         working-directory: frontend-libro-guardia
         run: test -f build/index.html
 
+  # Libro Guardia / MSS está frenado: no redeploy automático a Firebase.
+  # Un push a main volvería a crear api + fleetGpsAutoPoll + bridgeHealthPoll
+  # y reactivaría el gasto Blaze. Solo deploy manual (Actions → Run workflow)
+  # cuando se decida reactivar el producto.
   deploy:
     name: Deploy Firebase
     needs: test
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
